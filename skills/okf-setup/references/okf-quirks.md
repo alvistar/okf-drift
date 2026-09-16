@@ -160,6 +160,44 @@ level; `terminal-fw/app/src/*.c` and `ios-wallet/**/*.swift` only at file level,
 every `clang-format`/`swift-format` pass reading as drift. Bind narrow files there, and
 expect to re-stamp after a formatter run.
 
+### Which `#Symbol` names are accepted — measured, Rust and Python
+
+Measured 2026-09-16 on a scratch git repo, then applied to bristleworm. A refusal is
+always the same line, `error: cannot compute fingerprint for target: <path>#<name>`,
+exit 1 — it never says *why*, so a path-shaped name and a typo are indistinguishable.
+
+| Language | Accepted | Refused |
+|---|---|---|
+| Rust | free `fn`, `struct`, `enum`, `trait`, `pub const`, an `impl`-block method by its **bare** name (`#check`), a `#[test] fn` by its bare name | `#Type::method`, `#mod::fn` — **any** `::` path; a `mod` itself (`#tests`, `#inner`); an unknown name |
+| Python | module-level `def`, `async def`, `class`, a method by its **bare** name (`#resolve`, `#__init__`) | `#Class.method`; a **module-level assignment** (`MAX_LEN = 64`) |
+
+So there is no qualified form at all: you address a declaration by its bare identifier
+or not at all. Three consequences that decide how you bind:
+
+- **A bare name occurring twice in one file binds the FIRST occurrence only.** Two
+  `impl` blocks each with `fn check`: the anchor tracked `A::check` and changing
+  `B::check` was reported fresh. Nothing warns. Before binding a common method name
+  (`vend`, `new`, `from`, `encode`), check it is unique in that file — or accept that
+  you are anchoring the first declaration and say which one in the log.
+- **A Rust `#Struct` covers the struct declaration ONLY, not its `impl` blocks.**
+  Changing a method body left `#DecodeBounds` fresh; adding a field staled it. To watch
+  a method, bind the method. **Python is the opposite**: a `#Class` anchor covers the
+  whole class body, so editing `Registry.resolve` staled both `#Registry` and
+  `#resolve`.
+- **A Python constant cannot be anchored**, where a Rust `pub const` can. If a
+  concept's claim rests on a module-level list or dict (a registry, a roster, an
+  invariant table), the whole file is the only anchor that watches it.
+
+Narrowing is worth it: adding a statement to a bound `decode_canonical` in a 670-line
+`cbor.rs` staled exactly the two `#decode_canonical` anchors and left the other 16
+anchors on that file fresh; adding a statement to an unbound sibling function left all
+18 fresh, where a whole-file anchor on the same edit went stale.
+
+Keep a binding whole when the prose is a claim about the file *as a set* — "exporting
+33 functions plus three enums", an ABI's export list, a domain-tag registry that is a
+Rust `mod`, an invariant count that lives in a module-level list. Those are exactly the
+cases a symbol anchor would stop watching.
+
 The third row is why `code_refs` wants to be narrow. drift signs **file content**, so a
 directory has nothing to sign. `okf-drift-bootstrap.sh` expands a directory `code_ref`
 into `git ls-files -- <dir>` and skips anything wider than `OKF_DRIFT_MAX_DIR_FILES`
