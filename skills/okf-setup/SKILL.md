@@ -54,6 +54,7 @@ knowledge/
 scripts/okf-check.sh        the gate, six steps, drift join included (Step 3)
 scripts/okf-recall.sh       search joined with drift, for /okf-read (Step 3)
 drift.lock                  one content signature per (concept, code_ref) pair (Step 3b)
+.github/workflows/knowledge.yml   the gate on every PR and on push to main (Step 3c)
 CLAUDE.md                   + Knowledge Bundle · Work Loop · Navigation (Step 3)
 ```
 
@@ -183,6 +184,39 @@ Commit `drift.lock`. It is shared state, exactly like the bundle.
 The full drift measurements — every refusal, the JSON shape, and the one that shapes the
 whole design (editing a doc does **not** clear its staleness; only
 `drift link … --doc-is-still-accurate` does) — are in `references/okf-quirks.md`.
+
+## Step 3c — CI
+
+The Work Loop is the first filter, and it only fires in a session that touched
+`knowledge/`. **The PR that makes a concept stale is almost always one that touches only
+code**, and nobody in that PR has a reason to run the gate. So the gate is also a blocking
+CI job:
+
+```bash
+mkdir -p .github/workflows
+cp "${CLAUDE_PLUGIN_ROOT}/skills/okf-setup/templates/knowledge.yml" .github/workflows/knowledge.yml
+```
+
+Copy it verbatim. `runs-on` falls back to `ubuntu-latest` in a repo with no `RUNNER_LABEL`
+variable, so the template needs no edit either way. If the repo already has workflows,
+read one first: check that **nothing there already runs the gate** (don't add a second
+copy), and if its conventions differ from the template in a way that matters — a pinned
+action SHA, a different Go setup, a required job name — match them rather than the
+template. Do not relax the two rules the template encodes: `fetch-depth: 0` (drift's
+`blame` reads `git log`; shallow gives you "changed" with no commit to name) and `push`
+scoped to `main` (both triggers on a topic branch cancel each other in the concurrency
+group and GitHub reports the cancelled run as a check that did not succeed).
+
+Then one sentence in `CLAUDE.md` — appended to the paragraph that already describes what
+CI runs, or as a new `## CI` line if there is none:
+
+> `.github/workflows/knowledge.yml` runs `scripts/okf-check.sh knowledge` on every PR and
+> on push to `main`: a code change can make a concept stale without touching `knowledge/`,
+> and a stale concept blocks the merge until it is re-stamped via `/okf-write`.
+
+Run the job's own steps locally before committing (`okf version && drift --version`, then
+`scripts/okf-check.sh knowledge`) — the gate is the same script in both places, so a green
+run here is a green run there.
 
 ## Step 4 — Populate
 

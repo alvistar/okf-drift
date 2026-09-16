@@ -162,6 +162,15 @@ document.
 5. Copy the gate and the recall script in: `${CLAUDE_PLUGIN_ROOT}/scripts/okf-check.sh`
    → `scripts/okf-check.sh`, `okf-recall.sh` likewise, executable.
 
+6. **Step 3c of `/okf-setup`: the CI workflow.** Copy
+   `${CLAUDE_PLUGIN_ROOT}/skills/okf-setup/templates/knowledge.yml` to
+   `.github/workflows/knowledge.yml` and add its sentence to `CLAUDE.md`. Normally in the
+   migration commit itself, so the PR the user ships already carries the gate. **Defer it
+   to a follow-up commit after the migration lands** when there are other open branches:
+   `pull_request` fires on every one of them, and a branch that has not yet merged the
+   migration has no `knowledge/` — the job fails there for a reason that is not its
+   author's.
+
 Then `git grep -n '\.mex' -- . ':!docs/plans/' ':!knowledge/log.md'` must be empty
 (the log's provenance table names the old paths on purpose).
 

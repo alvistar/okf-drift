@@ -1,0 +1,35 @@
+name: knowledge
+# The knowledge bundle's gate, on EVERY PR: a code change can make a concept stale
+# (drift.lock binds concepts to declarations) without touching knowledge/, and the
+# author of that PR has no reason to run scripts/okf-check.sh. A stale concept fails
+# the job with the concept, the file, the blaming commit and the re-stamp command.
+# Installed by /okf-setup (Step 3c) or /okf-migrate; versions pinned to the ones the
+# gate was measured against — bump them together with okf-quirks.md, never with @latest.
+on:
+  push:
+    branches: [main]      # never on every push: both triggers on a topic branch cancel each other
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  gate:
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}   # a repo without the variable gets GitHub-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # drift's blame reads git log; shallow = "changed" with no commit to name
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: okf v0.3.0 and drift v0.10.1, pinned
+        run: |
+          go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.3.0
+          curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version v0.10.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # Not decoration: okf-check.sh only WARNS when drift is missing, so a failed
+      # install would leave the gate green with step 6 silently skipped.
+      - run: okf version && drift --version
+      - run: scripts/okf-check.sh knowledge
