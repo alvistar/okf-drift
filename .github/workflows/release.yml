@@ -1,0 +1,56 @@
+name: release
+
+# Tag-driven, and gated on the tag agreeing with the source of truth. Without this gate
+# "VERSION is the single source of truth" is only a convention: tagging v0.5.0 on a
+# VERSION=0.4.0 commit would publish a release whose plugin reports a different version
+# than its tag. Fail the workflow instead.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tag == VERSION == plugin.json version
+        run: |
+          set -eu
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(tr -d '[:space:]' < VERSION)
+          plugin=$(jq -r '.version' .claude-plugin/plugin.json)
+          echo "tag=$tag  VERSION=$version  plugin.json=$plugin"
+          fail=0
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME disagrees with VERSION ($version)"; fail=1
+          fi
+          if [ "$tag" != "$plugin" ]; then
+            echo "::error::tag $GITHUB_REF_NAME disagrees with .claude-plugin/plugin.json ($plugin)"; fail=1
+          fi
+          exit $fail
+
+      - name: release notes from CHANGELOG.md
+        run: |
+          set -eu
+          tag="${GITHUB_REF_NAME#v}"
+          awk -v v="$tag" '
+            $0 ~ "^## \\[" v "\\]" { inside = 1; next }
+            inside && /^## \[/     { exit }
+            inside                 { print }
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::CHANGELOG.md has no '## [$tag]' section with content"
+            exit 1
+          fi
+          cat release-notes.md
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-notes.md

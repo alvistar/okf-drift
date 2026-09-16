@@ -1,0 +1,86 @@
+name: ci
+
+# Syntax, the version agreement the release workflow will also enforce, and one smoke
+# test that exercises the two things a broken commit here would break in every consumer
+# repo at once: the scaffold must validate clean, and the gate must FAIL on it — a gate
+# that passes a fresh scaffold is a gate that checks nothing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shell syntax
+        run: |
+          set -eu
+          for f in scripts/*.sh; do echo "sh -n $f"; sh -n "$f"; done
+
+      - name: python syntax
+        run: python3 -m py_compile scripts/okf-migrate.py
+
+      - name: every YAML parses
+        run: |
+          set -eu
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'PY'
+          import os, yaml
+          # os.walk, not glob('**') — glob skips dotted directories, so .github/workflows
+          # would have been excluded from the check that exists to cover it.
+          files = []
+          for root, dirs, names in os.walk('.'):
+              dirs[:] = [d for d in dirs if d != '.git']
+              files += [os.path.join(root, n) for n in names if n.endswith(('.yml', '.yaml'))]
+          files.sort()
+          assert len(files) >= 3, f"expected the two workflows and the template, found {files}"
+          for f in files:
+              with open(f) as fh:
+                  yaml.safe_load(fh)
+              print("ok", f)
+          PY
+
+      - name: VERSION == plugin.json version
+        run: |
+          set -eu
+          version=$(tr -d '[:space:]' < VERSION)
+          plugin=$(jq -r '.version' .claude-plugin/plugin.json)
+          echo "VERSION=$version  plugin.json=$plugin"
+          [ "$version" = "$plugin" ] || { echo "::error::VERSION and .claude-plugin/plugin.json disagree"; exit 1; }
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      # The same two pinned installs the CI template hands to a consumer repo.
+      - name: okf v0.3.0 and drift v0.10.1, pinned
+        run: |
+          go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.3.0
+          curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version v0.10.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - run: okf version && drift --version
+
+      - name: scaffold validates clean, and the gate fails it
+        run: |
+          set -eu
+          smoke=$(mktemp -d)
+          scripts/okf-scaffold.sh --name "Smoke" "$smoke"
+          if (cd "$smoke" && "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge); then
+            echo "::error::the gate passed a fresh scaffold; it must fail on the annotations and placeholders"
+            exit 1
+          fi
+          echo "ok — scaffold validates clean and the gate fails it, as it must until population"
