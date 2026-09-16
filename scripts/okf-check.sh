@@ -1,0 +1,152 @@
+#!/bin/sh
+# okf-check.sh — the knowledge gate `okf validate` alone is not.
+#
+#   okf-check.sh [bundle-dir]        (default: knowledge)      exit 0 = clean
+#
+# Measured on okf v0.3.0: `okf validate --strict --drift --stale` exits non-zero for a
+# missing `type`, a broken link, an orphan (a concept with no links in OR out) and an
+# expired `stale_after` — and for nothing else. A dead `code_refs` path is a WARNING that
+# leaves the exit code at 0 even under --strict. Indexes are never read. So this script:
+#
+#   1. runs okf's gate and treats its warning list as fatal;
+#   2. checks every index row resolves to a concept, is unique, and carries the concept's
+#      description verbatim — and every concept has a row in its category index;
+#   3. checks frontmatter the tool ignores: one-line description, ISO last_updated and
+#      stale_after, and for decisions/ an ISO date, a link to a concept outside
+#      decisions/, and a "Superseded by" link when status is deprecated (the status
+#      vocabulary itself, draft|stable|deprecated, okf --strict does enforce);
+#   4. fails on leftover template material: HTML comments (search indexes them), the
+#      population placeholders, and a section with no content;
+#   5. checks the reserved files: root okf_version, log.md, project/state.md's three lists.
+#
+# Warnings (do not fail): empty code_refs, an okf version other than the one measured.
+# Copy it into the target repo (scripts/okf-check.sh) so CI and CLAUDE.md can call it
+# without the skill installed. Needs sh, perl 5.14+ (JSON::PP is core) and okf.
+set -u
+bundle=${1:-knowledge}
+[ -d "$bundle" ] || { echo "no bundle at $bundle" >&2; exit 2; }
+command -v okf >/dev/null 2>&1 || { echo "okf not on PATH" >&2; exit 2; }
+
+ver=$(okf version 2>/dev/null | head -1)
+case "$ver" in
+  *v0.3.0*) ;;
+  *) echo "warn  okf is '$ver'; this gate was measured against v0.3.0 — re-check references/okf-quirks.md" ;;
+esac
+
+json=$(okf validate "$bundle" --strict --drift --stale --json 2>/dev/null)
+
+exec perl - "$bundle" "$json" <<'PERL'
+use strict; use warnings; use utf8;
+use JSON::PP; use File::Find; use File::Basename;
+binmode STDOUT, ':utf8';
+my ($bundle, $json) = @ARGV;
+my $fail = 0;
+sub bad  { $fail = 1; print "FAIL  @_\n" }
+sub warnl{ print "warn  @_\n" }
+sub slurp{ my $f=shift; open my $h,'<:utf8',$f or die "$f: $!"; local $/; <$h> }
+my $ISO = qr/^\d{4}-\d{2}-\d{2}$/;
+
+# 1. okf's own verdict, warnings included.
+my $v = eval { decode_json($json) };
+if (!$v) { bad("okf validate produced no JSON (run it without --json for the findings)") }
+else {
+  for my $e (@{ $v->{errors} || [] })        { bad("okf validate error: $e") }
+  for my $g (@{ $v->{gate_findings} || [] }) { bad("okf validate gate: $g") }
+  for my $w (@{ $v->{warnings} || [] })      { bad("okf validate warning (fatal here): $w") }
+  for my $l (@{ $v->{broken_links} || [] })  { bad("okf validate broken link: ".(ref $l ? join(' ', map { "$_=$l->{$_}" } sort keys %$l) : $l)) }
+  for my $o (@{ $v->{orphans} || [] })       { bad("okf validate orphan: $o") }
+  bad("okf validate: gate failed for a reason not listed above — run `okf validate $bundle --strict --drift --stale`") if !$v->{gate_passed} && !$fail;
+  bad("okf validate: not conformant") unless $v->{is_conformant};
+}
+
+# 2. Reserved files.
+my $root = slurp("$bundle/index.md");
+bad("index.md: missing okf_version: \"0.2\"") unless $root =~ /^okf_version:\s*"0\.2"/m;
+bad("log.md: missing") unless -f "$bundle/log.md";
+
+# Collect concepts and indexes.
+my (@concepts, @indexes);
+find({ no_chdir=>1, wanted=>sub {
+  return unless -f && /\.md$/;
+  (my $rel = $File::Find::name) =~ s{^\Q$bundle\E/}{};
+  if    ($rel =~ m{(^|/)index\.md$}) { push @indexes, $rel }
+  elsif ($rel =~ m{(^|/)log\.md$})   { }
+  else                               { push @concepts, $rel }
+}}, $bundle);
+@concepts = sort @concepts; @indexes = sort @indexes;
+
+# 3. Frontmatter and body of each concept.
+my %desc;                       # rel => description
+for my $rel (@concepts) {
+  my $text = slurp("$bundle/$rel");
+  my ($fm, $body) = $text =~ /\A---\n(.*?)\n---\n(.*)\z/s;
+  unless (defined $fm) { bad("$rel: no frontmatter"); next }
+  my %f; my @code_refs; my $cur='';
+  for my $line (split /\n/, $fm) {
+    next if $line =~ /^\s*#/ or $line =~ /^\s*$/;
+    if ($line =~ /^([A-Za-z_]+):\s*(.*)$/) { $cur=$1; my $val=$2; $val =~ s/^(["'])(.*)\1$/$2/; $f{$cur}=$val; $f{"_multi_$cur"}=1 if $val =~ /^[>|]/ }
+    elsif ($line =~ /^\s*-\s*(.+)$/)     { push @code_refs, $1 if $cur eq 'code_refs'; $f{"_list_$cur"}=1 }
+    elsif ($line =~ /^\s+\S/)            { $f{"_multi_$cur"}=1 }
+  }
+  bad("$rel: no type:")        unless length($f{type}//'');
+  if (!length($f{description}//'') or $f{"_multi_description"}) { bad("$rel: description: must be present and on ONE line (quote it if it holds # or ': ')") }
+  else { $desc{$rel} = $f{description} }
+  bad("$rel: last_updated: must be an ISO date (got '".($f{last_updated}//'')."')") unless ($f{last_updated}//'') =~ $ISO;
+  bad("$rel: stale_after: must be an ISO date") if exists $f{stale_after} && $f{stale_after} !~ $ISO;
+  warnl("$rel: code_refs is empty — `okf search --for-path` will never answer with this concept") unless @code_refs or $rel =~ m{^project/state\.md$};
+  bad("$rel: HTML comment left in a concept — replace the annotation, search indexes comment text") if $text =~ /<!--/;
+  bad("$rel: unfilled placeholder") if $text =~ /\[TO DETERMINE\]|\[TO BE DETERMINED|\[VERIFY AFTER|\[Project Name\]|\{\{[A-Z_0-9]+\}\}/;
+  # Empty sections: a heading whose content, up to the next heading, is blank.
+  (my $nb = $body) =~ s/```.*?```//sg;
+  # A heading followed only by a deeper heading is a container, not an empty section.
+  my @parts = split /^(?=#{1,6} )/m, $nb;
+  for my $i (0..$#parts) {
+    next unless $parts[$i] =~ /^(#{1,6}) ([^\n]*)\n(.*)\z/s;
+    my ($lvl,$h,$c) = (length $1, $2, $3);
+    next if $c =~ /\S/;
+    my $next_lvl = ($i < $#parts && $parts[$i+1] =~ /^(#{1,6}) /) ? length $1 : 0;
+    bad("$rel: section '$h' is empty") unless $next_lvl > $lvl;
+  }
+  # Links out of the body.
+  my @links = $nb =~ /\]\((\/[^)\s]+\.md)(?:#[^)]*)?\)/g;
+  if ($rel =~ m{^decisions/}) {
+    bad("$rel: decisions need date: as an ISO date") unless ($f{date}//'') =~ $ISO;
+    # okf --strict itself enforces draft|stable|deprecated; this names the rule when it fires.
+    bad("$rel: status: must be stable (in force), deprecated (superseded) or draft (got '".($f{status}//'')."')") unless ($f{status}//'') =~ /^(draft|stable|deprecated)$/;
+    bad("$rel: a decision must link to at least one concept outside decisions/ (an island of decisions passes okf validate)") unless grep { !m{^/decisions/} } @links;
+    bad("$rel: deprecated but no 'Superseded by' link to another decision") if ($f{status}//'') eq 'deprecated' && $nb !~ /Superseded by\s*\[[^\]]+\]\(\/decisions\/[^)]+\.md\)/i;
+    bad("$rel: a deprecated decision takes no stale_after") if ($f{status}//'') eq 'deprecated' && exists $f{stale_after};
+  }
+}
+
+# 4. Indexes both ways.
+my %rows_for;                   # index rel => [ [path, desc], ... ]
+for my $idx (@indexes) {
+  my $t = slurp("$bundle/$idx");
+  $t =~ s/<!--.*?-->//sg; $t =~ s/```.*?```//sg;
+  my (%seen);
+  while ($t =~ /^- \[([^\]]+)\]\((\/[^)\s]+)\) — (.*)$/mg) {
+    my ($title,$path,$d) = ($1,$2,$3);
+    (my $target = $path) =~ s{^/}{};
+    bad("$idx: duplicate row for $path") if $seen{$path}++;
+    push @{$rows_for{$idx}}, $target;
+    if ($target =~ m{(^|/)index\.md$}) { bad("$idx: row links to missing index $path") unless -f "$bundle/$target"; next }
+    if (!exists $desc{$target}) { bad("$idx: row links to missing concept $path") unless -f "$bundle/$target"; next }
+    bad("$idx: row for $path carries a description that is not the concept's:\n        index:   $d\n        concept: $desc{$target}") if $d ne $desc{$target};
+  }
+}
+for my $rel (@concepts) {
+  my $dir = dirname($rel); my $cat = $dir eq '.' ? 'index.md' : "$dir/index.md";
+  if (!-f "$bundle/$cat") { bad("$rel: category has no $cat"); next }
+  bad("$rel: not listed in $cat") unless grep { $_ eq $rel } @{ $rows_for{$cat} || [] };
+}
+
+# 5. State snapshot shape.
+if (-f "$bundle/project/state.md") {
+  my $s = slurp("$bundle/project/state.md");
+  for my $h ('Working', 'Not yet built', 'Known issues') { bad("project/state.md: missing the '**$h:**' list") unless $s =~ /^\*\*\Q$h\E:\*\*/m }
+} else { warnl("project/state.md: absent — the session bootstrap has no snapshot to read") }
+
+print "ok    $bundle: okf gate passed with no warnings, indexes consistent both ways, frontmatter complete, no template residue\n" unless $fail;
+exit $fail;
+PERL

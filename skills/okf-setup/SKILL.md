@@ -1,0 +1,208 @@
+---
+name: okf-setup
+description: |
+  Set up an OKF v0.2 knowledge bundle (github.com/okf-memory/okf-agent-memory) in a
+  repository with a FIXED layout: project/{state,stack,setup,conventions},
+  architecture/, decisions/ (one concept per decision), playbooks/ — validating
+  `--strict` from the first commit. Ships the population and resync prompts, the
+  CLAUDE.md section, and the gate for everything `okf validate` does not check.
+
+  MANUAL TRIGGER ONLY: invoke only when the user types /okf-setup.
+
+  Trigger on: "/okf-setup", "set up okf", "scaffold knowledge/", "new repo knowledge
+  bundle", "populate the knowledge bundle", "resync knowledge".
+---
+
+# /okf-setup — A fixed OKF knowledge bundle for a repository
+
+One of three skills in the `okf-drift` plugin: `/okf-setup` lays the bundle down,
+`/okf-write` records into it (the Grow step, with `drift link`), `/okf-read` recalls
+from it (search joined with `drift check`, so a stale concept is never served as a
+fact). The scripts the three share are at `${CLAUDE_PLUGIN_ROOT}/scripts/`.
+
+`okf init` writes two files and prescribes nothing else. This skill lays down a fixed
+layout whose value is the section prompts inside each concept — what belongs there and
+what does not — and a gate that fails until they are replaced by facts.
+
+Everything in `references/okf-quirks.md` was measured on okf v0.3.0 on 2026-09-16, and
+the design was reviewed adversarially by a second model the same day (the findings that
+survived are in the templates and the gate). Re-read the quirks after an upgrade before
+trusting a green validation.
+
+**Every path in this document is relative to the target repository root.**
+
+## What you get
+
+```
+knowledge/
+  index.md                  reserved — category map + the state link; no routing table
+  log.md                    reserved — dated history and rationale
+  project/
+    index.md
+    state.md                Reference — Working / Not yet built / Known issues: a SNAPSHOT
+    stack.md                Reference — what is used and under which constraints (the why is a decision)
+    setup.md                Reference — clone-to-running and what goes wrong on the way
+    conventions.md          Reference — naming, structure, patterns, the project's Verify Checklist
+  architecture/
+    index.md
+    architecture.md         Reference — flow, components, external deps, what does NOT exist here
+  decisions/
+    index.md                the format for a decision, then one row per decision
+  playbooks/
+    index.md                the format for a playbook, then one row per playbook
+scripts/okf-check.sh        the gate (Step 3)
+CLAUDE.md                   + Knowledge Bundle · Work Loop · Navigation (Step 3)
+```
+
+Five concepts, pre-wired with `## Related` links so `okf validate --strict` passes
+before a word is written. Decisions and playbooks are one file each, added during
+population and from real work.
+
+What is deliberately **not** here, and why: no routing table in the root index (the
+description already says "Load when…" and `okf search` routes); no format guides as
+concepts (they are agent instructions, they polluted search, and they needed decorative
+links to avoid being orphans — they live at the top of the reserved category indexes);
+no session-contract concept (the behavioural loop is policy and lives in `CLAUDE.md`;
+the project state is knowledge and lives in `project/state.md`); no single append-only
+decision log (one concept per decision is OKF's own shape and is what search, `status`
+and `stale_after` are per-concept for).
+
+## Who runs what
+
+Nothing here launches an interactive session. The scaffold script and the gate are the
+agent's; the population and resync prompts are run **by the agent in a session that can
+read the repo** — hand them over only when the user wants to run them elsewhere.
+
+## Step 0 — okf present, and which one
+
+```bash
+okf version          # expect: okf version v0.3.0 (OKF v0.2 specification)
+```
+
+Absent: `go install github.com/okf-memory/okf-agent-memory/cmd/okf@latest` and make sure
+`$(go env GOPATH)/bin` is on PATH. Another version: the gate prints a warning; re-run the
+probes in `references/okf-quirks.md` before believing either the tool or this skill.
+
+**Never run `okf create --help`** — it creates a concept called `--help.md`.
+
+## Step 1 — Is there a bundle already?
+
+```bash
+test -d knowledge && echo "BUNDLE EXISTS"
+scripts/okf-check.sh 2>/dev/null || "${CLAUDE_PLUGIN_ROOT}/scripts/okf-check.sh" knowledge
+```
+
+- No bundle → Step 2.
+- A bundle that passes the gate → the job is Step 5 (resync) or nothing. Do not
+  scaffold over it.
+- A bundle that fails on comments/placeholders → Step 4 (populate). Missing files from
+  the layout above: `okf-scaffold.sh --force .` adds only what is absent, never
+  overwrites.
+- A `.mex/` directory and no `knowledge/` → a migration, not a setup. The bristleworm
+  migration plan (`docs/plans/2026-09-15-001-chore-migrate-mex-to-okf-plan.md` in
+  offline-payment-attestation) is the worked example; its `Result` section lists what
+  the plan got wrong. Note that bundle predates this layout (it still has the routing
+  table, a session contract and a single decisions file) — converting it is a
+  separate, mechanical task.
+
+## Step 2 — Scaffold
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/okf-scaffold.sh" --name "<Project Name>" .
+```
+
+Copies the templates with the name and dates substituted (`stale_after` = +3 months on
+state, +6 on stack and setup), refuses an existing `knowledge/`, and runs
+`okf validate knowledge --strict --drift`. Expect
+`5 concept(s), 0 error(s), 0 warning(s); 0 broken link(s), 0 orphan(s)`. Anything else
+is a bug in this skill — report it rather than patching the output.
+
+## Step 3 — CLAUDE.md and the gate
+
+1. Merge `templates/CLAUDE-knowledge-section.md` into `CLAUDE.md`: **Knowledge
+   Bundle**, **Work Loop**, **Navigation**. If `CLAUDE.md` does not exist, create it
+   with the identity block first (`# <Project>`, *What This Is*, *Non-Negotiables*,
+   *Commands* — terse, it is loaded every turn) and the three sections after. If it
+   exists, add the three sections and touch nothing else; population fills the rest.
+   The daily commands live **only** in `CLAUDE.md`; `setup.md` does not repeat them.
+2. Copy `${CLAUDE_PLUGIN_ROOT}/scripts/okf-check.sh` to `scripts/okf-check.sh` in the
+   repo, executable. It must not depend on this plugin being installed: CI and the Work
+   Loop call it. It
+   **fails on a fresh scaffold** — annotation comments and placeholders — which is the
+   correct answer until Step 4.
+
+What the gate adds to `okf validate --strict --drift --stale` (all measured absent from
+the tool): warnings treated as failures (a dead `code_refs` path is a warning at exit
+0); index rows resolve, are unique, and carry the concept's description verbatim, and
+every concept has a row in its category index; one-line descriptions, ISO
+`last_updated`/`stale_after`; decisions have an ISO `date`, a link to a concept outside
+`decisions/` (an island of decisions passes `--strict`), and a `Superseded by` link when
+`status: deprecated` (the vocabulary `draft|stable|deprecated` is okf's own and
+`--strict` enforces it — `active` is rejected); no HTML comment left in
+a concept (search indexes comment text), no placeholder, no empty section; root
+`okf_version`, `log.md`, and `state.md`'s three lists. Empty `code_refs` is a warning:
+coverage is a judgement.
+
+## Step 4 — Populate
+
+`references/populate-prompt.md`: **A** for an existing codebase, **B** for nothing
+built yet. Run A yourself when you are in a session with the repo. It replaces the
+annotations with facts (and deletes them), records 3-6 decisions from `git log`, seeds
+3-5 playbooks, wires the links, and ends with the gate and the list of every
+`[TO DETERMINE]` left, with what would fill it.
+
+Before running A on a repo with a README or `docs/`: those are summarised and listed
+under `sources:`, never copied. Say so in the hand-over.
+
+Verify with a **fresh** session: "Read `knowledge/index.md` and
+`knowledge/project/state.md`, then tell me what you know about this project." Then
+`okf search` three phrases you would actually type and check the first hit.
+
+Commit the bundle, `CLAUDE.md` and `scripts/okf-check.sh` together. Nothing publishes;
+no version bump.
+
+## Step 5 — Keep it true
+
+The Work Loop in `CLAUDE.md` is the mechanism: state, concept, decision or playbook,
+dates, log, gate. When that has slipped, `references/sync-prompt.md` is the resync: a
+zero-token check (validate, the gate, and `git log --since=<last_updated> --
+<code_refs>` per concept — the closest thing to grounding drift OKF affords) followed
+by a surgical-edit prompt. A review advances **both** `last_updated` and `stale_after`,
+or the concept stays expired.
+
+## Rules the templates encode
+
+- **`type:` is the only field okf requires.** `title`, `description`, `tags`, `status`,
+  `stale_after`, `sources`, `code_refs` are recognised; `last_updated` and `date` are
+  carried and ignored — the gate checks them.
+- **A concept needs one link, in either direction, in a concept body.** Index rows do
+  not count. Link what a reader would follow next; no quotas, no decorative edges.
+- **Index rows carry the concept's `description:` verbatim.** The gate compares them
+  both ways because `okf` reads no index.
+- **`description:` on one line, quoted when it contains `#` or `: `.** YAML truncated
+  one at `(issue #48)` during the migration.
+- **`code_refs` are repo-relative, narrow, and must exist.** The directories or
+  boundary files the concept governs — not `src/` on everything, which makes
+  `--for-path` noise and the resync loop permanently hot.
+- **Comments and links inside comments count.** Search indexes comment text; okf
+  resolves a link inside a comment. Annotations are replaced and deleted.
+- **`index.md` and `log.md` are reserved at every level; `README.md` is not.**
+- **Decisions: slug is permanent, file is never deleted.** In force → `status: stable`;
+  superseded → `status: deprecated`, a `Superseded by` link, the new file links back, no
+  `stale_after`. `--strict` rejects any other status word.
+- **`state.md` is a snapshot.** Working 3-7; Not yet built and Known issues 0-7 with an
+  explicit "None known." when empty; history goes to `log.md`.
+
+## What OKF does not give you, said once
+
+No code graph, no symbol-level drift, no `impact`. `code_refs` + `--drift` tell you a
+path vanished; the `git log` loop tells you a governed path changed. Whether the prose
+is still *true* is the agent's job in the Work Loop, and that is the trade this layout
+makes for a corpus that outlives the tool.
+
+## Report
+
+Give the user: the okf version; the validate line after scaffolding; the gate result
+after population with every placeholder left and why; the decisions recorded; the
+three search checks; the files to commit; and anything in `references/okf-quirks.md`
+the run contradicted.
