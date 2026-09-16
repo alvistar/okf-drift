@@ -38,19 +38,37 @@ command -v okf   >/dev/null 2>&1 || { echo "okf not on PATH" >&2; exit 2; }
 command -v drift >/dev/null 2>&1 || { echo "drift not on PATH — okf-recall needs it to tell a fact from a stale one; install drift or use \`okf search\` knowing it cannot" >&2; exit 2; }
 [ -f drift.lock ] || { echo "no drift.lock at the repository root — okf-recall will not serve concepts it cannot check; run scripts/okf-drift-bootstrap.sh first" >&2; exit 2; }
 
-search=$(okf search "$terms" "$bundle" --json 2>/dev/null)
-check=$(drift check --format json 2>/dev/null)
+# Keep payloads out of argv (Linux's per-argument limit is 131072 bytes), just as
+# the gate does. Failed searches are not an empty result set; preserve stderr.
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/okf-recall.XXXXXX") || exit 2
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 2' INT TERM
+okf search "$terms" "$bundle" --json > "$tmp/search.json" || { echo "okf-recall: okf search failed" >&2; exit 2; }
+drift check --format json > "$tmp/drift.json"
+drift_status=$?
 
-exec perl - "$bundle" "$terms" "$search" "$check" <<'PERL'
+perl - "$bundle" "$terms" "$tmp/search.json" "$tmp/drift.json" "$drift_status" <<'PERL'
 use strict; use warnings; use utf8;
-use JSON::PP;
+use JSON::PP; use Cwd qw(abs_path); use File::Spec;
 binmode STDOUT, ':utf8';
-my ($bundle, $terms, $search_json, $check_json) = @ARGV;
-
-my $hits = eval { decode_json($search_json) } || [];
-$hits = [] unless ref $hits eq 'ARRAY';
-my $chk  = eval { decode_json($check_json) };
-unless ($chk) { print STDERR "drift check produced no JSON — run `drift check --format json`\n"; exit 2 }
+my ($bundle, $terms, $search_file, $check_file, $drift_status) = @ARGV;
+sub unusable { print STDERR "okf-recall: @_\n"; exit 2 }
+sub slurp_raw { my $f=shift; open my $h,'<:raw',$f or unusable("$f: $!"); local $/; my $c=<$h>; defined $c ? $c : '' }
+my $hits = eval { decode_json(slurp_raw($search_file)) };
+unusable("okf search produced no valid JSON array") unless ref $hits eq 'ARRAY';
+my $chk = eval { decode_json(slurp_raw($check_file)) };
+unusable("drift check produced no valid docs array") unless ref $chk eq 'HASH' && ref $chk->{docs} eq 'ARRAY';
+# drift exits 1 for stale/broken findings. Retain those findings, but an unrelated
+# execution failure or an inconsistent exit-1/fresh report is never trustworthy.
+unusable("drift check exited $drift_status") if $drift_status > 1;
+for my $d (@{ $chk->{docs} }) {
+  unusable("drift check returned an invalid doc") unless ref $d eq 'HASH' && defined $d->{path};
+}
+unusable("drift check exited 1 without stale or broken findings")
+  if $drift_status == 1 && !grep { ($_->{result} // '') =~ /^(stale|broken)$/ } @{ $chk->{docs} };
+# drift runs from the repository root. Normalize equivalent bundle spellings to
+# that same namespace; an unknown join must fail below, never imply freshness.
+$bundle = File::Spec->abs2rel(abs_path($bundle), abs_path('.'));
 
 # path => doc entry, for the bundle only.
 my %doc;
@@ -69,13 +87,17 @@ sub last_updated {
 
 my (@fresh, @held);
 for my $h (@$hits) {
-  my $id   = $h->{concept_id} // next;
+  unusable("okf search returned a hit without a concept_id")
+    unless ref $h eq 'HASH' && defined $h->{concept_id} && !ref $h->{concept_id} && length $h->{concept_id};
+  my $id   = $h->{concept_id};
   my $path = "$bundle/$id.md";
   my $d    = $doc{$path};
-  # A concept drift has never seen (not in the lock, no anchors) still comes back fresh
-  # from `drift check`; an unknown path is the only case with no verdict at all.
-  if ($d && ($d->{result} // 'fresh') ne 'fresh') { push @held, [$h, $d] }
-  else                                           { push @fresh, $h }
+  # Unbound concepts still receive an explicit fresh verdict from drift. Missing
+  # or unknown verdicts indicate an incomplete report, not permission to quote.
+  unusable("no valid drift verdict for $path; withholding all search results")
+    unless $d && ($d->{result} // '') =~ /^(fresh|stale|broken)$/;
+  if ($d->{result} ne 'fresh') { push @held, [$h, $d] }
+  else                        { push @fresh, $h }
 }
 
 sub head_line {
@@ -131,3 +153,5 @@ for my $e (@held) {
 }
 exit 0;
 PERL
+rc=$?
+exit "$rc"

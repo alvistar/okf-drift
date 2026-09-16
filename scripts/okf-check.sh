@@ -43,7 +43,9 @@ case "$ver" in
   *) echo "warn  okf is '$ver'; this gate was measured against v0.3.0 — re-check references/okf-quirks.md" ;;
 esac
 
-json=$(okf validate "$bundle" --strict --drift --stale --json 2>/dev/null)
+json=$(okf validate "$bundle" --strict --drift --stale --json)
+okf_status=$?
+drift_status=0
 
 # Step 6's input. Empty string = "not adopted here", which is a warning, not a failure.
 drift_json=""
@@ -53,8 +55,10 @@ if ! command -v drift >/dev/null 2>&1; then
 elif [ ! -f "$parent/drift.lock" ]; then
   echo "warn  no drift.lock in $parent — step 6 (content drift) did not run; bootstrap it with okf-drift-bootstrap.sh"
 else
-  drift_json=$( (cd "$parent" && drift check --format json 2>/dev/null) )
-  [ -n "$drift_json" ] || echo "warn  \`drift check --format json\` produced nothing — step 6 did not run"
+  drift_json=$( (cd "$parent" && drift check --format json) )
+  drift_status=$?
+  # An adopted checker failing at runtime is not the optional, unadopted case.
+  [ -n "$drift_json" ] || { echo "okf-check: drift check produced no JSON (exit $drift_status)" >&2; exit 2; }
 fi
 
 # Both blobs reach perl through FILES, never argv. Linux caps a SINGLE argument at
@@ -70,11 +74,11 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 printf '%s' "$json" > "$tmp/okf.json" || exit 2
 printf '%s' "$drift_json" > "$tmp/drift.json" || exit 2
 
-perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" <<'PERL'
+perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" "$okf_status" "$drift_status" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP; use File::Find; use File::Basename;
 binmode STDOUT, ':utf8';
-my ($bundle, $json_file, $drift_file, $parent) = @ARGV;
+my ($bundle, $json_file, $drift_file, $parent, $okf_status, $drift_status) = @ARGV;
 # Read as raw bytes and decode explicitly: decode_json expects UTF-8 octets, and a
 # ':utf8' read would hand it characters instead.
 sub slurp_raw { my $f=shift; open my $h,'<:raw',$f or die "$f: $!"; local $/; my $c=<$h>; defined $c ? $c : '' }
@@ -198,6 +202,7 @@ if (length $drift_json) {
   if (!$dc) { bad("drift check produced no JSON — run `drift check --format json` from the bundle's parent") }
   else {
     my $checked = 0;
+    my %checked_paths;
     # drift runs from $parent and reports paths relative to it, so the prefix to match is
     # the bundle's name WITHIN $parent, never $bundle itself. Matching $bundle broke the
     # moment it was absolute or reached from a subdirectory: no drift path ever started
@@ -210,13 +215,14 @@ if (length $drift_json) {
       my $p = $d->{path} // next;
       next unless $p =~ m{^\Q$bundle_rel\E/};
       $checked++;
+      $checked_paths{$p} = 1;
       # drift keeps evaluating a deleted doc's bindings from the lock alone and never
       # fails on it (measured: a `git rm`ed concept kept reporting fresh anchors).
       unless (-f "$parent/$p") {
         bad("$p: bound in drift.lock but the file no longer exists — `drift unlink $p <target>` for each of its targets, or re-link the targets to the concept that replaced it");
         next;
       }
-      my $r = $d->{result} // 'fresh';
+      my $r = $d->{result} // 'missing';
       next if $r eq 'fresh';
       for my $a (@{ $d->{anchors} || [] }) {
         next if ($a->{result} // '') eq 'fresh';
@@ -236,6 +242,12 @@ if (length $drift_json) {
         unless grep { ($_->{result} // '') ne 'fresh' } @{ $d->{anchors} || [] },
                grep { ($_->{result} // '') eq 'broken' } @{ $d->{links} || [] };
     }
+    # One matching index is not evidence that the concepts were checked. A partial
+    # report must not silently certify a doc drift omitted from its output.
+    for my $rel (@concepts) {
+      bad("$bundle_rel/$rel: no drift verdict; step 6 did not check this concept")
+        unless $checked_paths{"$bundle_rel/$rel"};
+    }
     my $anchors = 0;
     $anchors += scalar @{ $_->{anchors} || [] } for grep { ($_->{path} // '') =~ m{^\Q$bundle_rel\E/} } @{ $dc->{docs} || [] };
     # A gate that checked nothing must never report freshness. If the bundle has concepts
@@ -249,6 +261,9 @@ if (length $drift_json) {
   }
 }
 
+# Keep structured stale diagnostics above, but never erase a failed subprocess status.
+bad("okf validate exited $okf_status") if $okf_status && !$fail;
+bad("drift check exited $drift_status") if $drift_status && !$fail;
 print "ok    $bundle: okf gate passed with no warnings, indexes consistent both ways, frontmatter complete, no template residue, $drift_note\n" unless $fail;
 exit $fail;
 PERL
