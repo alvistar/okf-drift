@@ -44,7 +44,8 @@ establish, and add one line on what would establish it.
 - `code_refs:` repo-relative paths this concept GOVERNS — the ones
   `okf search --for-path` should answer with it. Narrow directories or boundary
   files, not `src/` on everything. Every path must exist.
-- `sources:` the docs or files the content came from.
+- `sources:` the docs or files the content came from, each as
+  `- resource: <repo-relative path or URL>` — okf --strict rejects a bare string.
 - `last_updated:` today; keep the `stale_after:` the scaffold set.
 - stack says WHAT and under which constraints; the WHY goes to decisions/.
 - Existing documentation: summarise and link, never copy.

@@ -15,10 +15,11 @@ description: |
 
 # /okf-setup — A fixed OKF knowledge bundle for a repository
 
-One of three skills in the `okf-drift` plugin: `/okf-setup` lays the bundle down,
+One of four skills in the `okf-drift` plugin: `/okf-setup` lays the bundle down in a
+repo that has none, `/okf-migrate` builds it from an existing mex scaffold,
 `/okf-write` records into it (the Grow step, with `drift link`), `/okf-read` recalls
 from it (search joined with `drift check`, so a stale concept is never served as a
-fact). The scripts the three share are at `${CLAUDE_PLUGIN_ROOT}/scripts/`.
+fact). The scripts the four share are at `${CLAUDE_PLUGIN_ROOT}/scripts/`.
 
 `okf init` writes two files and prescribes nothing else. This skill lays down a fixed
 layout whose value is the section prompts inside each concept — what belongs there and

@@ -43,6 +43,17 @@ Link form does not matter to the checker: `[t](/project/stack.md)` (root-relativ
 form under an `# Related Concepts` H1; the templates use the root-relative form under
 `## Related`. Pick one per bundle and stay with it — the reader is a human.
 
+**Every `.md` link in a concept body is a concept link**, including one that leaves
+the bundle. Measured under `--strict`: `[t](../../docs/a.md)`, `[t](../../docs/a.md#h)`
+and `[t](/docs/a.md)` are all `broken concept link`; a link to a category `index.md`
+is broken too ("reserved index.md is navigation, not a concept"). **Not counted at
+all**: an angle-bracket destination `[t](<../../docs/a.md>)`, a non-`.md` target
+(`../../src/a.ts`), an `https://` URL, and a reference-style link (`[t][r]` +
+`[r]: ../../docs/a.md`). The angle form is CommonMark and renders as a normal link, so
+it is how a concept cites a repo document outside `knowledge/` — with the path listed
+under `sources:` as well. `okf-migrate.py` rewrites outbound links that way (19 in the
+ai-review scaffold).
+
 ## `okf create` — prefer writing the file
 
 - `okf create --help` **creates a concept named `--help.md`** at the bundle root and adds
@@ -93,8 +104,12 @@ carried through and ignored, which is why the gate checks their format.
 `gate_findings` entry and exit 1 (`status 'active' is not draft|stable|deprecated`,
 measured). It is reported neither as an error nor as a warning — a script that reads
 only those two lists misses it; read `gate_passed`. So a decision in force is `stable`
-and a superseded one is `deprecated`; there is no "active". `sources` is not validated
-as paths.
+and a superseded one is `deprecated`; there is no "active".
+
+**`sources` entries must be mappings with a `resource` key** under `--strict`: a bare
+string item is `sources[N] has no 'resource'` in `gate_findings`, exit 1 (measured on the
+ai-review migration dry run — 11 findings from links the migrator had listed as plain
+paths). Write `- resource: docs/x.md`; whether the path exists is not checked.
 
 ## Search
 
