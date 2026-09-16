@@ -51,8 +51,8 @@ knowledge/
     index.md                the format for a decision, then one row per decision
   playbooks/
     index.md                the format for a playbook, then one row per playbook
-.okf-drift-version          the okf-drift tag this repo runs the scripts from (Step 3)
-scripts/okf-shim.sh         fetches and caches a script at that tag (Step 3)
+.okf-drift-version          lockfile: the okf-drift tag, then one <sha256>  <name> per script (Step 3)
+scripts/okf-shim.sh         fetches, sha256-verifies and caches a script at that tag (Step 3)
 scripts/okf-check.sh        two-line wrapper — the gate, six steps, drift join included (Step 3)
 scripts/okf-recall.sh       two-line wrapper — search joined with drift, for /okf-read (Step 3)
 drift.lock                  one content signature per (concept, code_ref) pair (Step 3b)
@@ -130,27 +130,40 @@ is a bug in this skill — report it rather than patching the output.
    *Commands* — terse, it is loaded every turn) and the three sections after. If it
    exists, add the three sections and touch nothing else; population fills the rest.
    The daily commands live **only** in `CLAUDE.md`; `setup.md` does not repeat them.
-2. Install the shim and pin the tag. CI, the Work Loop and `/okf-read` all call the gate
-   and the recall script **from the repo**, so neither may depend on this plugin being
-   installed — but a vendored copy of either drifts from the plugin silently, and nothing
-   in the repo can see that it has. So the repo carries a one-line pin and two two-line
-   wrappers instead:
+2. Install the shim and pin the tag **by content**. CI, the Work Loop and `/okf-read` all
+   call the gate and the recall script **from the repo**, so neither may depend on this
+   plugin being installed — but a vendored copy of either drifts from the plugin silently,
+   and nothing in the repo can see that it has. So the repo carries a lockfile and two
+   two-line wrappers instead:
 
    ```bash
    mkdir -p scripts
    cp "${CLAUDE_PLUGIN_ROOT}/scripts/okf-shim.sh" scripts/okf-shim.sh
-   printf 'v%s\n' "$(jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")" > .okf-drift-version
+   "${CLAUDE_PLUGIN_ROOT}/scripts/okf-pin.sh" "v$(jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")"
    for s in okf-check okf-recall; do
      printf '#!/bin/sh\n# %s.sh from alvistar/okf-drift at the tag in .okf-drift-version — see scripts/okf-shim.sh.\nexec "$(dirname "$0")/okf-shim.sh" %s.sh "$@"\n' "$s" "$s" > "scripts/$s.sh"
    done
    chmod +x scripts/okf-shim.sh scripts/okf-check.sh scripts/okf-recall.sh
    ```
 
+   **Never write `.okf-drift-version` by hand.** `okf-pin.sh` fills it from the
+   `SHA256SUMS` asset of that GitHub Release — line 1 the tag, then one `<sha256>  <name>`
+   line per script. A hand-copied digest is a digest of whatever you happened to download.
+   Without `${CLAUDE_PLUGIN_ROOT}` the same file is:
+
+   ```bash
+   { echo v0.6.0; gh release download v0.6.0 -R alvistar/okf-drift -p SHA256SUMS -O -; } > .okf-drift-version
+   # or: curl -fsSL https://github.com/alvistar/okf-drift/releases/download/v0.6.0/SHA256SUMS
+   ```
+
    The shim resolves `$OKF_DRIFT_ROOT/scripts/<name>` first when that variable is set (a
-   local plugin checkout, for developing the plugin itself), otherwise fetches the script
-   once from `raw.githubusercontent.com/alvistar/okf-drift/<tag>/scripts/<name>` into
-   `${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/<tag>/`. Commit all four paths. Upgrading the
-   repo later is editing the one line in `.okf-drift-version`.
+   local plugin checkout, for developing the plugin itself, exempt from the hash check),
+   otherwise fetches the script once from
+   `raw.githubusercontent.com/alvistar/okf-drift/<tag>/scripts/<name>` into
+   `${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/<tag>/`, **verifying the sha256 before it
+   caches and again on every later run**. A tag can be moved; a digest cannot, and a
+   truncated or damaged cache is an exit 2, not a green gate. Commit all four paths.
+   Upgrading the repo later is re-running `okf-pin.sh` with the new tag.
 
    Run `scripts/okf-check.sh knowledge` once now to prove the fetch works. It
    **fails on a fresh scaffold** — annotation comments and placeholders — which is the

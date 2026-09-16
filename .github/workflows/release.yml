@@ -50,7 +50,19 @@ jobs:
           fi
           cat release-notes.md
 
+      # The content pin a consumer repo's .okf-drift-version is written from. A tag can be
+      # moved; a sha256 cannot. Basenames, `sha256sum` output format, so the asset can be
+      # concatenated under the tag line and read back by `shasum -c`.
+      - name: SHA256SUMS over the scripts at this tag
+        run: |
+          set -eu
+          ( cd scripts && sha256sum *.sh *.py ) > SHA256SUMS
+          [ -s SHA256SUMS ] || { echo "::error::SHA256SUMS came out empty"; exit 1; }
+          grep -q '^[0-9a-f]\{64\}  okf-check\.sh$' SHA256SUMS \
+            || { echo "::error::SHA256SUMS has no okf-check.sh line"; exit 1; }
+          cat SHA256SUMS
+
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-notes.md
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-notes.md SHA256SUMS

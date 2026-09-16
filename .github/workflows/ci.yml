@@ -74,30 +74,59 @@ jobs:
 
       - run: okf version && drift --version
 
-      - name: the shim resolves both ways
+      # Four content-pin properties, against a real tag so the fetch is real. (a) and (b)
+      # FAIL against the 0.5.1 shim, which validated a download only by "first line starts
+      # with #!": two lines of a 221-line script were accepted, cached forever, and the
+      # gate then exited 0 having checked nothing.
+      - name: the shim pins by content — selftest against a real tag
+        run: scripts/okf-shim-selftest.sh v0.5.1
+
+      - name: OKF_DRIFT_ROOT overrides the pin, and an unfetchable tag is fatal
         run: |
           set -eu
           repo=$(mktemp -d)
           mkdir -p "$repo/scripts"
           cp scripts/okf-shim.sh "$repo/scripts/okf-shim.sh"
-          printf 'v0.4.0\n' > "$repo/.okf-drift-version"      # a tag that exists; the fetch must be real
           printf '#!/bin/sh\nexec "$(dirname "$0")/okf-shim.sh" okf-check.sh "$@"\n' > "$repo/scripts/okf-check.sh"
           chmod +x "$repo/scripts/okf-shim.sh" "$repo/scripts/okf-check.sh"
-          # No bundle: the fetched gate's own "no bundle at" is proof it ran.
-          if out=$(cd "$repo" && ./scripts/okf-check.sh knowledge 2>&1); then
-            echo "::error::the gate passed with no bundle"; exit 1
-          fi
-          case "$out" in *"no bundle at knowledge"*) echo "ok — fetched from the pinned tag and ran: $out" ;;
-                         *) echo "::error::unexpected output from the shimmed gate: $out"; exit 1 ;; esac
-          test -x "${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/v0.4.0/okf-check.sh" || { echo "::error::nothing was cached"; exit 1; }
-          # $OKF_DRIFT_ROOT wins over the pin, and a bad pin must be fatal, not silent.
-          printf 'v0.0.0-does-not-exist\n' > "$repo/.okf-drift-version"
+          printf 'v0.0.0-does-not-exist\n%s  okf-check.sh\n' \
+            "0000000000000000000000000000000000000000000000000000000000000000" > "$repo/.okf-drift-version"
+          # A local plugin checkout wins over the pin and is exempt from the hash check —
+          # the file being edited cannot match a published digest.
           (cd "$repo" && OKF_DRIFT_ROOT="$GITHUB_WORKSPACE" ./scripts/okf-check.sh knowledge 2>&1 | grep -q 'no bundle at knowledge') \
             || { echo "::error::OKF_DRIFT_ROOT did not override the pin"; exit 1; }
           if (cd "$repo" && ./scripts/okf-check.sh knowledge >/dev/null 2>&1); then
             echo "::error::a nonexistent tag did not fail the gate"; exit 1
           fi
           echo "ok — OKF_DRIFT_ROOT overrides the pin, and an unfetchable tag is fatal"
+
+      # SHA256SUMS is published from 0.6.0 onwards, so on the commit that introduces it
+      # there is not yet a release carrying the asset: find the newest one that does, and
+      # say so rather than pass silently when none exists.
+      - name: okf-pin.sh writes a lockfile the shim accepts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag=''
+          for t in $(gh release list -R alvistar/okf-drift --limit 20 --json tagName --jq '.[].tagName'); do
+            if gh release view "$t" -R alvistar/okf-drift --json assets --jq '.assets[].name' | grep -qx SHA256SUMS; then
+              tag="$t"; break
+            fi
+          done
+          if [ -z "$tag" ]; then echo "::notice::no published release carries SHA256SUMS yet — okf-pin.sh untested"; exit 0; fi
+          echo "using $tag"
+          repo=$(mktemp -d)
+          mkdir -p "$repo/scripts"
+          cp scripts/okf-shim.sh "$repo/scripts/okf-shim.sh"
+          printf '#!/bin/sh\nexec "$(dirname "$0")/okf-shim.sh" okf-check.sh "$@"\n' > "$repo/scripts/okf-check.sh"
+          chmod +x "$repo/scripts/okf-shim.sh" "$repo/scripts/okf-check.sh"
+          scripts/okf-pin.sh "$tag" "$repo"
+          head -1 "$repo/.okf-drift-version" | grep -qx "$tag" || { echo "::error::line 1 is not the tag"; exit 1; }
+          grep -q '^[0-9a-f]\{64\}  okf-check\.sh$' "$repo/.okf-drift-version" || { echo "::error::no okf-check.sh pin"; exit 1; }
+          out=$( (cd "$repo" && XDG_CACHE_HOME="$repo/cache" ./scripts/okf-check.sh knowledge) 2>&1 || true )
+          case "$out" in *"no bundle at knowledge"*) echo "ok — okf-pin.sh's lockfile verified and the gate ran" ;;
+                         *) echo "::error::gate did not run on an okf-pin.sh lockfile: $out"; exit 1 ;; esac
 
       - name: scaffold validates clean, and the gate fails it
         run: |

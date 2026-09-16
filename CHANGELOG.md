@@ -9,6 +9,58 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-16
+
+Three defects in the 0.5.x shim, all measured on a consumer repo with five worktrees on
+2026-09-16. Each of them could leave a gate green that had checked nothing.
+
+1. **A truncated download was accepted.** The only validation was "the first line starts
+   with `#!`". Two lines of a 221-line `okf-check.sh` passed it, were cached, and the gate
+   then exited 0 having checked nothing — silently green, and cached forever, because the
+   cache key is the tag.
+2. **The download went to a fixed `$cached.part`.** Five worktrees of the same repo running
+   their first gate at once wrote one another's file, which could leave a damaged script
+   that passed (1) and was then cached under the tag for good.
+3. **A git tag is not fixed content.** A moved tag changes what is fetched while
+   `.okf-drift-version` says the same thing. Nothing pinned the bytes.
+
+### Changed
+
+- **`.okf-drift-version` is a lockfile, not a tag.** Line 1 is still the tag; every other
+  line is `<sha256>  <name>` in `sha256sum` output format, so `shasum -c` reads it. The
+  filename is unchanged — consumer repos already carry it, and the shim tells a 0.5.x
+  one-line file apart by finding no pin line for the script it was asked for.
+- **`scripts/okf-shim.sh` pins by content.** It downloads to a unique `mktemp` file next to
+  the cache (fixing 2), computes sha256 with `shasum -a 256` or `sha256sum`, and moves it
+  into the cache only on a match (fixing 1 and 3). It then re-hashes the **cached** file on
+  every later run: a cache damaged after the fact is an error, not a green gate. Every
+  failure — a 404, an empty body, a digest mismatch on download or in cache, a missing or
+  empty lockfile, a lockfile with no pin line for the requested script, or neither hashing
+  tool on `PATH` — exits 2 with one line naming expected vs found.
+  `$OKF_DRIFT_ROOT` still wins over the pin and is **exempt** from the hash check by
+  design: the file being edited cannot match a published digest. The file says so.
+- `.github/workflows/release.yml` computes `SHA256SUMS` over `scripts/*.sh` and
+  `scripts/*.py` at the tag, asserts it is non-empty and mentions `okf-check.sh`, and
+  attaches it to the GitHub Release.
+- `/okf-setup` Step 3 and `/okf-migrate` Step 4 write the consumer lockfile **from that
+  asset** and say never to write it by hand, with the exact `okf-pin.sh` and
+  `gh release download` commands. `knowledge.yml`'s header says the fetched gate is
+  digest-checked, and that a warm cache is re-verified rather than trusted.
+
+### Added
+
+- `scripts/okf-pin.sh <tag> [repo-root]` — writes a consumer repo's `.okf-drift-version`
+  from that release's `SHA256SUMS` (via `gh`, falling back to the asset's URL). Refuses an
+  empty asset or one with no `okf-check.sh` line.
+- `scripts/okf-shim-selftest.sh [tag]` — the regression test, run by `ci.yml` against a
+  real tag. Four properties, of which (a) and (b) fail against the 0.5.1 shim: a truncated
+  cached script is rejected with exit 2 and the gate does not run; a cached script with one
+  byte changed is rejected; a lockfile disagreeing with the tag's real content is rejected
+  on download and nothing is cached; and the happy path still fetches, verifies, caches and
+  runs the gate. It also checks that a lockfile with no pin line for the script is an error.
+- `ci.yml` additionally proves `okf-pin.sh` writes a lockfile the shim accepts, against the
+  newest release that carries the asset.
+
 ## [0.5.1] - 2026-09-16
 
 ### Changed

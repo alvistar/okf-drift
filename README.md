@@ -73,8 +73,8 @@ repository, so neither may depend on this plugin being installed. Since 0.5.0 th
 **pinned fetch**, not a copy:
 
 ```
-.okf-drift-version        one line: v0.5.0
-scripts/okf-shim.sh       resolves and caches a script at that tag
+.okf-drift-version        the lockfile: a tag, then one <sha256>  <name> line per script
+scripts/okf-shim.sh       resolves, verifies and caches a script at that tag
 scripts/okf-check.sh      two lines: exec "$(dirname "$0")/okf-shim.sh" okf-check.sh "$@"
 scripts/okf-recall.sh     two lines, likewise
 drift.lock                shared state, exactly like the bundle
@@ -83,14 +83,57 @@ drift.lock                shared state, exactly like the bundle
 
 A vendored copy of the gate drifts from the plugin silently and nothing in either
 repository can see that it has. A pinned one moves only when `.okf-drift-version` moves,
-and that is a one-line diff a reviewer can read. Upgrading a consumer repo is editing that
-line.
+and that is a diff a reviewer can read.
 
-The shim looks for `$OKF_DRIFT_ROOT/scripts/<name>` first, so a local checkout of this
-repository overrides the pin while the plugin is being developed. Otherwise it fetches once
-into `${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/<tag>/` and re-uses it. A download that
-404s, arrives empty, or does not start with `#!` is fatal — running nothing must never look
-like a clean gate.
+### The lockfile
+
+Since 0.6.0 `.okf-drift-version` is a lockfile, not a tag:
+
+```
+v0.6.0
+c4f9…77c8  okf-check.sh
+9a1b…02de  okf-recall.sh
+…
+```
+
+Line 1 is the tag. Every other line is `<sha256>  <name>` in `sha256sum` output format, so
+`shasum -c .okf-drift-version` (minus the first line) verifies a cache by hand. **Write it
+with `okf-pin.sh`, never by hand** — a hand-copied digest is a digest of whatever you
+happened to download:
+
+```sh
+"${CLAUDE_PLUGIN_ROOT}/scripts/okf-pin.sh" v0.6.0     # run in the consumer repo
+```
+
+`okf-pin.sh` takes the digests from the `SHA256SUMS` asset the release workflow attaches to
+the GitHub Release, which is computed over `scripts/*.sh` and `scripts/*.py` at the tag.
+Equivalently, by hand:
+
+```sh
+{ echo v0.6.0; gh release download v0.6.0 -R alvistar/okf-drift -p SHA256SUMS -O -; } > .okf-drift-version
+```
+
+Upgrading a consumer repo is re-running `okf-pin.sh` with the new tag.
+
+### How the shim resolves
+
+`$OKF_DRIFT_ROOT/scripts/<name>` first, so a local checkout of this repository overrides
+the pin while the plugin is being developed — that path is **exempt** from the hash check
+by design, since the file being edited cannot match a published digest. Otherwise the
+script is fetched once into `${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/<tag>/` and re-used.
+
+Everything below exits 2 with one line naming expected vs found, because running nothing
+must never look like a clean gate:
+
+- a 404, an empty download, or a download whose sha256 is not the pinned one;
+- a **cached** file whose sha256 is not the pinned one — re-checked on *every* run, not
+  only on download;
+- a lockfile that is absent, empty, has no tag, or pins no digest for the script asked for;
+- neither `shasum` nor `sha256sum` on `PATH`, so nothing could be verified.
+
+Three defects made this necessary, all measured on a consumer repository with five
+worktrees on 2026-09-16 — see `CHANGELOG.md` 0.6.0. `scripts/okf-shim-selftest.sh` is the
+regression test; CI runs it against a real tag.
 
 ## Repository layout
 
@@ -102,6 +145,8 @@ scripts/okf-recall.sh               search joined with drift; withholds what it 
 scripts/okf-drift-bootstrap.sh      one drift link per code_refs entry
 scripts/okf-migrate.py              inventory / resolve / convert, for a mex scaffold
 scripts/okf-shim.sh                 what a consumer repo installs instead of a copy of the above
+scripts/okf-pin.sh                  writes a consumer repo's .okf-drift-version from a release's SHA256SUMS
+scripts/okf-shim-selftest.sh        the shim's regression test, run by CI against a real tag
 skills/okf-{setup,migrate,write,read}/SKILL.md
 skills/okf-setup/templates/         the bundle, the CLAUDE.md sections, the CI workflow
 skills/okf-setup/references/        okf-quirks.md and the population/resync prompts
