@@ -128,6 +128,68 @@ jobs:
           case "$out" in *"no bundle at knowledge"*) echo "ok — okf-pin.sh's lockfile verified and the gate ran" ;;
                          *) echo "::error::gate did not run on an okf-pin.sh lockfile: $out"; exit 1 ;; esac
 
+      # Regression, 0.6.1. The gate used to hand `drift check`'s JSON to perl as an
+      # ARGUMENT. Linux caps a single argument at MAX_ARG_STRLEN — 131072 bytes, 32 pages —
+      # independently of ARG_MAX, so a large enough bundle killed the gate with
+      # `exec: perl: Argument list too long`, exit 126. macOS has no comparable cap, so
+      # every developer machine was green and the first CI run in a consumer repo was red.
+      # A stub drift is the point here, not a shortcut: the trigger is the SIZE of that one
+      # argument, and reproducing it from a real bundle would need hundreds of anchors.
+      - name: a >131KB drift report does not blow the argument limit
+        run: |
+          set -eu
+          repo=$(mktemp -d)
+          scripts/okf-scaffold.sh --name "ArgLimit" "$repo" >/dev/null
+          # Pad with docs OUTSIDE the bundle: step 6 skips them, so this measures the
+          # argument size and nothing else. One real in-bundle doc keeps $checked non-zero.
+          python3 - "$repo/drift-big.json" <<'PY'
+          import json, sys
+          docs = [{"path": "knowledge/index.md", "result": "fresh", "anchors": [], "links": []}]
+          docs += [{"path": f"pad/{i:06d}.md", "result": "fresh", "anchors": [], "links": []}
+                   for i in range(4000)]
+          blob = json.dumps({"schema_version": "drift.check.v1",
+                             "summary": {"result": "pass", "docs_total": len(docs)},
+                             "docs": docs})
+          assert len(blob) > 131072, f"padding too small: {len(blob)} bytes"
+          open(sys.argv[1], "w").write(blob)
+          print(f"drift payload: {len(blob)} bytes (limit is 131072)")
+          PY
+          mkdir -p "$repo/stub"
+          printf '#!/bin/sh\n[ "$1" = "--version" ] && { echo "drift 0.10.1"; exit 0; }\ncat "%s/drift-big.json"\n' "$repo" > "$repo/stub/drift"
+          chmod +x "$repo/stub/drift"
+          : > "$repo/drift.lock"
+          out=$( (cd "$repo" && PATH="$repo/stub:$PATH" "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge) 2>&1 || true )
+          case "$out" in
+            *"Argument list too long"*) echo "::error::the argument limit regressed: $out"; exit 1 ;;
+          esac
+          echo "$out" | tail -2
+          echo "ok — the gate survived a $(wc -c < "$repo/drift-big.json")-byte drift report"
+
+      # Regression, 0.6.1. Step 6 filtered drift's paths against $bundle. drift reports them
+      # relative to $parent, so an absolute bundle path matched nothing: every doc was
+      # skipped and the gate printed "0 doc(s) ... fresh" and exited 0 over a stale bundle.
+      # Steps 1-5 kept working, which is what made it silent.
+      - name: an absolute bundle path still drift-checks, and a mismatch is fatal
+        run: |
+          set -eu
+          repo=$(mktemp -d)
+          scripts/okf-scaffold.sh --name "AbsPath" "$repo" >/dev/null
+          mkdir -p "$repo/stub"
+          # drift reporting only docs OUTSIDE the bundle is the positive control for the
+          # no-op guard: without it, "nothing matched" would print as "fresh".
+          cat > "$repo/stub/drift" <<'STUB'
+          #!/bin/sh
+          [ "$1" = "--version" ] && { echo "drift 0.10.1"; exit 0; }
+          printf '%s' '{"schema_version":"drift.check.v1","summary":{"result":"pass","docs_total":1},"docs":[{"path":"elsewhere/x.md","result":"fresh","anchors":[],"links":[]}]}'
+          STUB
+          chmod +x "$repo/stub/drift"
+          : > "$repo/drift.lock"
+          out=$( (cd "$repo" && PATH="$repo/stub:$PATH" "$GITHUB_WORKSPACE/scripts/okf-check.sh" "$repo/knowledge") 2>&1 || true )
+          case "$out" in
+            *"matched none of drift"*) echo "ok — a path mismatch fails instead of printing 0 doc(s) fresh" ;;
+            *) echo "::error::the no-op guard did not fire on an absolute path: $out"; exit 1 ;;
+          esac
+
       - name: scaffold validates clean, and the gate fails it
         run: |
           set -eu
