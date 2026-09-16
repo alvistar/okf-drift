@@ -198,9 +198,17 @@ if (length $drift_json) {
   if (!$dc) { bad("drift check produced no JSON — run `drift check --format json` from the bundle's parent") }
   else {
     my $checked = 0;
+    # drift runs from $parent and reports paths relative to it, so the prefix to match is
+    # the bundle's name WITHIN $parent, never $bundle itself. Matching $bundle broke the
+    # moment it was absolute or reached from a subdirectory: no drift path ever started
+    # with /abs/path/knowledge/, every doc was skipped, and the gate printed
+    # "0 doc(s) / 0 drift anchor(s) fresh" and exited 0 over a genuinely stale concept.
+    # Measured: with two concepts stale, `okf-check.sh knowledge` reported 2 FAIL / exit 1
+    # and `okf-check.sh /abs/path/knowledge` reported ok / exit 0.
+    my $bundle_rel = basename($bundle);
     for my $d (@{ $dc->{docs} || [] }) {
       my $p = $d->{path} // next;
-      next unless $p =~ m{^\Q$bundle\E/};
+      next unless $p =~ m{^\Q$bundle_rel\E/};
       $checked++;
       # drift keeps evaluating a deleted doc's bindings from the lock alone and never
       # fails on it (measured: a `git rm`ed concept kept reporting fresh anchors).
@@ -229,7 +237,14 @@ if (length $drift_json) {
                grep { ($_->{result} // '') eq 'broken' } @{ $d->{links} || [] };
     }
     my $anchors = 0;
-    $anchors += scalar @{ $_->{anchors} || [] } for grep { ($_->{path} // '') =~ m{^\Q$bundle\E/} } @{ $dc->{docs} || [] };
+    $anchors += scalar @{ $_->{anchors} || [] } for grep { ($_->{path} // '') =~ m{^\Q$bundle_rel\E/} } @{ $dc->{docs} || [] };
+    # A gate that checked nothing must never report freshness. If the bundle has concepts
+    # and drift returned JSON, but not one doc matched, the two are talking about different
+    # paths — the failure mode above — and that is a gate defect, not a clean bundle.
+    if (!$checked && @concepts) {
+      bad("step 6 matched none of drift's " . scalar(@{ $dc->{docs} || [] }) . " doc(s) against '$bundle_rel/' — "
+        . "drift.lock and the bundle disagree about paths, so NO concept was drift-checked");
+    }
     $drift_note = "$checked doc(s) / $anchors drift anchor(s) fresh";
   }
 }
