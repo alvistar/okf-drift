@@ -57,11 +57,29 @@ else
   [ -n "$drift_json" ] || echo "warn  \`drift check --format json\` produced nothing — step 6 did not run"
 fi
 
-exec perl - "$bundle" "$json" "$drift_json" "$parent" <<'PERL'
+# Both blobs reach perl through FILES, never argv. Linux caps a SINGLE argument at
+# MAX_ARG_STRLEN (131072 bytes) independently of ARG_MAX, and `drift check --format json`
+# passes that on a bundle of ~48 anchors (measured: 183806 bytes). macOS has no comparable
+# per-argument cap, so this only ever fails in Linux CI, as `exec: perl: Argument list too
+# long`, exit 126 — a green local run proves nothing about it.
+#
+# No `exec`: the EXIT trap has to survive to remove the directory, and exec would replace
+# the shell before it fires. The exit code is forwarded by hand instead.
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/okf-check.XXXXXX") || { echo "okf-check: cannot create a temp dir" >&2; exit 2; }
+trap 'rm -rf "$tmp"' EXIT INT TERM
+printf '%s' "$json" > "$tmp/okf.json" || exit 2
+printf '%s' "$drift_json" > "$tmp/drift.json" || exit 2
+
+perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP; use File::Find; use File::Basename;
 binmode STDOUT, ':utf8';
-my ($bundle, $json, $drift_json, $parent) = @ARGV;
+my ($bundle, $json_file, $drift_file, $parent) = @ARGV;
+# Read as raw bytes and decode explicitly: decode_json expects UTF-8 octets, and a
+# ':utf8' read would hand it characters instead.
+sub slurp_raw { my $f=shift; open my $h,'<:raw',$f or die "$f: $!"; local $/; my $c=<$h>; defined $c ? $c : '' }
+my $json       = slurp_raw($json_file);
+my $drift_json = slurp_raw($drift_file);
 my $fail = 0;
 sub bad  { $fail = 1; print "FAIL  @_\n" }
 sub warnl{ print "warn  @_\n" }
@@ -219,3 +237,5 @@ if (length $drift_json) {
 print "ok    $bundle: okf gate passed with no warnings, indexes consistent both ways, frontmatter complete, no template residue, $drift_note\n" unless $fail;
 exit $fail;
 PERL
+rc=$?
+exit "$rc"
