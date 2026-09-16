@@ -82,7 +82,7 @@ Every `## Related` entry is `- [title](/category/file.md) — when to follow it`
 Link what a reader would follow next, nothing decorative; a concept with no
 links in either direction fails validation. Then run, from the repo root:
     okf validate knowledge --strict --drift --stale
-    scripts/okf-check.sh
+    Invoke okf-drift:okf-runtime in gate mode.
 Fix everything both report. Append a dated entry to knowledge/log.md saying the
 bundle was populated and from what.
 
@@ -134,7 +134,7 @@ playbooks/index.md with the description verbatim.
 
 Then run
     okf validate knowledge --strict --drift --stale
-    scripts/okf-check.sh
+    Invoke okf-drift:okf-runtime in gate mode.
 The second WILL fail on the placeholders — that is the point; it tells the next
 session what to fill. Report the list.
 

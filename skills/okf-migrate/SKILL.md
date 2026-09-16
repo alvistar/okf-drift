@@ -1,5 +1,6 @@
 ---
 name: okf-migrate
+disable-model-invocation: true
 description: |
   Migrate a mex scaffold (`.mex/`: ROUTER, AGENTS, context/, patterns/, grounds_to,
   mex:// anchors) into an OKF v0.2 bundle in the okf-drift layout, keeping every
@@ -17,11 +18,17 @@ description: |
 
 The fourth skill in the `okf-drift` plugin. `/okf-setup` is for a repo with no bundle;
 this one is for a repo that has a mex scaffold and wants out. The mechanical half is
-`${CLAUDE_PLUGIN_ROOT}/scripts/okf-migrate.py`; the rest is judgement, and the order
+`${PLUGIN_ROOT}/scripts/okf-migrate.py`; the rest is judgement, and the order
 matters because **step 2 is only possible while mex and its graph are still there.**
 
 **Every path below is relative to the target repository root**, and every command runs
 from there. Nothing here pushes, opens a PR, or bumps a version.
+
+For setup-only commands, resolve `PLUGIN_ROOT` two directories above this skill's
+absolute base directory supplied by the host; set `REPO_ROOT` to the absolute consumer
+root. Gate/recall use `okf-drift:okf-runtime`, not consumer scripts. For conversion
+of an existing OKF integration only (not mex content), follow `/okf-setup` Step 3
+and stop there: no inventory, scaffold, population or bundle/log edits.
 
 ## What the first migration got wrong, so this one does not
 
@@ -50,7 +57,7 @@ monorepo (20 documents, 34 groundings, 25 inline anchors):
 ## Step 0 — Inventory, and the one precondition
 
 ```bash
-uvx --with pyyaml python3 "${CLAUDE_PLUGIN_ROOT}/scripts/okf-migrate.py" inventory --mex .mex
+uvx --with pyyaml python3 "${PLUGIN_ROOT}/scripts/okf-migrate.py" inventory --mex .mex
 git grep -c '\.mex/' -- . ':!.mex' ':!docs/plans/'      # every file that names the old paths
 mex graph status
 ```
@@ -76,7 +83,7 @@ there is no second chance.
 ## Step 1 — Resolve every node id, while mex still exists
 
 ```bash
-uvx --with pyyaml python3 "${CLAUDE_PLUGIN_ROOT}/scripts/okf-migrate.py" resolve --mex .mex --map okf-migrate-map.json
+uvx --with pyyaml python3 "${PLUGIN_ROOT}/scripts/okf-migrate.py" resolve --mex .mex --map okf-migrate-map.json
 ```
 
 One `mex graph get <node> --detail source` per distinct id; prints `ok`/`MISS` per node
@@ -95,9 +102,9 @@ that appears only in a `grounds_to:` block has no label (mex records `node` and
 ## Step 2 — Convert
 
 ```bash
-uvx --with pyyaml python3 "${CLAUDE_PLUGIN_ROOT}/scripts/okf-migrate.py" convert \
+uvx --with pyyaml python3 "${PLUGIN_ROOT}/scripts/okf-migrate.py" convert \
   --mex .mex --out knowledge --map okf-migrate-map.json \
-  --templates "${CLAUDE_PLUGIN_ROOT}/skills/okf-setup/templates/knowledge" --name "<Project>"
+  --templates "${PLUGIN_ROOT}/skills/okf-setup/templates/knowledge" --name "<Project>"
 ```
 
 What it writes, from what:
@@ -140,7 +147,7 @@ document.
 1. **`CLAUDE.md`**: replace the mex block (`## Code Graph`, the mex-agent template
    comment, `## Scaffold Growth`, `## Agent Logging`, `## Navigation`, and any prose
    paragraph that routes to `.mex/context/…`) with the three sections from
-   `${CLAUDE_PLUGIN_ROOT}/skills/okf-setup/templates/CLAUDE-knowledge-section.md`
+   `${PLUGIN_ROOT}/skills/okf-setup/templates/CLAUDE-knowledge-section.md`
    (**Knowledge Bundle**, **Work Loop**, **Navigation**). Repoint any paragraph that
    named a context doc (`.mex/context/auth-model.md` → `knowledge/architecture/auth-model.md`).
    Keep identity, non-negotiables, commands untouched.
@@ -159,37 +166,11 @@ document.
    `docs/agents/*`, `CONCEPTS.md`, READMEs, `.claude/rules/*` — repoint to the new
    path. Historical plan files under `docs/plans/` are left alone; a dated plan naming
    `.mex/` is a record, not a link.
-5. **Install the shim and pin the tag by content** — `/okf-setup` Step 3 item 2, verbatim.
-   The repo gets `.okf-drift-version`, `scripts/okf-shim.sh`, and `scripts/okf-check.sh` /
-   `scripts/okf-recall.sh` as two-line wrappers that `exec` it; it does **not** get a copy
-   of either script, which would drift from the plugin with nothing able to see it:
-
-   ```bash
-   mkdir -p scripts
-   cp "${CLAUDE_PLUGIN_ROOT}/scripts/okf-shim.sh" scripts/okf-shim.sh
-   "${CLAUDE_PLUGIN_ROOT}/scripts/okf-pin.sh" "v$(jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")"
-   for s in okf-check okf-recall; do
-     printf '#!/bin/sh\n# %s.sh from alvistar/okf-drift at the tag in .okf-drift-version — see scripts/okf-shim.sh.\nexec "$(dirname "$0")/okf-shim.sh" %s.sh "$@"\n' "$s" "$s" > "scripts/$s.sh"
-   done
-   chmod +x scripts/okf-shim.sh scripts/okf-check.sh scripts/okf-recall.sh
-   ```
-
-   `.okf-drift-version` is a lockfile — the tag on line 1, then one `<sha256>  <name>` line
-   per script — and is **never written by hand**: `okf-pin.sh` fills it from the
-   `SHA256SUMS` asset of that GitHub Release. Without `${CLAUDE_PLUGIN_ROOT}`:
-   `{ echo v0.6.0; gh release download v0.6.0 -R alvistar/okf-drift -p SHA256SUMS -O -; } > .okf-drift-version`.
-
-   A repo migrating off mex usually already has vendored copies from an earlier version of
-   this plugin — overwrite them with the wrappers and say so in the commit body.
-
-6. **Step 3c of `/okf-setup`: the CI workflow.** Copy
-   `${CLAUDE_PLUGIN_ROOT}/skills/okf-setup/templates/knowledge.yml` to
-   `.github/workflows/knowledge.yml` and add its sentence to `CLAUDE.md`. Normally in the
-   migration commit itself, so the PR the user ships already carries the gate. **Defer it
-   to a follow-up commit after the migration lands** when there are other open branches:
-   `pull_request` fires on every one of them, and a branch that has not yet merged the
-   migration has no `knowledge/` — the job fails there for a reason that is not its
-   author's.
+5. **Install the wrapper-free integration** using `/okf-setup` Step 3, including its
+   explicit compatible release selection and preflight. That shared procedure installs
+   the standalone CI workflow too. It refuses customized/vendored scripts rather than
+   overwriting them; resolve a refusal with the user before continuing. Preserve all
+   project-owned sections and the project's required read order.
 
 Then `git grep -n '\.mex' -- . ':!docs/plans/' ':!knowledge/log.md'` must be empty
 (the log's provenance table names the old paths on purpose).
@@ -198,7 +179,7 @@ Then `git grep -n '\.mex' -- . ':!docs/plans/' ':!knowledge/log.md'` must be emp
 
 ```bash
 okf validate knowledge --strict --drift --stale
-scripts/okf-check.sh knowledge
+# Invoke okf-drift:okf-runtime in gate mode
 ```
 
 Expect failures of three kinds, in this order of effort: out-of-bundle links the
@@ -213,10 +194,10 @@ Three searches you would actually type must hit the concept you meant first.
 ## Step 6 — drift, then remove mex
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/okf-drift-bootstrap.sh" knowledge     # drift.lock from every code_refs
+sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstrap.sh knowledge     # drift.lock from every code_refs
 drift check --format json | head -20                                   # all fresh, by construction
 git rm -r .mex && rm -rf .mex                                          # graph.db* was ignored; the wrapper stays
-scripts/okf-check.sh knowledge                                         # step 6 now runs
+# Invoke okf-drift:okf-runtime in gate mode                                         # step 6 now runs
 ```
 
 Symbol-level anchors (`path#Symbol`) are worth it where the prose depends on one

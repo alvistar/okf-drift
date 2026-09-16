@@ -58,8 +58,10 @@ jobs:
           set -eu
           ( cd scripts && sha256sum *.sh *.py ) > SHA256SUMS
           [ -s SHA256SUMS ] || { echo "::error::SHA256SUMS came out empty"; exit 1; }
-          grep -q '^[0-9a-f]\{64\}  okf-check\.sh$' SHA256SUMS \
-            || { echo "::error::SHA256SUMS has no okf-check.sh line"; exit 1; }
+          for name in okf-shim.sh okf-check.sh okf-recall.sh okf-drift-bootstrap.sh; do
+            count=$(awk -v n="$name" '$2 == n && NF == 2 && length($1) == 64 && $1 !~ /[^0-9a-f]/ { count++ } END { print count+0 }' SHA256SUMS)
+            [ "$count" = 1 ] || { echo "::error::SHA256SUMS needs exactly one valid $name digest"; exit 1; }
+          done
           cat SHA256SUMS
 
       - name: publish

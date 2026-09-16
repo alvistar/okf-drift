@@ -6,6 +6,7 @@ real shell and Perl execute the scripts under test. No network or shared cache.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -48,6 +49,19 @@ class RuntimeTests(unittest.TestCase):
             path.chmod(0o755)
         self.env = dict(os.environ, FIXTURE=str(self.root), TMPDIR=str(self.root),
                         PATH=str(self.stub) + os.pathsep + os.environ["PATH"])
+        self.env.pop("OKF_DRIFT_ROOT", None)
+        if os.environ.get("OKF_SELFTEST_PINNED") == "1":
+            # The exact unpublished runtime bytes, pinned in a fixture release cache.
+            # No scripts live in the consumer; exercise all 13 contracts via the launcher.
+            cache = self.root / "cache/okf-drift/v0.7.0"
+            cache.mkdir(parents=True)
+            self.env["XDG_CACHE_HOME"] = str(self.root / "cache")
+            lines = ["v0.7.0"]
+            for name in ("okf-check.sh", "okf-recall.sh"):
+                data = (SCRIPTS / name).read_bytes()
+                (cache / name).write_bytes(data)
+                lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
+            (self.root / ".okf-drift-version").write_text("\n".join(lines) + "\n")
         self.payload("validate", {"gate_passed": True, "is_conformant": True})
         self.payload("search", [{"concept_id": "project/state", "description": "Fixture state.", "score": 1}])
         self.verdict("fresh")
@@ -60,6 +74,8 @@ class RuntimeTests(unittest.TestCase):
 
     def run_script(self, script: str, bundle: str = "knowledge") -> subprocess.CompletedProcess[str]:
         args = [str(SCRIPTS / script)]
+        if os.environ.get("OKF_SELFTEST_PINNED") == "1":
+            args = ["sh", str(SCRIPTS / "okf-shim.sh"), "--repo-root", str(self.root), script]
         if script == "okf-recall.sh":
             args.append("fixture")
         return subprocess.run(args + [bundle], cwd=self.root, env=self.env,

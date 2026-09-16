@@ -1,5 +1,6 @@
 ---
 name: okf-write
+disable-model-invocation: true
 description: |
   Record into an OKF knowledge bundle — the Grow step: write the decision, the playbook
   or the surgical concept edit, refresh project/state.md, bind every new `code_refs`
@@ -14,12 +15,10 @@ description: |
 
 # /okf-write — record what the session learned, and re-ground it
 
-One of three skills in the `okf-drift` plugin: `/okf-setup` lays the bundle down,
-`/okf-write` records into it, `/okf-read` recalls from it. The scripts the three share
-are at `${CLAUDE_PLUGIN_ROOT}/scripts/`; the target repo reaches them through
-`scripts/okf-check.sh` and `scripts/okf-recall.sh`, two-line wrappers over
-`scripts/okf-shim.sh` that run the script from `alvistar/okf-drift` at the tag pinned in
-`.okf-drift-version`, so nothing in the repo depends on this plugin being installed.
+`/okf-write` records; `/okf-read` recalls. Gate and recall run through the
+model-invocable `okf-drift:okf-runtime` skill with the consumer's pin. For the explicit
+binding bootstrap below, resolve `PLUGIN_ROOT` two directories above this skill's
+absolute base directory supplied by the host, and `REPO_ROOT` to the consumer root.
 
 **Every path in this document is relative to the target repository root.** Run
 everything from there: `code_refs` and `drift.lock` are both rooted there.
@@ -54,7 +53,7 @@ session that fixed a typo does not owe the bundle anything.
 Find the concepts the change touches before writing a new one:
 
 ```sh
-scripts/okf-recall.sh "<the terms you would type>"
+# Invoke okf-drift:okf-runtime in recall mode with "<the terms you would type>"
 okf search --for-path <the file you changed>
 ```
 
@@ -109,7 +108,7 @@ drift link knowledge/<category>/<slug>.md <repo-relative-path>
 or, for a whole bundle at once (idempotent — it skips what the lock already holds):
 
 ```sh
-scripts/okf-drift-bootstrap.sh        # or ${CLAUDE_PLUGIN_ROOT}/scripts/ if the repo has no copy
+sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstrap.sh knowledge
 ```
 
 Measured on drift v0.10.1, and each of these will bite otherwise:
@@ -163,7 +162,7 @@ an unearned re-stamp is worse than no drift at all.
 ## Step 5 — Gate, then report
 
 ```sh
-scripts/okf-check.sh
+# Invoke okf-drift:okf-runtime in gate mode
 ```
 
 Six steps: okf's own gate with its warnings treated as fatal, the indexes both ways, the

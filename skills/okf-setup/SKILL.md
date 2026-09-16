@@ -1,5 +1,6 @@
 ---
 name: okf-setup
+disable-model-invocation: true
 description: |
   Set up an OKF v0.2 knowledge bundle (github.com/okf-memory/okf-agent-memory) in a
   repository with a FIXED layout: project/{state,stack,setup,conventions},
@@ -19,7 +20,10 @@ One of four skills in the `okf-drift` plugin: `/okf-setup` lays the bundle down 
 repo that has none, `/okf-migrate` builds it from an existing mex scaffold,
 `/okf-write` records into it (the Grow step, with `drift link`), `/okf-read` recalls
 from it (search joined with `drift check`, so a stale concept is never served as a
-fact). The scripts the four share are at `${CLAUDE_PLUGIN_ROOT}/scripts/`.
+fact). Gate and recall use the model-invocable `okf-drift:okf-runtime` skill.
+For setup-only commands below, set `PLUGIN_ROOT` to two directories above this
+skill's absolute base directory supplied by the host, and `REPO_ROOT` to the
+absolute consumer root. These are explicit shell variables, not assumed environment.
 
 `okf init` writes two files and prescribes nothing else. This skill lays down a fixed
 layout whose value is the section prompts inside each concept — what belongs there and
@@ -52,9 +56,6 @@ knowledge/
   playbooks/
     index.md                the format for a playbook, then one row per playbook
 .okf-drift-version          lockfile: the okf-drift tag, then one <sha256>  <name> per script (Step 3)
-scripts/okf-shim.sh         fetches, sha256-verifies and caches a script at that tag (Step 3)
-scripts/okf-check.sh        two-line wrapper — the gate, six steps, drift join included (Step 3)
-scripts/okf-recall.sh       two-line wrapper — search joined with drift, for /okf-read (Step 3)
 drift.lock                  one content signature per (concept, code_ref) pair (Step 3b)
 .github/workflows/knowledge.yml   the gate on every PR and on push to main (Step 3c)
 CLAUDE.md                   + Knowledge Bundle · Work Loop · Navigation (Step 3)
@@ -96,7 +97,8 @@ probes in `references/okf-quirks.md` before believing either the tool or this sk
 
 ```bash
 test -d knowledge && echo "BUNDLE EXISTS"
-scripts/okf-check.sh 2>/dev/null || "${CLAUDE_PLUGIN_ROOT}/scripts/okf-check.sh" knowledge
+# If a pin exists, invoke okf-drift:okf-runtime in gate mode.
+# Missing pin: install integration in Step 3 explicitly; never bypass the pin.
 ```
 
 - No bundle → Step 2.
@@ -113,7 +115,7 @@ scripts/okf-check.sh 2>/dev/null || "${CLAUDE_PLUGIN_ROOT}/scripts/okf-check.sh"
 ## Step 2 — Scaffold
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/okf-scaffold.sh" --name "<Project Name>" .
+"${PLUGIN_ROOT}/scripts/okf-scaffold.sh" --name "<Project Name>" .
 ```
 
 Copies the templates with the name and dates substituted (`stale_after` = +3 months on
@@ -124,50 +126,38 @@ is a bug in this skill — report it rather than patching the output.
 
 ## Step 3 — CLAUDE.md and the gate
 
-1. Merge `templates/CLAUDE-knowledge-section.md` into `CLAUDE.md`: **Knowledge
-   Bundle**, **Work Loop**, **Navigation**. If `CLAUDE.md` does not exist, create it
-   with the identity block first (`# <Project>`, *What This Is*, *Non-Negotiables*,
-   *Commands* — terse, it is loaded every turn) and the three sections after. If it
-   exists, add the three sections and touch nothing else; population fills the rest.
-   The daily commands live **only** in `CLAUDE.md`; `setup.md` does not repeat them.
-2. Install the shim and pin the tag **by content**. CI, the Work Loop and `/okf-read` all
-   call the gate and the recall script **from the repo**, so neither may depend on this
-   plugin being installed — but a vendored copy of either drifts from the plugin silently,
-   and nothing in the repo can see that it has. So the repo carries a lockfile and two
-   two-line wrappers instead:
+Use the plugin-only integration helper for both fresh setup and conversion of an
+existing wrapper-based installation. It changes only the pin, recognized instruction
+sections and workflow, and removes recognized generated legacy files. It never
+scaffolds, edits `knowledge/`, writes `drift.lock`, or changes project navigation.
 
-   ```bash
-   mkdir -p scripts
-   cp "${CLAUDE_PLUGIN_ROOT}/scripts/okf-shim.sh" scripts/okf-shim.sh
-   "${CLAUDE_PLUGIN_ROOT}/scripts/okf-pin.sh" "v$(jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")"
-   for s in okf-check okf-recall; do
-     printf '#!/bin/sh\n# %s.sh from alvistar/okf-drift at the tag in .okf-drift-version — see scripts/okf-shim.sh.\nexec "$(dirname "$0")/okf-shim.sh" %s.sh "$@"\n' "$s" "$s" > "scripts/$s.sh"
-   done
-   chmod +x scripts/okf-shim.sh scripts/okf-check.sh scripts/okf-recall.sh
-   ```
+```bash
+uvx --with pyyaml python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
+  --repo-root "$REPO_ROOT" --tag v0.7.0 --dry-run
+# Review the proposed paths, then repeat without --dry-run.
+uvx --with pyyaml python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
+  --repo-root "$REPO_ROOT" --tag v0.7.0
+```
 
-   **Never write `.okf-drift-version` by hand.** `okf-pin.sh` fills it from the
-   `SHA256SUMS` asset of that GitHub Release — line 1 the tag, then one `<sha256>  <name>`
-   line per script. A hand-copied digest is a digest of whatever you happened to download.
-   Without `${CLAUDE_PLUGIN_ROOT}` the same file is:
+Requires Python 3.11+. **v0.7.0 is the first compatible release**; while it is
+unpublished, consumer adoption is blocked. Choose an explicitly approved published
+version at or above that minimum; never derive a project upgrade from the installed
+plugin version. The helper calls `okf-pin.sh` against the release's `SHA256SUMS`,
+stages the result, and validates it before changing the consumer. Omitting `--tag`
+keeps an already compatible pin byte-for-byte. See README **Integration conversion**
+for recognition and refusal rules. Unknown/customized files require a deliberate
+human merge; do not overwrite them to get past preflight.
 
-   ```bash
-   { echo v0.6.0; gh release download v0.6.0 -R alvistar/okf-drift -p SHA256SUMS -O -; } > .okf-drift-version
-   # or: curl -fsSL https://github.com/alvistar/okf-drift/releases/download/v0.6.0/SHA256SUMS
-   ```
+The helper preserves all other CLAUDE sections and any existing Navigation section.
+Fresh instructions respect the project's existing read order. Historical wrapper
+references inside knowledge are reported, left untouched, and explicitly subordinate
+to CLAUDE's new operational instructions. If deletion would invalidate `code_refs`
+or drift bindings, stop; no automatic re-stamp or bundle edit is authorized.
 
-   The shim resolves `$OKF_DRIFT_ROOT/scripts/<name>` first when that variable is set (a
-   local plugin checkout, for developing the plugin itself, exempt from the hash check),
-   otherwise fetches the script once from
-   `raw.githubusercontent.com/alvistar/okf-drift/<tag>/scripts/<name>` into
-   `${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/<tag>/`, **verifying the sha256 before it
-   caches and again on every later run**. A tag can be moved; a digest cannot, and a
-   truncated or damaged cache is an exit 2, not a green gate. Commit all four paths.
-   Upgrading the repo later is re-running `okf-pin.sh` with the new tag.
-
-   Run `scripts/okf-check.sh knowledge` once now to prove the fetch works. It
-   **fails on a fresh scaffold** — annotation comments and placeholders — which is the
-   correct answer until Step 4; what you are checking here is that it ran at all.
+Invoke `okf-drift:okf-runtime` in gate mode now. A fresh scaffold must fail on
+annotations/placeholders; verify that the pinned gate actually ran, not just that a
+command returned nonzero. Keep the integration and pin in version control; consumer
+repositories carry no OKF scripts.
 
 What the gate adds to `okf validate --strict --drift --stale` (all measured absent from
 the tool): warnings treated as failures (a dead `code_refs` path is a warning at exit
@@ -194,7 +184,7 @@ matches.
 
 ```bash
 drift --version                                             # expect: drift v0.10.1
-"${CLAUDE_PLUGIN_ROOT}/scripts/okf-drift-bootstrap.sh"      # from the REPOSITORY ROOT
+sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstrap.sh knowledge
 ```
 
 It reads every `code_refs:` entry in the bundle and runs one `drift link` per entry. It
@@ -219,36 +209,16 @@ whole design (editing a doc does **not** clear its staleness; only
 
 ## Step 3c — CI
 
-The Work Loop is the first filter, and it only fires in a session that touched
-`knowledge/`. **The PR that makes a concept stale is almost always one that touches only
-code**, and nobody in that PR has a reason to run the gate. So the gate is also a blocking
-CI job:
+Step 3 installs `templates/knowledge.yml` verbatim. Its standalone bootstrap downloads
+the launcher at the project's pinned tag, verifies its pinned digest before execution,
+and calls the root-aware launcher; no installed plugin is needed. It explicitly
+unsets the development override. See README **Standalone bootstrap** for the local
+plugin-free command; the workflow template is the single bootstrap source.
 
-```bash
-mkdir -p .github/workflows
-cp "${CLAUDE_PLUGIN_ROOT}/skills/okf-setup/templates/knowledge.yml" .github/workflows/knowledge.yml
-```
-
-Copy it verbatim. `runs-on` falls back to `ubuntu-latest` in a repo with no `RUNNER_LABEL`
-variable, so the template needs no edit either way. If the repo already has workflows,
-read one first: check that **nothing there already runs the gate** (don't add a second
-copy), and if its conventions differ from the template in a way that matters — a pinned
-action SHA, a different Go setup, a required job name — match them rather than the
-template. Do not relax the two rules the template encodes: `fetch-depth: 0` (drift's
-`blame` reads `git log`; shallow gives you "changed" with no commit to name) and `push`
-scoped to `main` (both triggers on a topic branch cancel each other in the concurrency
-group and GitHub reports the cancelled run as a check that did not succeed).
-
-Then one sentence in `CLAUDE.md` — appended to the paragraph that already describes what
-CI runs, or as a new `## CI` line if there is none:
-
-> `.github/workflows/knowledge.yml` runs `scripts/okf-check.sh knowledge` on every PR and
-> on push to `main`: a code change can make a concept stale without touching `knowledge/`,
-> and a stale concept blocks the merge until it is re-stamped via `/okf-write`.
-
-Run the job's own steps locally before committing (`okf version && drift --version`, then
-`scripts/okf-check.sh knowledge`) — the gate is the same script in both places, so a green
-run here is a green run there.
+Keep `fetch-depth: 0`, every-PR/main-only-push triggers, and the explicit dependency
+preflight. Read existing workflows first to avoid duplicate gates. A customized
+workflow is a manual integration decision; the helper refuses it rather than silently
+relaxing its checks. Test the job's actual bootstrap, not just a direct plugin script.
 
 ## Step 4 — Populate
 
@@ -265,7 +235,7 @@ Verify with a **fresh** session: "Read `knowledge/index.md` and
 `knowledge/project/state.md`, then tell me what you know about this project." Then
 `okf search` three phrases you would actually type and check the first hit.
 
-Commit the bundle, `CLAUDE.md` and `scripts/okf-check.sh` together. Nothing publishes;
+Commit the bundle, `CLAUDE.md`, pin and workflow together. Nothing publishes;
 no version bump.
 
 ## Step 5 — Keep it true

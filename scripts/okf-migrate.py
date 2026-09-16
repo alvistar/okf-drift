@@ -456,7 +456,7 @@ def cmd_convert(mex: Path, out: Path, templates: Path, name: str, mapping: dict[
         lines += [f"| `{k}` | `{v.get('path') or 'UNRESOLVED: ' + str(v.get('error'))}` | {', '.join(f'`{d}`' for d in v.get('docs', []))} |" for k, v in mapping.items()]
     (out / "log.md").write_text("\n".join(lines) + "\n")
     print(f"\nwrote {out}: {len(docs)} concepts + {len(decisions)} decisions + state; {len(notes)} notes in log.md")
-    print("next: okf validate --strict --drift --stale; scripts/okf-check.sh; then the skill's steps (CLAUDE.md, .gitignore, references, drift bootstrap, rm .mex)")
+    print("next: follow /okf-migrate's integration steps, then invoke okf-drift:okf-runtime in gate mode (CLAUDE.md, pin/workflow, .gitignore, references, drift bootstrap, rm .mex)")
 
 
 def main() -> None:
