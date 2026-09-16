@@ -94,10 +94,10 @@ Updating the installed plugin does **not** update the project's pinned runtime.
 
 ### Compatibility and the lockfile
 
-**First compatible release: v0.7.0 (candidate, not published by this change).**
-Adoption must wait for that release or a later compatible one. Tests use fixture
-releases so unpublished source remains testable. `VERSION` and the plugin manifest
-stay at 0.6.2 until a separate authorized release.
+**First compatible release: v0.7.0.**
+Wrapper-free adoption requires that release or a later compatible one and its
+published `SHA256SUMS` asset. Tests use fixture releases so future unpublished
+source remains testable.
 
 Line 1 of `.okf-drift-version` is `vMAJOR.MINOR.PATCH`; remaining lines are
 `<64 lowercase hex digits>  <script basename>`. Generate it with the plugin's

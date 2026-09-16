@@ -9,6 +9,8 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-16
+
 ### Added
 
 - Wrapper-free consumer integration: the model-invocable `okf-runtime` skill resolves
@@ -16,9 +18,8 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
   The four existing skills remain manual-triggered. No cache-version paths or implicit
   plugin-root environment are stored in consumer instructions.
 - Standalone consumer CI bootstrap verifies the pinned launcher before execution,
-  requires the first compatible **v0.7.0** release, and disables the development
-  override. v0.7.0 is the candidate minimum, not yet published by this change; adoption
-  is blocked until it or a later compatible release exists. No version bump here.
+  requires **v0.7.0** or a later compatible release, and disables the development
+  override. Consumer adoption uses the release's published SHA256SUMS asset.
 - Plugin-only integration helper with all-candidate preflight, exact generated wrapper
   recognition and official historical shim/workflow hashes independent of the current
   pin. It preserves project navigation, refuses customized/symlinked/bound deletion
