@@ -9,6 +9,59 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-16
+
+Two defects, both found on the first CI run after a consumer repo adopted the gate, and
+both invisible on a developer machine. Neither could have been caught by anything ci.yml
+ran before this release, so each now has a regression test.
+
+1. **The gate died on Linux once the bundle grew.** `okf-check.sh` collected
+   `okf validate --json` and `drift check --format json` into shell variables and passed
+   both to perl as ARGUMENTS. Linux caps a single argument at `MAX_ARG_STRLEN` — 131072
+   bytes, 32 pages — independently of `ARG_MAX`. Measured on a 27-document, 48-anchor
+   bundle: `drift check` emitted 183806 bytes, 1.4x the cap, and `execve` refused with
+   `E2BIG`. The gate died as `okf-check.sh: 60: exec: perl: Argument list too long`, exit
+   126. macOS has no comparable per-argument cap, so the gate was green on every developer
+   machine and red on the first CI run. Bisected in an alpine container: 131071 bytes pass,
+   131072 fail.
+2. **An absolute bundle path silently skipped step 6.** `drift check` runs from the
+   bundle's parent and reports paths relative to it. Step 6 filtered those against
+   `$bundle`, which holds only while `$bundle` is a plain relative name from the repo root.
+   Given `/abs/path/knowledge`, or `../knowledge` from a subdirectory, no drift path could
+   match: every doc was skipped and the gate printed `0 doc(s) / 0 drift anchor(s) fresh`
+   and exited 0 over a bundle whose concepts were genuinely stale. Measured with two
+   concepts drifted: `okf-check.sh knowledge` reported 2 FAIL and exit 1, while
+   `okf-check.sh /abs/path/knowledge` reported ok and exit 0. Steps 1 to 5 were unaffected
+   throughout — frontmatter, indexes and template residue were still checked — so this was
+   never "the gate checks nothing"; it was the gate silently dropping the one step it
+   exists for.
+
+### Fixed
+
+- **Both JSON blobs reach perl through files.** They are written into an `mktemp -d`
+  directory and perl receives the PATHS. `exec` is dropped so the EXIT trap survives to
+  remove the directory; perl's status is forwarded by hand instead. Perl reads them with an
+  explicit `:raw` slurp rather than the existing `:utf8` one, because `decode_json` expects
+  UTF-8 octets and a `:utf8` read would hand it characters.
+- **Step 6 matches `basename($bundle)`,** the bundle's name within the parent drift runs
+  from, at both comparison sites: the doc filter and the anchor count. Fixing only the
+  first made the absolute form report `27 doc(s)` with `0 anchors`, which is how the second
+  site was found.
+
+### Added
+
+- **A gate that checked nothing can no longer report freshness.** When drift returns JSON
+  and the bundle has concepts but not one doc matched, that is now a FAIL naming both
+  sides, instead of a pass. Defence in depth for a failure that was silent rather than
+  loud.
+- **A regression test per defect in `ci.yml`.** A stub drift emitting 296176 bytes, and a
+  stub reporting only docs outside the bundle. The second doubles as the positive control
+  for the guard above: without a case where zero docs match, the guard could ship inert.
+  Both were sabotage-verified in an alpine container — each fails against 0.6.0 and passes
+  against 0.6.1 — and both were extracted from the YAML and executed before release,
+  because a CI step that has never run is not a test.
+
+
 ## [0.6.0] - 2026-09-16
 
 Three defects in the 0.5.x shim, all measured on a consumer repo with five worktrees on
