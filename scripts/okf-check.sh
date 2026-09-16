@@ -57,11 +57,11 @@ else
   [ -n "$drift_json" ] || echo "warn  \`drift check --format json\` produced nothing — step 6 did not run"
 fi
 
-exec perl - "$bundle" "$json" "$drift_json" <<'PERL'
+exec perl - "$bundle" "$json" "$drift_json" "$parent" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP; use File::Find; use File::Basename;
 binmode STDOUT, ':utf8';
-my ($bundle, $json, $drift_json) = @ARGV;
+my ($bundle, $json, $drift_json, $parent) = @ARGV;
 my $fail = 0;
 sub bad  { $fail = 1; print "FAIL  @_\n" }
 sub warnl{ print "warn  @_\n" }
@@ -184,6 +184,12 @@ if (length $drift_json) {
       my $p = $d->{path} // next;
       next unless $p =~ m{^\Q$bundle\E/};
       $checked++;
+      # drift keeps evaluating a deleted doc's bindings from the lock alone and never
+      # fails on it (measured: a `git rm`ed concept kept reporting fresh anchors).
+      unless (-f "$parent/$p") {
+        bad("$p: bound in drift.lock but the file no longer exists — `drift unlink $p <target>` for each of its targets, or re-link the targets to the concept that replaced it");
+        next;
+      }
       my $r = $d->{result} // 'fresh';
       next if $r eq 'fresh';
       for my $a (@{ $d->{anchors} || [] }) {

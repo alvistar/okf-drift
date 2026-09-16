@@ -67,11 +67,21 @@ ever find them by search, so `CLAUDE.md` says to read the index.
 
 ## YAML
 
-`description:` is parsed as YAML. An unquoted `#` starts a comment and silently
-truncates the value: `… (issue #48); the rest` became `… (issue`. Quote a description
-that contains `#`, `:` followed by a space, or a leading `[`. The same applies to
-`tags:` entries. `okf-check.sh` only reads single-line descriptions — keep them on one
-line, quoted if needed.
+Two different parsers read the frontmatter, and they disagree.
+
+- **okf's own parser** (v0.3.0) reads a `description:` line whole, unquoted `#` included
+  — measured: `… (issue #48); the rest` comes back intact from `okf search --json`. But
+  it stops at the end of the line: a value **folded over two lines** (what PyYAML's
+  dumper does to any long string) is truncated at the fold, silently, in search results
+  and in `okf show`. The migrated bristleworm bundle had 22 of those and nobody saw it
+  until the gate compared index rows to descriptions.
+- **A real YAML library** (PyYAML, the one that wrote the migration) treats an unquoted
+  ` #` as a comment: that is where `… (issue` came from, at migration time, before okf
+  ever read the file.
+
+So: one line, always; quoted when it contains `#`, `: `, or a leading `[`, so that both
+parsers agree on it. The same for `tags:` entries. `okf-check.sh` fails a multi-line
+description for exactly this reason.
 
 ## Fields
 
@@ -136,6 +146,20 @@ idempotency has to come from the caller: `okf-drift-bootstrap.sh` reads the exis
 `doc`/`target` pairs out of `drift.lock` and skips them. There is no `--force` and no
 `--if-absent`.
 
+**`#Symbol` anchors work in six languages and refuse everywhere else.** The parsers are
+tree-sitter grammars shipped in the binary — `src/queries/{go,java,python,rust,typescript,zig}.scm`
+— and there is no C, no Swift, no Objective-C, no JavaScript beyond what the TypeScript
+grammar covers. Measured: `drift link doc src/a.c#guard` and `doc src/k.swift#KeyManager`
+both refuse with `error: cannot compute fingerprint for target`; `doc src/r.rs#guard`
+links. A whole-file anchor works for any file, but for an unsupported language it is a
+**raw content** signature: a whitespace-only reformat of `a.c` went stale, while a
+reformat of `r.rs` (AST-normalised) stayed fresh, and changing `other()` next to the
+bound `guard` stayed fresh only in Rust. In this family that means `opa-core`,
+`terminal-mock`, `terminal-fw/rust`, `backend` and `model` can be anchored at symbol
+level; `terminal-fw/app/src/*.c` and `ios-wallet/**/*.swift` only at file level, with
+every `clang-format`/`swift-format` pass reading as drift. Bind narrow files there, and
+expect to re-stamp after a formatter run.
+
 The third row is why `code_refs` wants to be narrow. drift signs **file content**, so a
 directory has nothing to sign. `okf-drift-bootstrap.sh` expands a directory `code_ref`
 into `git ls-files -- <dir>` and skips anything wider than `OKF_DRIFT_MAX_DIR_FILES`
@@ -187,6 +211,13 @@ the indexes and the gate stay ignorant of drift entirely.
 `sig` is a content signature of the target, taken at link time. Which means a binding
 written now is fresh now, by construction — if a fresh bootstrap reports anything stale,
 the lock was not written by that bootstrap.
+
+**Deleting the doc does not delete its bindings.** After `git rm knowledge/x.md`,
+`drift check` still lists `knowledge/x.md` in `docs[]` and still evaluates its anchors
+from the lock alone (measured during the bristleworm layout conversion: the removed
+`architecture/decisions.md` kept reporting two fresh anchors). Only `drift unlink` removes
+them. drift never fails on it, so the gate does: a lock entry whose doc no longer exists
+is a `FAIL` in step 6.
 
 ## The one that changes how you write the skill
 
