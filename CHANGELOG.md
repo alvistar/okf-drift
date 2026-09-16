@@ -9,6 +9,47 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+### Added
+
+- Wrapper-free consumer integration: the model-invocable `okf-runtime` skill resolves
+  its plugin launcher from the host-supplied skill directory for pinned gate/recall.
+  The four existing skills remain manual-triggered. No cache-version paths or implicit
+  plugin-root environment are stored in consumer instructions.
+- Standalone consumer CI bootstrap verifies the pinned launcher before execution,
+  requires the first compatible **v0.7.0** release, and disables the development
+  override. v0.7.0 is the candidate minimum, not yet published by this change; adoption
+  is blocked until it or a later compatible release exists. No version bump here.
+- Plugin-only integration helper with all-candidate preflight, exact generated wrapper
+  recognition and official historical shim/workflow hashes independent of the current
+  pin. It preserves project navigation, refuses customized/symlinked/bound deletion
+  candidates, reports historical operational references, and leaves every bundle/lock
+  byte untouched. Reapplication is idempotent.
+- Offline fixture-release contracts exercise launcher roots, pin validation, cache
+  corruption/concurrent worktrees, the actual CI template without a plugin, skill
+  resolution, and safe integration conversion. The existing runtime suite also runs
+  through the pinned launcher.
+
+### Changed
+
+- The sole `okf-shim.sh` accepts `--repo-root`, retains legacy positional invocation,
+  falls back to the cwd's Git root, and always executes at the selected consumer root.
+  Development bypasses are explicit in diagnostics; normal launches still verify cold
+  downloads and warm caches. Root-aware use diagnoses old incompatible pins.
+- Pin generation validates unique well-formed hashes for all required runtime entries
+  including the launcher and stages the file before replacement. Release checksum
+  validation checks all four required entries. Gate/recall algorithms are unchanged.
+- Setup, mex migration, writing/reading, templates and next-step diagnostics now point
+  to the plugin runtime or standalone verified bootstrap, not consumer wrappers.
+
+### Known gaps
+
+- Integration apply uses atomic per-file replacement, not a multi-file transaction;
+  avoid concurrent consumer edits and review/retry after filesystem failures. Unknown
+  or customized integrations require an explicit human merge.
+- SHA-256 pins cover plugin scripts, not the separate drift installer. The development
+  override deliberately bypasses verification; gate degradation without adopted drift
+  and recall's refusal without drift remain unchanged.
+
 ## [0.6.2] - 2026-09-16
 
 ### Fixed

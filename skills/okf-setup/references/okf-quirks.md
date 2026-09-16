@@ -2,7 +2,7 @@
 
 Every claim here was verified by running the binary (`okf version v0.3.0 (OKF v0.2
 specification)`, installed with `go install`) on 2026-09-16, either on a scratch bundle
-made by `scripts/okf-scaffold.sh` or during the 27-document migration of a real repo.
+made by the plugin's `okf-scaffold.sh` or during the 27-document migration of a real repo.
 Re-measure after upgrading; correct this file when a number disagrees.
 
 ## What `okf validate` gates, and what it only mentions
@@ -28,7 +28,7 @@ Exit code stays 0 with **no output at all** for:
 - an unfilled placeholder (`[TO DETERMINE]`, `{{DATE}}`, …)
 
 `--drift`'s help text says "check for drift between index.md and concept descriptions".
-Measured: it does not. It checks `code_refs` paths. `scripts/okf-check.sh` covers the
+Measured: it does not. It checks `code_refs` paths. The pinned gate (`okf-runtime`) covers the
 rest and turns the warning list into a failure.
 
 ## Orphans

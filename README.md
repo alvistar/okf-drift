@@ -17,7 +17,7 @@ contradicted the docs, the measurement is what is written down, and
 `skills/okf-setup/references/okf-quirks.md` says which. Re-measure after an upgrade before
 trusting a green validation.
 
-## The four skills
+## Skills
 
 | Skill | What it does |
 |---|---|
@@ -27,6 +27,8 @@ trusting a green validation.
 | `/okf-read` | Recalls from it: `okf search` joined with `drift check`, withholding any concept whose bound code moved after it was written, with the commit to blame. |
 
 All four are **manual trigger only** — they run when you type the slash command.
+The fifth, `okf-runtime`, is model-invocable for the Work Loop: pinned gate and
+freshness-checked recall only, never setup, pin upgrades or binding writes.
 
 ## The two halves that make it work
 
@@ -68,72 +70,124 @@ curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version v0.10.1
 
 ## What a consumer repository carries
 
-CI, the Work Loop and `/okf-read` all call the gate and the recall script from the
-repository, so neither may depend on this plugin being installed. Since 0.5.0 that is a
-**pinned fetch**, not a copy:
+The repository carries **data and integration, no OKF scripts**:
 
 ```
-.okf-drift-version        the lockfile: a tag, then one <sha256>  <name> line per script
-scripts/okf-shim.sh       resolves, verifies and caches a script at that tag
-scripts/okf-check.sh      two lines: exec "$(dirname "$0")/okf-shim.sh" okf-check.sh "$@"
-scripts/okf-recall.sh     two lines, likewise
-drift.lock                shared state, exactly like the bundle
-.github/workflows/knowledge.yml   runs scripts/okf-check.sh knowledge on every PR and on push to main
+.okf-drift-version                tag and SHA-256 digests, from the release asset
+knowledge/                       the bundle
+drift.lock                      shared bindings (at repository root)
+CLAUDE.md                        managed Knowledge Bundle / Work Loop instructions
+.github/workflows/knowledge.yml   standalone verified bootstrap, PR + push to main
 ```
 
-A vendored copy of the gate drifts from the plugin silently and nothing in either
-repository can see that it has. A pinned one moves only when `.okf-drift-version` moves,
-and that is a diff a reviewer can read.
-
-### The lockfile
-
-Since 0.6.0 `.okf-drift-version` is a lockfile, not a tag:
-
-```
-v0.6.0
-c4f9…77c8  okf-check.sh
-9a1b…02de  okf-recall.sh
-…
-```
-
-Line 1 is the tag. Every other line is `<sha256>  <name>` in `sha256sum` output format, so
-`shasum -c .okf-drift-version` (minus the first line) verifies a cache by hand. **Write it
-with `okf-pin.sh`, never by hand** — a hand-copied digest is a digest of whatever you
-happened to download:
+Local sessions invoke `okf-drift:okf-runtime`. It resolves the launcher from the
+absolute skill directory supplied by the host, two levels up, and calls:
 
 ```sh
-"${CLAUDE_PLUGIN_ROOT}/scripts/okf-pin.sh" v0.6.0     # run in the consumer repo
+sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-check.sh knowledge
+sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-recall.sh "<terms>" knowledge
 ```
 
-`okf-pin.sh` takes the digests from the `SHA256SUMS` asset the release workflow attaches to
-the GitHub Release, which is computed over `scripts/*.sh` and `scripts/*.py` at the tag.
-Equivalently, by hand:
+`PLUGIN_ROOT` and `REPO_ROOT` above are explicitly resolved absolute paths, not
+assumed environment variables. No versioned cache path is saved in project files.
+Updating the installed plugin does **not** update the project's pinned runtime.
+
+### Compatibility and the lockfile
+
+**First compatible release: v0.7.0 (candidate, not published by this change).**
+Adoption must wait for that release or a later compatible one. Tests use fixture
+releases so unpublished source remains testable. `VERSION` and the plugin manifest
+stay at 0.6.2 until a separate authorized release.
+
+Line 1 of `.okf-drift-version` is `vMAJOR.MINOR.PATCH`; remaining lines are
+`<64 lowercase hex digits>  <script basename>`. Generate it with the plugin's
+`okf-pin.sh`, which downloads the release's `SHA256SUMS` asset via gh or curl:
 
 ```sh
-{ echo v0.6.0; gh release download v0.6.0 -R alvistar/okf-drift -p SHA256SUMS -O -; } > .okf-drift-version
+sh "$PLUGIN_ROOT/scripts/okf-pin.sh" v0.7.0 "$REPO_ROOT"
 ```
 
-Upgrading a consumer repo is re-running `okf-pin.sh` with the new tag.
+This is an explicit upgrade, not a startup action. Pin generation rejects malformed
+or duplicate hashes and requires shim, gate, recall and drift-bootstrap hashes.
+It stages a validated file before replacing the pin. Never hand-copy digests.
+Older pins remain usable through their legacy wrappers, but the root-aware
+integration diagnoses them and requires an explicit upgrade; it never runs the
+installed plugin runtime as a fallback.
 
-### How the shim resolves
+### Launcher resolution and cache
 
-`$OKF_DRIFT_ROOT/scripts/<name>` first, so a local checkout of this repository overrides
-the pin while the plugin is being developed — that path is **exempt** from the hash check
-by design, since the file being edited cannot match a published digest. Otherwise the
-script is fetched once into `${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/<tag>/` and re-used.
+One launcher, `scripts/okf-shim.sh`, with this consumer-root precedence:
 
-Everything below exits 2 with one line naming expected vs found, because running nothing
-must never look like a clean gate:
+1. `--repo-root <path>`;
+2. legacy `<consumer>/scripts/okf-shim.sh` location, only if its parent carries a pin;
+3. the Git root of the calling cwd (including subdirectories/worktrees).
 
-- a 404, an empty download, or a download whose sha256 is not the pinned one;
-- a **cached** file whose sha256 is not the pinned one — re-checked on *every* run, not
-  only on download;
-- a lockfile that is absent, empty, has no tag, or pins no digest for the script asked for;
-- neither `shasum` nor `sha256sum` on `PATH`, so nothing could be verified.
+The runtime always executes with cwd at the chosen root. Arguments and status are
+forwarded. An unrelated cwd needs the explicit flag. Paths with spaces are supported.
 
-Three defects made this necessary, all measured on a consumer repository with five
-worktrees on 2026-09-16 — see `CHANGELOG.md` 0.6.0. `scripts/okf-shim-selftest.sh` is the
-regression test; CI runs it against a real tag.
+`OKF_DRIFT_ROOT` is a **visible development-only bypass** pointing at a local plugin
+checkout. It bypasses content verification intentionally; an invalid override is an
+error. CI unsets it. Otherwise scripts come only from the pinned tag, downloaded to
+unique temporary files and atomically cached beneath
+`${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/<tag>/`. Cold downloads and warm cache
+entries are both verified against the project's digest on every run. Missing,
+empty, damaged, unpinned or unfetchable scripts fail before execution. Independent
+worktrees can share the cache without sharing partial downloads.
+
+### Standalone bootstrap
+
+Without an installed plugin, use the **`pinned runtime gate` shell block in
+`skills/okf-setup/templates/knowledge.yml`**, installed verbatim at
+`.github/workflows/knowledge.yml`. Run that block from the consumer checkout; it
+is the single authoritative bootstrap recipe. It needs Git, sh, curl and a SHA-256
+tool. It downloads the pinned shim to a temporary directory, verifies the shim's
+pinned digest **before execution**, then calls it with the explicit checkout root.
+No plugin installation, local machine path, consumer script or download from main.
+For standalone recall, change only the last line to:
+
+```sh
+sh "$tmp/okf-shim.sh" --repo-root "$root" okf-recall.sh "<terms>" knowledge
+```
+
+Keep the preceding validation and cleanup steps unchanged. Missing plugin means an
+explicit diagnostic and this bootstrap, never an unverified search fallback. The
+workflow retains full Git history, PR/main-only triggers, pinned okf/drift installs
+and their explicit version/presence preflight. Digest verification covers plugin
+scripts, not the separately downloaded drift installer.
+
+### Integration conversion
+
+The plugin-only `scripts/okf-integrate.py` is shared by setup and migration. It needs
+Python 3.11+ and PyYAML. For a fresh integration or conversion of existing wrappers:
+
+```sh
+uvx --with pyyaml python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
+  --repo-root "$REPO_ROOT" --tag v0.7.0 --dry-run
+# Review, then repeat without --dry-run. Omit --tag to preserve a compatible pin.
+```
+
+The dry run may fetch the release checksum asset into a temporary directory, but
+writes nothing to the consumer. The apply preflights every candidate before writes:
+
+- Legacy check/recall wrappers must match the exact generated two-line or commented
+  three-line content. Shims must hash to an official v0.5.0–v0.6.2 source version,
+  independently of the current pin. All other scripts are left alone.
+- Only exact official legacy/current workflow content is replaced. Only exact
+  template Knowledge Bundle / Work Loop sections are replaced; other sections and
+  any existing Navigation (including required read order) remain byte-for-byte.
+- Symlinks (including candidate parent directories), customized/unknown files,
+  duplicate managed headings and invalid pins are blockers naming the file.
+- `code_refs` and drift binding targets, including directory/glob references, are
+  checked before deletion. Bound candidates block conversion; no re-stamp is made.
+- `knowledge/` and `drift.lock` are read only and remain byte-for-byte unchanged.
+  Historical operational references are reported, not rewritten; the new CLAUDE
+  section makes them non-authoritative. No scaffold, population or log update runs.
+
+The second application makes no changes. Customized integrations need an explicit
+human merge rather than force/overwrite flags. Candidates are rechecked before
+apply to detect edits during downloads; apply uses atomic file replacement, **not a
+multi-file transaction**. Avoid concurrent consumer edits; filesystem failure during
+apply can leave a partial integration (rerun after correcting it, review the diff).
 
 ## Repository layout
 
@@ -144,10 +198,12 @@ scripts/okf-check.sh                the gate, six steps
 scripts/okf-recall.sh               search joined with drift; withholds what it cannot vouch for
 scripts/okf-drift-bootstrap.sh      one drift link per code_refs entry
 scripts/okf-migrate.py              inventory / resolve / convert, for a mex scaffold
-scripts/okf-shim.sh                 what a consumer repo installs instead of a copy of the above
+scripts/okf-shim.sh                 sole root-aware, content-pinned launcher (plugin/CI/legacy)
+scripts/okf-integrate.py            conservative plugin-only integration install/conversion
+scripts/okf-launcher-selftest.py    offline fixture-release launcher/CI/conversion contracts
 scripts/okf-pin.sh                  writes a consumer repo's .okf-drift-version from a release's SHA256SUMS
 scripts/okf-shim-selftest.sh        the shim's regression test, run by CI against a real tag
-skills/okf-{setup,migrate,write,read}/SKILL.md
+skills/okf-{setup,migrate,write,read,runtime}/SKILL.md
 skills/okf-setup/templates/         the bundle, the CLAUDE.md sections, the CI workflow
 skills/okf-setup/references/        okf-quirks.md and the population/resync prompts
 ```

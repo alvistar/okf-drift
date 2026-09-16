@@ -36,7 +36,7 @@ bundle=${2:-knowledge}
 [ -d "$bundle" ] || { echo "no bundle at $bundle (run from the repository root)" >&2; exit 2; }
 command -v okf   >/dev/null 2>&1 || { echo "okf not on PATH" >&2; exit 2; }
 command -v drift >/dev/null 2>&1 || { echo "drift not on PATH — okf-recall needs it to tell a fact from a stale one; install drift or use \`okf search\` knowing it cannot" >&2; exit 2; }
-[ -f drift.lock ] || { echo "no drift.lock at the repository root — okf-recall will not serve concepts it cannot check; run scripts/okf-drift-bootstrap.sh first" >&2; exit 2; }
+[ -f drift.lock ] || { echo "no drift.lock at the repository root — okf-recall will not serve concepts it cannot check; use /okf-setup to bootstrap the pinned drift runtime first" >&2; exit 2; }
 
 # Keep payloads out of argv (Linux's per-argument limit is 131072 bytes), just as
 # the gate does. Failed searches are not an empty result set; preserve stderr.

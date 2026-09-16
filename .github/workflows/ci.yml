@@ -23,6 +23,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # integration tests verify official historical source tags
 
       - name: shell syntax
         run: |
@@ -30,7 +32,7 @@ jobs:
           for f in scripts/*.sh; do echo "sh -n $f"; sh -n "$f"; done
 
       - name: python syntax
-        run: python3 -m py_compile scripts/okf-migrate.py scripts/okf-runtime-selftest.py
+        run: python3 -m py_compile scripts/*.py
 
       - name: gate and recall fail closed at runtime
         run: python3 scripts/okf-runtime-selftest.py
@@ -54,6 +56,12 @@ jobs:
                   yaml.safe_load(fh)
               print("ok", f)
           PY
+
+      - name: wrapper-free launcher, standalone CI and integration conversion
+        run: python3 scripts/okf-launcher-selftest.py
+
+      - name: gate and recall through the pinned root-aware launcher
+        run: OKF_SELFTEST_PINNED=1 python3 scripts/okf-runtime-selftest.py
 
       - name: VERSION == plugin.json version
         run: |
@@ -84,52 +92,9 @@ jobs:
       - name: the shim pins by content — selftest against a real tag
         run: scripts/okf-shim-selftest.sh v0.5.1
 
-      - name: OKF_DRIFT_ROOT overrides the pin, and an unfetchable tag is fatal
-        run: |
-          set -eu
-          repo=$(mktemp -d)
-          mkdir -p "$repo/scripts"
-          cp scripts/okf-shim.sh "$repo/scripts/okf-shim.sh"
-          printf '#!/bin/sh\nexec "$(dirname "$0")/okf-shim.sh" okf-check.sh "$@"\n' > "$repo/scripts/okf-check.sh"
-          chmod +x "$repo/scripts/okf-shim.sh" "$repo/scripts/okf-check.sh"
-          printf 'v0.0.0-does-not-exist\n%s  okf-check.sh\n' \
-            "0000000000000000000000000000000000000000000000000000000000000000" > "$repo/.okf-drift-version"
-          # A local plugin checkout wins over the pin and is exempt from the hash check —
-          # the file being edited cannot match a published digest.
-          (cd "$repo" && OKF_DRIFT_ROOT="$GITHUB_WORKSPACE" ./scripts/okf-check.sh knowledge 2>&1 | grep -q 'no bundle at knowledge') \
-            || { echo "::error::OKF_DRIFT_ROOT did not override the pin"; exit 1; }
-          if (cd "$repo" && ./scripts/okf-check.sh knowledge >/dev/null 2>&1); then
-            echo "::error::a nonexistent tag did not fail the gate"; exit 1
-          fi
-          echo "ok — OKF_DRIFT_ROOT overrides the pin, and an unfetchable tag is fatal"
-
-      # SHA256SUMS is published from 0.6.0 onwards, so on the commit that introduces it
-      # there is not yet a release carrying the asset: find the newest one that does, and
-      # say so rather than pass silently when none exists.
-      - name: okf-pin.sh writes a lockfile the shim accepts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          tag=''
-          for t in $(gh release list -R alvistar/okf-drift --limit 20 --json tagName --jq '.[].tagName'); do
-            if gh release view "$t" -R alvistar/okf-drift --json assets --jq '.assets[].name' | grep -qx SHA256SUMS; then
-              tag="$t"; break
-            fi
-          done
-          if [ -z "$tag" ]; then echo "::notice::no published release carries SHA256SUMS yet — okf-pin.sh untested"; exit 0; fi
-          echo "using $tag"
-          repo=$(mktemp -d)
-          mkdir -p "$repo/scripts"
-          cp scripts/okf-shim.sh "$repo/scripts/okf-shim.sh"
-          printf '#!/bin/sh\nexec "$(dirname "$0")/okf-shim.sh" okf-check.sh "$@"\n' > "$repo/scripts/okf-check.sh"
-          chmod +x "$repo/scripts/okf-shim.sh" "$repo/scripts/okf-check.sh"
-          scripts/okf-pin.sh "$tag" "$repo"
-          head -1 "$repo/.okf-drift-version" | grep -qx "$tag" || { echo "::error::line 1 is not the tag"; exit 1; }
-          grep -q '^[0-9a-f]\{64\}  okf-check\.sh$' "$repo/.okf-drift-version" || { echo "::error::no okf-check.sh pin"; exit 1; }
-          out=$( (cd "$repo" && XDG_CACHE_HOME="$repo/cache" ./scripts/okf-check.sh knowledge) 2>&1 || true )
-          case "$out" in *"no bundle at knowledge"*) echo "ok — okf-pin.sh's lockfile verified and the gate ran" ;;
-                         *) echo "::error::gate did not run on an okf-pin.sh lockfile: $out"; exit 1 ;; esac
+      # The offline launcher suite above checks explicit development override, failed
+      # downloads, pin generation and actual consumer CI bootstrap with fixture releases.
+      # This does not depend on publishing the very version being tested.
 
       # Regression, 0.6.1. The gate used to hand `drift check`'s JSON to perl as an
       # ARGUMENT. Linux caps a single argument at MAX_ARG_STRLEN — 131072 bytes, 32 pages —

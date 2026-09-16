@@ -1,5 +1,6 @@
 ---
 name: okf-read
+disable-model-invocation: true
 description: |
   Recall from an OKF knowledge bundle without serving a stale fact as a fact:
   `okf search --json` joined with `drift check --format json`, so a concept whose bound
@@ -27,7 +28,7 @@ cannot vouch for.
 ## The command
 
 ```sh
-scripts/okf-recall.sh "<terms>" [bundle]        # bundle defaults to knowledge
+# Invoke okf-drift:okf-runtime in recall mode with "<terms>" and optional bundle
 ```
 
 Use it **instead of** `okf search`, for the same queries you would have typed. It runs
@@ -91,17 +92,16 @@ there is no `drift.lock` at the repository root:
 
 ```
 no drift.lock at the repository root — okf-recall will not serve concepts it cannot
-check; run scripts/okf-drift-bootstrap.sh first
+check; use /okf-setup to bootstrap the pinned drift runtime first
 ```
 
 It does not fall back to a bare `okf search`. That is deliberate. A recall that silently
 degrades into an unverified one is worse than no recall, because the caller cannot tell
 the two apart — and the caller is usually a model that will happily quote either. If you
-hit this, bootstrap the lock (`scripts/okf-drift-bootstrap.sh`, from the repository root)
-or use `okf search` **knowing** it cannot tell a fact from a stale one, and say so in
-what you report.
+hit this, stop and request the explicit binding bootstrap described in `/okf-setup` Step 3b.
+Do not fall back to unverified search.
 
-The gate takes the opposite position for the same reason: `scripts/okf-check.sh` step 6
+The gate takes the opposite position for the same reason: the pinned gate's step 6
 only **warns** when there is no lock, because a gate must keep working in a repository
 that has not adopted the drift phase. Recall refuses; the gate degrades. The asymmetry is
 the point — a skipped gate step is visible in the gate's own output, a missing drift

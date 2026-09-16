@@ -28,8 +28,8 @@
 #
 # Warnings (do not fail): empty code_refs, an okf version other than the one measured, and
 # a missing `drift.lock` or `drift` — the gate must keep working in a repo that has not
-# adopted the drift phase. Copy it into the target repo (scripts/okf-check.sh) so CI and
-# CLAUDE.md can call it without the skill installed. Run it from the repository root:
+# adopted the drift phase. The runtime skill and standalone CI bootstrap call the
+# pinned launcher; no consumer copy is needed. Run it from the repository root:
 # code_refs and drift.lock are both rooted there.
 # Needs sh, perl 5.14+ (JSON::PP is core) and okf; drift is optional.
 set -u
@@ -53,7 +53,7 @@ parent=$(dirname "$bundle")
 if ! command -v drift >/dev/null 2>&1; then
   echo "warn  drift not on PATH — step 6 (content drift) did not run; \`code_refs\` can only tell you a path vanished, not that it changed"
 elif [ ! -f "$parent/drift.lock" ]; then
-  echo "warn  no drift.lock in $parent — step 6 (content drift) did not run; bootstrap it with okf-drift-bootstrap.sh"
+  echo "warn  no drift.lock in $parent — step 6 (content drift) did not run; use /okf-setup for the explicit pinned drift bootstrap"
 else
   drift_json=$( (cd "$parent" && drift check --format json) )
   drift_status=$?

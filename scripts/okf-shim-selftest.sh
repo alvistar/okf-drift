@@ -13,7 +13,7 @@
 # SHIM=path/to/okf-shim.sh overrides which shim is under test (default scripts/okf-shim.sh).
 set -eu
 TAG=${1:-v0.5.1}
-SHIM=${SHIM:-scripts/okf-shim.sh}
+SHIM=${SHIM:-$(CDPATH= cd -- "$(dirname "$0")" && pwd)/okf-shim.sh}
 raw="https://raw.githubusercontent.com/alvistar/okf-drift/$TAG/scripts"
 if command -v shasum >/dev/null 2>&1; then hash_of() { shasum -a 256 "$1" | cut -d' ' -f1; }
 else hash_of() { sha256sum "$1" | cut -d' ' -f1; }; fi
@@ -76,7 +76,7 @@ echo "ok (c) a lockfile disagreeing with the tag's content is rejected on downlo
 fixture "$good"; printf '%s\n' "$TAG" > "$repo/.okf-drift-version"
 rc=$(run)
 [ "$rc" = 2 ] || fail "(e) an unpinned script gave rc=$rc, want 2"
-grep -q 'pins no sha256' "$work/out" || fail "(e) no explanation"
+grep -q 'exactly one valid sha256' "$work/out" || fail "(e) no explanation"
 echo "ok (e) a lockfile with no pin line for the script is an error"
 
 echo "selftest: all checks passed against $TAG using $SHIM"

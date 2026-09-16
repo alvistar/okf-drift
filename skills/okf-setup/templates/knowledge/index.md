@@ -4,7 +4,7 @@ okf_version: "0.2"
 
 # {{PROJECT_NAME}} Knowledge Base
 
-Find concepts with `okf search "<terms>"` or `okf search --for-path <file>`; each category index below lists its concepts with the same one-line description the concept carries.
+Find concepts with the model-invocable `okf-drift:okf-runtime` skill in recall mode ("<terms>"). Follow CLAUDE.md for operational instructions and required read order. `okf search --for-path <file>` has no drift join: verify the hit against the code before trusting it. Each category index below lists its concepts with the same one-line description the concept carries.
 
 - [Project](/project/index.md) — What is true of the project right now, the stack, the setup, and the conventions.
 - [Architecture](/architecture/index.md) — How the pieces connect.

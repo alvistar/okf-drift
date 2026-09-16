@@ -77,9 +77,9 @@ fi
 
 echo
 echo "Next:"
-echo "  1. Merge this into $target/CLAUDE.md (keep any existing identity/commands section):"
+echo "  1. Follow /okf-setup Step 3: preflight the plugin-only integration helper with"
+echo "     an explicit published pin >= v0.7.0 (no consumer scripts). Instructions:"
 echo "       $claude_section"
-echo "  2. Install the shim (okf-setup Step 3 item 2) and run the gate — it FAILS until"
-echo "     the bundle is populated; what you are checking now is that it ran at all:"
-echo "       cp $here/okf-shim.sh $target/scripts/okf-shim.sh   + .okf-drift-version + the two wrappers"
+echo "  2. Invoke okf-drift:okf-runtime in gate mode — it FAILS until populated;"
+echo "     verify that the pinned gate actually ran."
 echo "  3. Populate with references/populate-prompt.md from the okf-setup skill."

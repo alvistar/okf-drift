@@ -5,7 +5,7 @@ paths still exist, nothing more (`references/okf-quirks.md`). Staleness is what 
 declare with `stale_after:` and what `last_updated:` lets you infer from `git log`.
 So a resync is an agent task, run when:
 
-- `scripts/okf-check.sh` or `okf validate --drift --stale` reports anything;
+- `okf-drift:okf-runtime in gate mode` or `okf validate --drift --stale` reports anything;
 - `git log --since=<last_updated> -- <code_refs paths>` is non-empty for a concept;
 - a session found a concept wrong and did not fix it on the spot;
 - on a cadence, e.g. before a release.
@@ -14,7 +14,7 @@ So a resync is an agent task, run when:
 
 ```bash
 okf validate knowledge --strict --drift --stale      # broken links, orphans, dead paths, expired reviews
-scripts/okf-check.sh                                 # + index consistency, frontmatter, template residue
+# Invoke okf-drift:okf-runtime in gate mode for indexes, frontmatter, residue and drift.
 for f in $(grep -rl '^code_refs:' knowledge --include='*.md'); do
   since=$(awk '/^last_updated:/{print $2; exit}' "$f" | tr -d "'\"")
   paths=$(awk '/^code_refs:/{f=1;next} f&&/^- /{print $2} f&&!/^- /{exit}' "$f")
@@ -37,7 +37,7 @@ codebase. The bundle may be out of date; the checks below say where to look.
 First read knowledge/index.md and knowledge/project/state.md. Then run, from
 the repo root, and keep the output:
     okf validate knowledge --strict --drift --stale
-    scripts/okf-check.sh
+    okf-drift:okf-runtime in gate mode
 and, for every concept with code_refs, `git log --oneline --since=<its
 last_updated> -- <its code_refs paths>`.
 
