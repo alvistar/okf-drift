@@ -9,6 +9,30 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-16
+
+### Changed
+
+- **A consumer repository no longer vendors the scripts.** `/okf-setup` and `/okf-migrate`
+  now install `scripts/okf-shim.sh` plus a `.okf-drift-version` holding a single tag, and
+  write `scripts/okf-check.sh` and `scripts/okf-recall.sh` as two-line wrappers that
+  `exec` the shim. A vendored copy drifts from the plugin silently and nothing in either
+  repository can see that it has; a pinned one moves only when `.okf-drift-version` does,
+  and the move is a one-line diff a reviewer can read.
+- `skills/okf-setup/templates/knowledge.yml` says that the gate now needs network access
+  on its first run in a job. The command CI runs is unchanged — `scripts/okf-check.sh
+  knowledge` — and `curl` was already used by the step above it to install drift.
+
+### Added
+
+- `scripts/okf-shim.sh` — resolves a script in this order: `$OKF_DRIFT_ROOT/scripts/<name>`
+  when that variable points at a local plugin checkout (so the plugin can be developed
+  against a real repo without republishing), otherwise
+  `${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/<tag>/<name>`, populated on first use from
+  `raw.githubusercontent.com/alvistar/okf-drift/<tag>/scripts/<name>`. A download that
+  404s, arrives empty, or does not start with `#!` is fatal: running nothing must never
+  look like a clean gate.
+
 ## [0.4.0] - 2026-09-16
 
 First release as a standalone repository. The history below was split out of a private
@@ -52,5 +76,6 @@ monorepo with `git subtree split`, so every commit under `0.4.0` predates this t
   `#Symbol` anchor forms each language accepts, and the one fact the whole design rests on:
   editing a doc does **not** clear its staleness.
 
-[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/alvistar/okf-drift/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/alvistar/okf-drift/releases/tag/v0.4.0

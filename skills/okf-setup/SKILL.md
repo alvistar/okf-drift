@@ -51,8 +51,10 @@ knowledge/
     index.md                the format for a decision, then one row per decision
   playbooks/
     index.md                the format for a playbook, then one row per playbook
-scripts/okf-check.sh        the gate, six steps, drift join included (Step 3)
-scripts/okf-recall.sh       search joined with drift, for /okf-read (Step 3)
+.okf-drift-version          the okf-drift tag this repo runs the scripts from (Step 3)
+scripts/okf-shim.sh         fetches and caches a script at that tag (Step 3)
+scripts/okf-check.sh        two-line wrapper — the gate, six steps, drift join included (Step 3)
+scripts/okf-recall.sh       two-line wrapper — search joined with drift, for /okf-read (Step 3)
 drift.lock                  one content signature per (concept, code_ref) pair (Step 3b)
 .github/workflows/knowledge.yml   the gate on every PR and on push to main (Step 3c)
 CLAUDE.md                   + Knowledge Bundle · Work Loop · Navigation (Step 3)
@@ -130,12 +132,31 @@ is a bug in this skill — report it rather than patching the output.
    *Commands* — terse, it is loaded every turn) and the three sections after. If it
    exists, add the three sections and touch nothing else; population fills the rest.
    The daily commands live **only** in `CLAUDE.md`; `setup.md` does not repeat them.
-2. Copy `${CLAUDE_PLUGIN_ROOT}/scripts/okf-check.sh` to `scripts/okf-check.sh` and
-   `${CLAUDE_PLUGIN_ROOT}/scripts/okf-recall.sh` to `scripts/okf-recall.sh` in the repo,
-   both executable. Neither may depend on this plugin being installed — CI, the Work
-   Loop and `/okf-read` all call them from the repo. `okf-check.sh`
+2. Install the shim and pin the tag. CI, the Work Loop and `/okf-read` all call the gate
+   and the recall script **from the repo**, so neither may depend on this plugin being
+   installed — but a vendored copy of either drifts from the plugin silently, and nothing
+   in the repo can see that it has. So the repo carries a one-line pin and two two-line
+   wrappers instead:
+
+   ```bash
+   mkdir -p scripts
+   cp "${CLAUDE_PLUGIN_ROOT}/scripts/okf-shim.sh" scripts/okf-shim.sh
+   printf 'v%s\n' "$(jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")" > .okf-drift-version
+   for s in okf-check okf-recall; do
+     printf '#!/bin/sh\n# %s.sh from alvistar/okf-drift at the tag in .okf-drift-version — see scripts/okf-shim.sh.\nexec "$(dirname "$0")/okf-shim.sh" %s.sh "$@"\n' "$s" "$s" > "scripts/$s.sh"
+   done
+   chmod +x scripts/okf-shim.sh scripts/okf-check.sh scripts/okf-recall.sh
+   ```
+
+   The shim resolves `$OKF_DRIFT_ROOT/scripts/<name>` first when that variable is set (a
+   local plugin checkout, for developing the plugin itself), otherwise fetches the script
+   once from `raw.githubusercontent.com/alvistar/okf-drift/<tag>/scripts/<name>` into
+   `${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/<tag>/`. Commit all four paths. Upgrading the
+   repo later is editing the one line in `.okf-drift-version`.
+
+   Run `scripts/okf-check.sh knowledge` once now to prove the fetch works. It
    **fails on a fresh scaffold** — annotation comments and placeholders — which is the
-   correct answer until Step 4.
+   correct answer until Step 4; what you are checking here is that it ran at all.
 
 What the gate adds to `okf validate --strict --drift --stale` (all measured absent from
 the tool): warnings treated as failures (a dead `code_refs` path is a warning at exit

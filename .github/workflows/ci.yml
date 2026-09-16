@@ -74,6 +74,31 @@ jobs:
 
       - run: okf version && drift --version
 
+      - name: the shim resolves both ways
+        run: |
+          set -eu
+          repo=$(mktemp -d)
+          mkdir -p "$repo/scripts"
+          cp scripts/okf-shim.sh "$repo/scripts/okf-shim.sh"
+          printf 'v0.4.0\n' > "$repo/.okf-drift-version"      # a tag that exists; the fetch must be real
+          printf '#!/bin/sh\nexec "$(dirname "$0")/okf-shim.sh" okf-check.sh "$@"\n' > "$repo/scripts/okf-check.sh"
+          chmod +x "$repo/scripts/okf-shim.sh" "$repo/scripts/okf-check.sh"
+          # No bundle: the fetched gate's own "no bundle at" is proof it ran.
+          if out=$(cd "$repo" && ./scripts/okf-check.sh knowledge 2>&1); then
+            echo "::error::the gate passed with no bundle"; exit 1
+          fi
+          case "$out" in *"no bundle at knowledge"*) echo "ok — fetched from the pinned tag and ran: $out" ;;
+                         *) echo "::error::unexpected output from the shimmed gate: $out"; exit 1 ;; esac
+          test -x "${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/v0.4.0/okf-check.sh" || { echo "::error::nothing was cached"; exit 1; }
+          # $OKF_DRIFT_ROOT wins over the pin, and a bad pin must be fatal, not silent.
+          printf 'v0.0.0-does-not-exist\n' > "$repo/.okf-drift-version"
+          (cd "$repo" && OKF_DRIFT_ROOT="$GITHUB_WORKSPACE" ./scripts/okf-check.sh knowledge 2>&1 | grep -q 'no bundle at knowledge') \
+            || { echo "::error::OKF_DRIFT_ROOT did not override the pin"; exit 1; }
+          if (cd "$repo" && ./scripts/okf-check.sh knowledge >/dev/null 2>&1); then
+            echo "::error::a nonexistent tag did not fail the gate"; exit 1
+          fi
+          echo "ok — OKF_DRIFT_ROOT overrides the pin, and an unfetchable tag is fatal"
+
       - name: scaffold validates clean, and the gate fails it
         run: |
           set -eu

@@ -16,9 +16,10 @@ description: |
 
 One of three skills in the `okf-drift` plugin: `/okf-setup` lays the bundle down,
 `/okf-write` records into it, `/okf-read` recalls from it. The scripts the three share
-are at `${CLAUDE_PLUGIN_ROOT}/scripts/`; the target repo carries its own copies of
-`scripts/okf-check.sh` and `scripts/okf-recall.sh` so nothing in the repo depends on
-this plugin being installed.
+are at `${CLAUDE_PLUGIN_ROOT}/scripts/`; the target repo reaches them through
+`scripts/okf-check.sh` and `scripts/okf-recall.sh`, two-line wrappers over
+`scripts/okf-shim.sh` that run the script from `alvistar/okf-drift` at the tag pinned in
+`.okf-drift-version`, so nothing in the repo depends on this plugin being installed.
 
 **Every path in this document is relative to the target repository root.** Run
 everything from there: `code_refs` and `drift.lock` are both rooted there.

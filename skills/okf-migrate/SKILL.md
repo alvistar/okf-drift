@@ -159,8 +159,23 @@ document.
    `docs/agents/*`, `CONCEPTS.md`, READMEs, `.claude/rules/*` — repoint to the new
    path. Historical plan files under `docs/plans/` are left alone; a dated plan naming
    `.mex/` is a record, not a link.
-5. Copy the gate and the recall script in: `${CLAUDE_PLUGIN_ROOT}/scripts/okf-check.sh`
-   → `scripts/okf-check.sh`, `okf-recall.sh` likewise, executable.
+5. **Install the shim and pin the tag** — `/okf-setup` Step 3 item 2, verbatim. The repo
+   gets `.okf-drift-version`, `scripts/okf-shim.sh`, and `scripts/okf-check.sh` /
+   `scripts/okf-recall.sh` as two-line wrappers that `exec` it; it does **not** get a copy
+   of either script, which would drift from the plugin with nothing able to see it:
+
+   ```bash
+   mkdir -p scripts
+   cp "${CLAUDE_PLUGIN_ROOT}/scripts/okf-shim.sh" scripts/okf-shim.sh
+   printf 'v%s\n' "$(jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")" > .okf-drift-version
+   for s in okf-check okf-recall; do
+     printf '#!/bin/sh\n# %s.sh from alvistar/okf-drift at the tag in .okf-drift-version — see scripts/okf-shim.sh.\nexec "$(dirname "$0")/okf-shim.sh" %s.sh "$@"\n' "$s" "$s" > "scripts/$s.sh"
+   done
+   chmod +x scripts/okf-shim.sh scripts/okf-check.sh scripts/okf-recall.sh
+   ```
+
+   A repo migrating off mex usually already has vendored copies from an earlier version of
+   this plugin — overwrite them with the wrappers and say so in the commit body.
 
 6. **Step 3c of `/okf-setup`: the CI workflow.** Copy
    `${CLAUDE_PLUGIN_ROOT}/skills/okf-setup/templates/knowledge.yml` to

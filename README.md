@@ -68,12 +68,29 @@ curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version v0.10.1
 
 ## What a consumer repository carries
 
-`/okf-setup` and `/okf-migrate` install the gate and the recall script into the target
-repository — `scripts/okf-check.sh` and `scripts/okf-recall.sh` — so that CI, the Work Loop
-and `/okf-read` never depend on the plugin being installed. The repo also carries
-`drift.lock` (shared state, exactly like the bundle) and
-`.github/workflows/knowledge.yml`, which runs `scripts/okf-check.sh knowledge` on every PR
-and on push to `main`.
+CI, the Work Loop and `/okf-read` all call the gate and the recall script from the
+repository, so neither may depend on this plugin being installed. Since 0.5.0 that is a
+**pinned fetch**, not a copy:
+
+```
+.okf-drift-version        one line: v0.5.0
+scripts/okf-shim.sh       resolves and caches a script at that tag
+scripts/okf-check.sh      two lines: exec "$(dirname "$0")/okf-shim.sh" okf-check.sh "$@"
+scripts/okf-recall.sh     two lines, likewise
+drift.lock                shared state, exactly like the bundle
+.github/workflows/knowledge.yml   runs scripts/okf-check.sh knowledge on every PR and on push to main
+```
+
+A vendored copy of the gate drifts from the plugin silently and nothing in either
+repository can see that it has. A pinned one moves only when `.okf-drift-version` moves,
+and that is a one-line diff a reviewer can read. Upgrading a consumer repo is editing that
+line.
+
+The shim looks for `$OKF_DRIFT_ROOT/scripts/<name>` first, so a local checkout of this
+repository overrides the pin while the plugin is being developed. Otherwise it fetches once
+into `${XDG_CACHE_HOME:-$HOME/.cache}/okf-drift/<tag>/` and re-uses it. A download that
+404s, arrives empty, or does not start with `#!` is fatal — running nothing must never look
+like a clean gate.
 
 ## Repository layout
 
@@ -84,6 +101,7 @@ scripts/okf-check.sh                the gate, six steps
 scripts/okf-recall.sh               search joined with drift; withholds what it cannot vouch for
 scripts/okf-drift-bootstrap.sh      one drift link per code_refs entry
 scripts/okf-migrate.py              inventory / resolve / convert, for a mex scaffold
+scripts/okf-shim.sh                 what a consumer repo installs instead of a copy of the above
 skills/okf-{setup,migrate,write,read}/SKILL.md
 skills/okf-setup/templates/         the bundle, the CLAUDE.md sections, the CI workflow
 skills/okf-setup/references/        okf-quirks.md and the population/resync prompts
