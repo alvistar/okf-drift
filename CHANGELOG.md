@@ -9,6 +9,38 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-16
+
+### Fixed
+
+- An installed, adopted drift checker that emits no JSON now fails the gate instead of
+  reporting success with step 6 skipped. Nonzero validator/checker statuses cannot become
+  a clean gate even when stdout contains a fresh-looking report; structured stale findings
+  remain visible. Missing per-document verdicts and partial reports that omit a concept
+  are no longer assumed fresh.
+- Recall normalizes relative, dotted and absolute bundle paths into drift's repository-root
+  namespace. Missing or unknown verdicts fail closed before any search result is printed,
+  rather than promoting stale or unchecked concepts to fresh.
+- Failed searches and malformed search/check reports no longer look like a successful empty
+  search. Recall preserves dependency diagnostics and distinguishes drift's exit-1 findings
+  from execution errors.
+- Recall, like the gate, passes JSON to Perl through private temporary files, not command
+  arguments. Large search and drift reports no longer hit Linux's per-argument size limit;
+  temporary files are removed on success, failure and handled termination.
+
+### Added
+
+- Offline runtime regression tests exercise process failures, malformed and missing verdicts,
+  equivalent bundle paths, valid empty searches, and reports larger than 131 KB. CI runs them
+  alongside the existing checksum selftest and gate size/path regressions.
+
+### Known gaps
+
+- The gate still warns when drift is not installed or no lock exists, for repositories that
+  have not adopted it. CI consumers must retain their explicit dependency/version preflight.
+- Digest verification protects the fetched plugin scripts, not the separate mutable drift
+  installer; `OKF_DRIFT_ROOT` remains an intentional local-development bypass.
+
 ## [0.6.1] - 2026-09-16
 
 Two defects, both found on the first CI run after a consumer repo adopted the gate, and
@@ -187,6 +219,10 @@ monorepo with `git subtree split`, so every commit under `0.4.0` predates this t
   `#Symbol` anchor forms each language accepts, and the one fact the whole design rests on:
   editing a doc does **not** clear its staleness.
 
-[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/alvistar/okf-drift/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/alvistar/okf-drift/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/alvistar/okf-drift/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/alvistar/okf-drift/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/alvistar/okf-drift/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/alvistar/okf-drift/releases/tag/v0.4.0
