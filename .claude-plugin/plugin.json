@@ -1,7 +1,7 @@
 {
   "name": "okf-drift",
-  "version": "0.1.0",
-  "description": "Project memory as an OKF v0.2 bundle with content-level drift on top: /okf-setup scaffolds a fixed layout (project/{state,stack,setup,conventions}, architecture/, one concept per decision and per playbook) that validates --strict from the first commit; /okf-write records into it with drift links; /okf-read recalls from it, withholding drifted concepts with their blame. Ships the gate for everything okf validate does not check.",
+  "version": "0.2.0",
+  "description": "Project memory as an OKF v0.2 bundle with content-level drift on top: /okf-setup scaffolds a fixed layout (project/{state,stack,setup,conventions}, architecture/, one concept per decision and per playbook) that validates --strict from the first commit and binds every code_ref into a drift.lock; /okf-write records into it, re-stamping a reviewed binding only alongside a dated line in log.md; /okf-read recalls through okf-recall.sh, withholding drifted concepts with the commit to blame. Ships the six-step gate for everything okf validate does not check.",
   "author": {
     "name": "Alessandro Viganò"
   }

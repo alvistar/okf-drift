@@ -50,7 +50,9 @@ knowledge/
     index.md                the format for a decision, then one row per decision
   playbooks/
     index.md                the format for a playbook, then one row per playbook
-scripts/okf-check.sh        the gate (Step 3)
+scripts/okf-check.sh        the gate, six steps, drift join included (Step 3)
+scripts/okf-recall.sh       search joined with drift, for /okf-read (Step 3)
+drift.lock                  one content signature per (concept, code_ref) pair (Step 3b)
 CLAUDE.md                   + Knowledge Bundle · Work Loop · Navigation (Step 3)
 ```
 
@@ -77,6 +79,7 @@ read the repo** — hand them over only when the user wants to run them elsewher
 
 ```bash
 okf version          # expect: okf version v0.3.0 (OKF v0.2 specification)
+drift --version      # expect: drift v0.10.1  (Step 3b; not needed before it)
 ```
 
 Absent: `go install github.com/okf-memory/okf-agent-memory/cmd/okf@latest` and make sure
@@ -125,9 +128,10 @@ is a bug in this skill — report it rather than patching the output.
    *Commands* — terse, it is loaded every turn) and the three sections after. If it
    exists, add the three sections and touch nothing else; population fills the rest.
    The daily commands live **only** in `CLAUDE.md`; `setup.md` does not repeat them.
-2. Copy `${CLAUDE_PLUGIN_ROOT}/scripts/okf-check.sh` to `scripts/okf-check.sh` in the
-   repo, executable. It must not depend on this plugin being installed: CI and the Work
-   Loop call it. It
+2. Copy `${CLAUDE_PLUGIN_ROOT}/scripts/okf-check.sh` to `scripts/okf-check.sh` and
+   `${CLAUDE_PLUGIN_ROOT}/scripts/okf-recall.sh` to `scripts/okf-recall.sh` in the repo,
+   both executable. Neither may depend on this plugin being installed — CI, the Work
+   Loop and `/okf-read` all call them from the repo. `okf-check.sh`
    **fails on a fresh scaffold** — annotation comments and placeholders — which is the
    correct answer until Step 4.
 
@@ -142,6 +146,42 @@ every concept has a row in its category index; one-line descriptions, ISO
 a concept (search indexes comment text), no placeholder, no empty section; root
 `okf_version`, `log.md`, and `state.md`'s three lists. Empty `code_refs` is a warning:
 coverage is a judgement.
+
+Step 6 of the gate is the drift join — see Step 3b. Until there is a `drift.lock` it
+`warn`s and skips, so the gate keeps working in a repo that has not adopted drift.
+
+## Step 3b — Bind the bundle to the code
+
+`code_refs` tells you a governed path **vanished**. It cannot tell you the path
+**changed**, which is the way a concept actually goes wrong. `drift`
+(`~/.local/bin/drift`, v0.10.1 measured) closes that: a content signature per (concept,
+path) pair in a repo-root `drift.lock`, and a `blame` when the signature no longer
+matches.
+
+```bash
+drift --version                                             # expect: drift v0.10.1
+"${CLAUDE_PLUGIN_ROOT}/scripts/okf-drift-bootstrap.sh"      # from the REPOSITORY ROOT
+```
+
+It reads every `code_refs:` entry in the bundle and runs one `drift link` per entry. It
+is idempotent by skipping what `drift.lock` already holds — it has to be, because
+`drift link` **refuses** a binding the lock already carries (exit 1, "refused: target
+changed since last link") whether or not anything changed. A directory `code_ref` is
+expanded into its git-tracked files, because drift signs file content and rejects a
+directory outright; one wider than `OKF_DRIFT_MAX_DIR_FILES` (20) is skipped, and the fix
+is a narrower `code_ref`.
+
+Run it **after** Step 4 on a repo being populated — there is nothing to bind before the
+concepts have `code_refs`. On a bundle that is already populated, run it now. Either way
+the last line must be `drift check: pass`: a signature is taken from current content, so
+a binding written a second ago cannot be stale. If one is, the lock was not written by
+that run.
+
+Commit `drift.lock`. It is shared state, exactly like the bundle.
+
+The full drift measurements — every refusal, the JSON shape, and the one that shapes the
+whole design (editing a doc does **not** clear its staleness; only
+`drift link … --doc-is-still-accurate` does) — are in `references/okf-quirks.md`.
 
 ## Step 4 — Populate
 
@@ -196,13 +236,16 @@ or the concept stays expired.
 ## What OKF does not give you, said once
 
 No code graph, no symbol-level drift, no `impact`. `code_refs` + `--drift` tell you a
-path vanished; the `git log` loop tells you a governed path changed. Whether the prose
-is still *true* is the agent's job in the Work Loop, and that is the trade this layout
-makes for a corpus that outlives the tool.
+path vanished; `drift.lock` (Step 3b) tells you a governed path **changed**, and who
+changed it — file-level, not symbol-level, so a formatting pass flags a concept exactly
+as a rewrite does. Whether the prose is still *true* after that flag is the agent's job,
+in `/okf-write`'s step 3, paired with a line in `log.md` saying what was checked. That is
+the trade this layout makes for a corpus that outlives both tools.
 
 ## Report
 
-Give the user: the okf version; the validate line after scaffolding; the gate result
+Give the user: the okf and drift versions; the validate line after scaffolding;
+the bootstrap counts (linked / skipped / failed) and the `drift check` line after it; the gate result
 after population with every placeholder left and why; the decisions recorded; the
 three search checks; the files to commit; and anything in `references/okf-quirks.md`
 the run contradicted.

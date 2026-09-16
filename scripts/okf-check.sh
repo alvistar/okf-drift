@@ -17,11 +17,21 @@
 #      vocabulary itself, draft|stable|deprecated, okf --strict does enforce);
 #   4. fails on leftover template material: HTML comments (search indexes them), the
 #      population placeholders, and a section with no content;
-#   5. checks the reserved files: root okf_version, log.md, project/state.md's three lists.
+#   5. checks the reserved files: root okf_version, log.md, project/state.md's three lists;
+#   6. runs `drift check --format json` from the bundle's parent and fails on any doc in
+#      the bundle that is not `fresh` — an anchor whose code changed after the concept was
+#      last believed (with the commit to blame) or a dead markdown link. Content-level
+#      drift is the one thing `code_refs` cannot give you: okf tells you a path VANISHED,
+#      drift tells you it CHANGED. Bindings come from `okf-drift-bootstrap.sh`; a concept
+#      reviewed against a change is re-stamped with
+#      `drift link <doc> <path> --doc-is-still-accurate` and a line in log.md.
 #
-# Warnings (do not fail): empty code_refs, an okf version other than the one measured.
-# Copy it into the target repo (scripts/okf-check.sh) so CI and CLAUDE.md can call it
-# without the skill installed. Needs sh, perl 5.14+ (JSON::PP is core) and okf.
+# Warnings (do not fail): empty code_refs, an okf version other than the one measured, and
+# a missing `drift.lock` or `drift` — the gate must keep working in a repo that has not
+# adopted the drift phase. Copy it into the target repo (scripts/okf-check.sh) so CI and
+# CLAUDE.md can call it without the skill installed. Run it from the repository root:
+# code_refs and drift.lock are both rooted there.
+# Needs sh, perl 5.14+ (JSON::PP is core) and okf; drift is optional.
 set -u
 bundle=${1:-knowledge}
 [ -d "$bundle" ] || { echo "no bundle at $bundle" >&2; exit 2; }
@@ -35,11 +45,23 @@ esac
 
 json=$(okf validate "$bundle" --strict --drift --stale --json 2>/dev/null)
 
-exec perl - "$bundle" "$json" <<'PERL'
+# Step 6's input. Empty string = "not adopted here", which is a warning, not a failure.
+drift_json=""
+parent=$(dirname "$bundle")
+if ! command -v drift >/dev/null 2>&1; then
+  echo "warn  drift not on PATH — step 6 (content drift) did not run; \`code_refs\` can only tell you a path vanished, not that it changed"
+elif [ ! -f "$parent/drift.lock" ]; then
+  echo "warn  no drift.lock in $parent — step 6 (content drift) did not run; bootstrap it with okf-drift-bootstrap.sh"
+else
+  drift_json=$( (cd "$parent" && drift check --format json 2>/dev/null) )
+  [ -n "$drift_json" ] || echo "warn  \`drift check --format json\` produced nothing — step 6 did not run"
+fi
+
+exec perl - "$bundle" "$json" "$drift_json" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP; use File::Find; use File::Basename;
 binmode STDOUT, ':utf8';
-my ($bundle, $json) = @ARGV;
+my ($bundle, $json, $drift_json) = @ARGV;
 my $fail = 0;
 sub bad  { $fail = 1; print "FAIL  @_\n" }
 sub warnl{ print "warn  @_\n" }
@@ -96,10 +118,14 @@ for my $rel (@concepts) {
   warnl("$rel: code_refs is empty — `okf search --for-path` will never answer with this concept") unless @code_refs or $rel =~ m{^project/state\.md$};
   bad("$rel: HTML comment left in a concept — replace the annotation, search indexes comment text") if $text =~ /<!--/;
   bad("$rel: unfilled placeholder") if $text =~ /\[TO DETERMINE\]|\[TO BE DETERMINED|\[VERIFY AFTER|\[Project Name\]|\{\{[A-Z_0-9]+\}\}/;
-  # Empty sections: a heading whose content, up to the next heading, is blank.
-  (my $nb = $body) =~ s/```.*?```//sg;
+  # Two views of the body. `$masked` keeps a fenced block as a single opaque token, so a
+  # section whose whole content is a command block still counts as content and a `#` line
+  # inside an example is not mistaken for a heading. `$nb` drops fences entirely, so a
+  # link inside an example is not mistaken for a real outbound link.
+  (my $masked = $body) =~ s/^(?:[ \t]*)```.*?^(?:[ \t]*)```[^\n]*$/FENCED CODE BLOCK/smg;
+  (my $nb     = $body) =~ s/^(?:[ \t]*)```.*?^(?:[ \t]*)```[^\n]*$//smg;
   # A heading followed only by a deeper heading is a container, not an empty section.
-  my @parts = split /^(?=#{1,6} )/m, $nb;
+  my @parts = split /^(?=#{1,6} )/m, $masked;
   for my $i (0..$#parts) {
     next unless $parts[$i] =~ /^(#{1,6}) ([^\n]*)\n(.*)\z/s;
     my ($lvl,$h,$c) = (length $1, $2, $3);
@@ -147,6 +173,43 @@ if (-f "$bundle/project/state.md") {
   for my $h ('Working', 'Not yet built', 'Known issues') { bad("project/state.md: missing the '**$h:**' list") unless $s =~ /^\*\*\Q$h\E:\*\*/m }
 } else { warnl("project/state.md: absent — the session bootstrap has no snapshot to read") }
 
-print "ok    $bundle: okf gate passed with no warnings, indexes consistent both ways, frontmatter complete, no template residue\n" unless $fail;
+# 6. Content drift: has the code a concept is bound to moved since the concept was written?
+my $drift_note = "step 6 skipped (no drift.lock)";
+if (length $drift_json) {
+  my $dc = eval { decode_json($drift_json) };
+  if (!$dc) { bad("drift check produced no JSON — run `drift check --format json` from the bundle's parent") }
+  else {
+    my $checked = 0;
+    for my $d (@{ $dc->{docs} || [] }) {
+      my $p = $d->{path} // next;
+      next unless $p =~ m{^\Q$bundle\E/};
+      $checked++;
+      my $r = $d->{result} // 'fresh';
+      next if $r eq 'fresh';
+      for my $a (@{ $d->{anchors} || [] }) {
+        next if ($a->{result} // '') eq 'fresh';
+        my $b = $a->{blame} || {};
+        my $c = substr($b->{commit} // '', 0, 8) || '-';
+        my $date = $b->{date} // ''; $date =~ s/T.*//;
+        bad("$p: drifted from ".($a->{path} // $a->{identity} // '?')." (".($a->{reason}{code} // $a->{result} // '?').")\n"
+           ."        blame: $c ".($date || '-')." ".($b->{subject} // '(uncommitted change — nothing to blame yet)')." (".($b->{author} // '-').")\n"
+           ."        review the concept against the code, then: drift link $p ".($a->{path} // '<path>')." --doc-is-still-accurate  + a dated line in $bundle/log.md");
+      }
+      for my $l (@{ $d->{links} || [] }) {
+        next unless ($l->{result} // '') eq 'broken';
+        bad("$p: broken link at line ".($l->{line} // '?').": ".($l->{target} // '?'));
+      }
+      # A non-fresh doc with neither a stale anchor nor a broken link: name it anyway.
+      bad("$p: drift result '$r' with no anchor or link to point at — run `drift check`")
+        unless grep { ($_->{result} // '') ne 'fresh' } @{ $d->{anchors} || [] },
+               grep { ($_->{result} // '') eq 'broken' } @{ $d->{links} || [] };
+    }
+    my $anchors = 0;
+    $anchors += scalar @{ $_->{anchors} || [] } for grep { ($_->{path} // '') =~ m{^\Q$bundle\E/} } @{ $dc->{docs} || [] };
+    $drift_note = "$checked doc(s) / $anchors drift anchor(s) fresh";
+  }
+}
+
+print "ok    $bundle: okf gate passed with no warnings, indexes consistent both ways, frontmatter complete, no template residue, $drift_note\n" unless $fail;
 exit $fail;
 PERL
