@@ -25,8 +25,8 @@ from there. Nothing here pushes, opens a PR, or bumps a version.
 
 ## What the first migration got wrong, so this one does not
 
-Measured on offline-payment-attestation (27 documents, 31 groundings) and ai-review
-(20 documents, 34 groundings, 25 inline anchors):
+Measured on repo A — a Rust/Python/Swift protocol family (27 documents, 31 groundings) and repo B — a TypeScript
+monorepo (20 documents, 34 groundings, 25 inline anchors):
 
 - **PyYAML folded 22 long descriptions over two lines and okf reads a description to
   the end of its first line.** Half of each description vanished from search and the
@@ -85,10 +85,10 @@ and the count. Keep the map file until the commit — it is the provenance. A `M
 it, so it is not an error to fix now; it is a row in `log.md`.
 
 **A MISS whose id also appears as an inline anchor can usually be recovered**, because the
-anchor carries the label: `[`acceptSuggestionService()`](mex://function:89ea857d…)`. Grep
+anchor carries the label: `[`acceptService()`](mex://function:89ea857d…)`. Grep
 the codebase for that declaration, and if exactly one file declares it, write the path into
 the map by hand and mark the row `RECOVERED by symbol name, not by the graph` in `log.md`.
-That is verification, not invention — and on ai-review it saved 2 of 6 misses. A `MISS`
+That is verification, not invention — and on repo B it saved 2 of 6 misses. A `MISS`
 that appears only in a `grounds_to:` block has no label (mex records `node` and
 `fingerprint`, nothing else) and stays unresolved.
 
@@ -125,7 +125,7 @@ rule); a state section far longer than a snapshot.
 
 okf validates **every** markdown link in a concept as a concept link. A relative link
 to a repo document outside `knowledge/` — `[x](../../docs/incidents/foo.md)` — is a
-broken link under `--strict`, and mex scaffolds are full of them (ai-review: 19).
+broken link under `--strict`, and mex scaffolds are full of them (repo B: 19).
 Measured on okf v0.3.0: a relative `.md` link and a root-relative `/docs/x.md` are
 broken; an **angle-bracket destination** `[text](<../../docs/foo.md>)` is not counted
 at all, and neither is a non-`.md` target, an `https://` URL, or a reference-style
@@ -148,7 +148,7 @@ document.
 3. **`orca.yaml`** (if present): remove the background `mex graph` build at worktree
    creation and any `.mex` shared path — a bundle is tracked Markdown, nothing to build.
 3b. **Inside the bundle too.** The migrator rewrites *links*, not prose paths, and a mex
-   scaffold is full of the latter: measured on ai-review, all five `patterns/` files ended
+   scaffold is full of the latter: measured on repo B, all five `patterns/` files ended
    in an **`## Update Scaffold`** checklist telling the agent to edit `.mex/ROUTER.md`,
    `.mex/context/` and `.mex/patterns/INDEX.md`, and four concepts cited a sibling as a bare
    `` `context/auth-model.md` ``. Sweep
@@ -217,7 +217,7 @@ scripts/okf-check.sh knowledge                                         # step 6 
 Symbol-level anchors (`path#Symbol`) are worth it where the prose depends on one
 declaration and the language is Go/Java/Python/Rust/TypeScript/Zig — the map file carries
 the symbol name for each node, which is exactly the list to narrow from. Three things
-measured on the ai-review migration, each of which costs the whole narrowing pass if you
+measured on the repo B migration, each of which costs the whole narrowing pass if you
 assume otherwise:
 
 - **mex's `source` record has no symbol NAME** (mex 0.8.2): `resolve` parses it out of the

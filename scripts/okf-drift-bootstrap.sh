@@ -125,7 +125,7 @@ echo "----"
 echo "$concepts concept(s) with code_refs: $linked linked, $skipped skipped, $failed failed; drift.lock holds $held binding(s)"
 # drift check's exit code covers EVERY markdown file under the working directory, so an
 # unrelated broken link elsewhere in the repo fails it while the bundle is perfectly fresh
-# (measured on ai-review: 32 broken links in docs/ and .claude/rules/, 0 in the bundle).
+# (measured on a TypeScript monorepo, repo B: 32 broken links in docs/ and .claude/rules/, 0 in the bundle).
 # Judge the bundle, the way okf-check.sh step 6 does.
 if drift check --format json 2>/dev/null | perl -0777 -ne '
   use JSON::PP; my $d = eval { decode_json($_) } or exit 2;

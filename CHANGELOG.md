@@ -9,6 +9,12 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-16
+
+### Changed
+
+- Docs only: the two repositories the plugin was measured on are now called repo A (a Rust/Python/Swift protocol family) and repo B (a TypeScript monorepo); their names, one plan path and a few file paths and symbol names are gone from the skills, the quirks file, the templates and one script comment. Every measured number is unchanged. Scripts are byte-identical to 0.5.0 apart from that comment.
+
 ## [0.5.0] - 2026-09-16
 
 ### Changed

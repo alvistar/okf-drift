@@ -53,7 +53,7 @@ Do not quote these as facts. Read the code they point at, or fix the concept wit
 
   playbooks/bound-a-decode-path                Playbook     2.11   last_updated 2026-09-11
       Give a decode path receiver-chosen DecodeBounds and prove the bound arrived …
-      opa-core/crates/opa-core/src/cbor.rs  [changed_after_baseline]
+      core/crates/core/src/cbor.rs  [changed_after_baseline]
           4f2a11cb  2026-09-16  tighten the length guard (Alessandro Viganò)
 ```
 
@@ -119,7 +119,7 @@ drift section is in `../okf-setup/references/okf-quirks.md`.
   broken, 1 otherwise; `summary.result` mirrors it.
 - `docs[]` has one entry per markdown file drift discovers **under the working
   directory** — run from the repository root that is every `.md` in the repo (74 in
-  bristleworm), not only the bundle, so filter on `path`. A doc with no anchors is
+  repo A), not only the bundle, so filter on `path`. A doc with no anchors is
   `fresh`: a concept with no `code_refs` is never withheld, and never vouched for either.
 - Per-doc `result` is `fresh` | `stale` | `broken`. A stale anchor carries `reason.code`
   (`changed_after_baseline`) and `blame {author, commit, date, subject}`.

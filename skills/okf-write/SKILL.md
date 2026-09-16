@@ -142,7 +142,7 @@ in `knowledge/log.md`:
 
 ```
 - 2026-09-16 — reviewed `architecture/protocol-core` against
-  `opa-core/crates/opa-core/src/cbor.rs` (commit 4f2a11c, "tighten the length guard"):
+  `core/crates/core/src/cbor.rs` (commit 4f2a11c, "tighten the length guard"):
   the §5 encoding claims are unchanged; the bound-length paragraph was wrong and is
   rewritten. Re-stamped.
 ```
@@ -184,7 +184,7 @@ released artifact. If the repository's `VERSION` governs something else, leave i
 Some repositories carry an OKF bundle laid down before this layout: a single
 `architecture/decisions.md` instead of a `decisions/` directory, a
 `project/session-contract.md` instead of `project/state.md`, a routing table in the root
-`index.md`. bristleworm (offline-payment-attestation) is the worked example.
+`index.md`. the first migrated repo (repo A) is the worked example.
 
 **Do not invent the new layout inside an old one.** A `decisions/` directory holding one
 file, in a bundle whose decisions all live in `architecture/decisions.md`, splits the
@@ -193,7 +193,7 @@ corpus in two and neither half is findable. Instead:
 - A decision goes as a new section in `architecture/decisions.md`, in the shape the
   sections already there use. Bump that file's `last_updated`.
 - The project snapshot goes wherever the bundle keeps it — `project/session-contract.md`
-  in bristleworm. The gate `warn`s about a missing `project/state.md`; that warning is
+  in the first migrated repo. The gate `warn`s about a missing `project/state.md`; that warning is
   correct, and it is not yours to silence by creating the file.
 - Playbooks, concepts, `log.md`, index rows, `code_refs`, `drift link` and the re-stamp
   rule are identical in both layouts — none of that is layout.

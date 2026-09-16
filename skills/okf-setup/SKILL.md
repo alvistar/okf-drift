@@ -105,10 +105,8 @@ scripts/okf-check.sh 2>/dev/null || "${CLAUDE_PLUGIN_ROOT}/scripts/okf-check.sh"
 - A bundle that fails on comments/placeholders → Step 4 (populate). Missing files from
   the layout above: `okf-scaffold.sh --force .` adds only what is absent, never
   overwrites.
-- A `.mex/` directory and no `knowledge/` → a migration, not a setup. The bristleworm
-  migration plan (`docs/plans/2026-09-15-001-chore-migrate-mex-to-okf-plan.md` in
-  offline-payment-attestation) is the worked example; its `Result` section lists what
-  the plan got wrong. Note that bundle predates this layout (it still has the routing
+- A `.mex/` directory and no `knowledge/` → a migration, not a setup. The first migration (repo A) is the worked example: its plan's `Result` section
+  listed everything the plan had got wrong, and those lessons are in `/okf-migrate`. Note that bundle predates this layout (it still has the routing
   table, a session contract and a single decisions file) — converting it is a
   separate, mechanical task.
 

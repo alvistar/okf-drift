@@ -52,7 +52,7 @@ all**: an angle-bracket destination `[t](<../../docs/a.md>)`, a non-`.md` target
 `[r]: ../../docs/a.md`). The angle form is CommonMark and renders as a normal link, so
 it is how a concept cites a repo document outside `knowledge/` — with the path listed
 under `sources:` as well. `okf-migrate.py` rewrites outbound links that way (19 in the
-ai-review scaffold).
+repo B scaffold).
 
 ## `okf create` — prefer writing the file
 
@@ -72,7 +72,7 @@ adding a link, `okf update` for a description — but check the file afterwards.
 `index.md` and `log.md` are reserved at every level: not concepts, not counted, not
 validated for frontmatter, not searched. **`log.md` is not entirely unvalidated, though:
 every `## ` heading in it must be a bare ISO date.** Measured on okf v0.3.0 during the
-ai-review migration: `## 2026-09-16 — migration from .mex/` is a `warnings` entry,
+repo B migration: `## 2026-09-16 — migration from .mex/` is a `warnings` entry,
 `log.md: log heading '…' is not ISO 8601 YYYY-MM-DD` — exit 0 from `okf validate`, but
 fatal under `okf-check.sh`, which treats warnings as failures. Put the title on the line
 below the heading. A `README.md` inside the bundle **is** a
@@ -89,7 +89,7 @@ Two different parsers read the frontmatter, and they disagree.
   — measured: `… (issue #48); the rest` comes back intact from `okf search --json`. But
   it stops at the end of the line: a value **folded over two lines** (what PyYAML's
   dumper does to any long string) is truncated at the fold, silently, in search results
-  and in `okf show`. The migrated bristleworm bundle had 22 of those and nobody saw it
+  and in `okf show`. The first migrated bundle (repo A) had 22 of those and nobody saw it
   until the gate compared index rows to descriptions.
 - **A real YAML library** (PyYAML, the one that wrote the migration) treats an unquoted
   ` #` as a comment: that is where `… (issue` came from, at migration time, before okf
@@ -113,7 +113,7 @@ and a superseded one is `deprecated`; there is no "active".
 
 **`sources` entries must be mappings with a `resource` key** under `--strict`: a bare
 string item is `sources[N] has no 'resource'` in `gate_findings`, exit 1 (measured on the
-ai-review migration dry run — 11 findings from links the migrator had listed as plain
+repo B migration dry run — 11 findings from links the migrator had listed as plain
 paths). Write `- resource: docs/x.md`; whether the path exists is not checked.
 
 ## Search
@@ -128,8 +128,8 @@ runner-up at 0.25 on the migrated bundle — correct, but resting on body text a
 
 `okf search --for-path <file>` resolves through `code_refs` only. Paths are
 repo-relative from the bundle's parent; a wrong prefix returns nothing rather than a
-near miss (`opa-core/src/cbor.rs` found nothing; the real path was
-`opa-core/crates/opa-core/src/cbor.rs`).
+near miss (`core/src/cbor.rs` found nothing; the real path was
+`core/crates/core/src/cbor.rs`).
 
 ## `okf bootstrap` and `okf agents`
 
@@ -145,7 +145,7 @@ useful only if you adopt that style.
 # drift v0.10.1 — the same treatment
 
 Measured on 2026-09-16 (`drift v0.10.1`, installed at `~/.local/bin/drift`), on a scratch
-git repository built for the purpose and on the bristleworm bundle. drift is what supplies
+git repository built for the purpose and on repo A's bundle. drift is what supplies
 the thing OKF has no answer for: `code_refs` tells you a path **vanished**, drift tells you
 it **changed**.
 
@@ -170,7 +170,7 @@ idempotency has to come from the caller: `okf-drift-bootstrap.sh` reads the exis
 tree-sitter grammars shipped in the binary — `src/queries/{go,java,python,rust,typescript,zig}.scm`
 — and there is no C, no Swift, no Objective-C, no JavaScript beyond what the TypeScript
 grammar covers. **The grammar is selected by file EXTENSION, and `.mjs`/`.cjs` are not in
-it**: measured on the ai-review migration, `drift link doc margins/scripts/oss-manifest.cjs#classify`
+it**: measured on the repo B migration, `drift link doc scripts/manifest.cjs#classify`
 and the same on four `.mjs` scripts all refuse with `cannot compute fingerprint for target`,
 while every `.ts` anchor in the same run linked. Node-side build and guard scripts are
 therefore whole-file bindings, and a reformat of one reads as drift. Measured: `drift link doc src/a.c#guard` and `doc src/k.swift#KeyManager`
@@ -178,15 +178,15 @@ both refuse with `error: cannot compute fingerprint for target`; `doc src/r.rs#g
 links. A whole-file anchor works for any file, but for an unsupported language it is a
 **raw content** signature: a whitespace-only reformat of `a.c` went stale, while a
 reformat of `r.rs` (AST-normalised) stayed fresh, and changing `other()` next to the
-bound `guard` stayed fresh only in Rust. In this family that means `opa-core`,
-`terminal-mock`, `terminal-fw/rust`, `backend` and `model` can be anchored at symbol
-level; `terminal-fw/app/src/*.c` and `ios-wallet/**/*.swift` only at file level, with
+bound `guard` stayed fresh only in Rust. In a Rust + Python + C + Swift family that means the Rust crates, the Python
+backend and the model harness can be anchored at symbol level; the C firmware and the
+Swift app only at file level, with
 every `clang-format`/`swift-format` pass reading as drift. Bind narrow files there, and
 expect to re-stamp after a formatter run.
 
 ### Which `#Symbol` names are accepted — measured, Rust and Python
 
-Measured 2026-09-16 on a scratch git repo, then applied to bristleworm. A refusal is
+Measured 2026-09-16 on a scratch git repo, then applied to repo A. A refusal is
 always the same line, `error: cannot compute fingerprint for target: <path>#<name>`,
 exit 1 — it never says *why*, so a path-shaped name and a typo are indistinguishable.
 
@@ -237,7 +237,7 @@ the cap.
 - Exit 0 iff nothing is stale and no link is broken; `summary.result` (`pass`/`fail`)
   mirrors it, independent of `--format`.
 - `docs[]` covers **every `.md` drift discovers under the current working directory** —
-  from a repo root that is the whole repo (74 entries in bristleworm, of which 31 are the
+  from a repo root that is the whole repo (74 entries in repo A, of which 31 are the
   bundle). Filter on `path`. A doc with no anchors is reported, and is `fresh`.
 - Run from a **subdirectory** it still finds the repo-root `drift.lock`, still reports
   root-relative paths, but scans only the docs under that subdirectory. So
@@ -276,7 +276,7 @@ the lock was not written by that bootstrap.
 
 **Deleting the doc does not delete its bindings.** After `git rm knowledge/x.md`,
 `drift check` still lists `knowledge/x.md` in `docs[]` and still evaluates its anchors
-from the lock alone (measured during the bristleworm layout conversion: the removed
+from the lock alone (measured during repo A's layout conversion: the removed
 `architecture/decisions.md` kept reporting two fresh anchors). Only `drift unlink` removes
 them. drift never fails on it, so the gate does: a lock entry whose doc no longer exists
 is a `FAIL` in step 6.

@@ -21,7 +21,7 @@ tags:
 - cross-compile
 sources: []
 code_refs:
-- opa-core/run-32-bit-lane.sh
+- scripts/run-the-32-bit-lane.sh
 last_updated: 2026-09-16
 ---
 

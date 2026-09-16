@@ -19,7 +19,7 @@ tags:
 sources:
 - resource: docs/plans/2026-09-04-001-fixtures-plan.md
 code_refs:
-- opa-core/fixtures/
+- core/fixtures/
 last_updated: 2026-09-16
 ---
 
