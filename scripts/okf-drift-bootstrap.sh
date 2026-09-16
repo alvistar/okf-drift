@@ -123,7 +123,18 @@ done < "$tmp"
 held=$(grep -c '^[[:space:]]*target[[:space:]]*=' drift.lock 2>/dev/null || echo 0)
 echo "----"
 echo "$concepts concept(s) with code_refs: $linked linked, $skipped skipped, $failed failed; drift.lock holds $held binding(s)"
-if drift check --format json >/dev/null 2>&1; then
+# drift check's exit code covers EVERY markdown file under the working directory, so an
+# unrelated broken link elsewhere in the repo fails it while the bundle is perfectly fresh
+# (measured on ai-review: 32 broken links in docs/ and .claude/rules/, 0 in the bundle).
+# Judge the bundle, the way okf-check.sh step 6 does.
+if drift check --format json 2>/dev/null | perl -0777 -ne '
+  use JSON::PP; my $d = eval { decode_json($_) } or exit 2;
+  my $b = shift @ARGV;
+  for my $x (@{ $d->{docs} || [] }) {
+    next unless ($x->{path} // "") =~ m{^\Q$b\E/};
+    exit 1 unless ($x->{result} // "fresh") eq "fresh";
+  }
+  exit 0' -- "$bundle"; then
   echo "drift check: pass — every bound path is at the content the concept was written against"
 else
   echo "drift check: FAIL — run \`drift check\` for the detail (a binding written now should be fresh)"

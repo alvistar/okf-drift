@@ -70,7 +70,12 @@ adding a link, `okf update` for a description — but check the file afterwards.
 ## Reserved names
 
 `index.md` and `log.md` are reserved at every level: not concepts, not counted, not
-validated for frontmatter, not searched. A `README.md` inside the bundle **is** a
+validated for frontmatter, not searched. **`log.md` is not entirely unvalidated, though:
+every `## ` heading in it must be a bare ISO date.** Measured on okf v0.3.0 during the
+ai-review migration: `## 2026-09-16 — migration from .mex/` is a `warnings` entry,
+`log.md: log heading '…' is not ISO 8601 YYYY-MM-DD` — exit 0 from `okf validate`, but
+fatal under `okf-check.sh`, which treats warnings as failures. Put the title on the line
+below the heading. A `README.md` inside the bundle **is** a
 concept and is rejected for having no frontmatter. That is why the format guides live
 at the top of `playbooks/index.md` and `decisions/index.md`: reserved, so no
 frontmatter, no orphan check, no search pollution — and, being reserved, nothing will
@@ -164,7 +169,11 @@ idempotency has to come from the caller: `okf-drift-bootstrap.sh` reads the exis
 **`#Symbol` anchors work in six languages and refuse everywhere else.** The parsers are
 tree-sitter grammars shipped in the binary — `src/queries/{go,java,python,rust,typescript,zig}.scm`
 — and there is no C, no Swift, no Objective-C, no JavaScript beyond what the TypeScript
-grammar covers. Measured: `drift link doc src/a.c#guard` and `doc src/k.swift#KeyManager`
+grammar covers. **The grammar is selected by file EXTENSION, and `.mjs`/`.cjs` are not in
+it**: measured on the ai-review migration, `drift link doc margins/scripts/oss-manifest.cjs#classify`
+and the same on four `.mjs` scripts all refuse with `cannot compute fingerprint for target`,
+while every `.ts` anchor in the same run linked. Node-side build and guard scripts are
+therefore whole-file bindings, and a reformat of one reads as drift. Measured: `drift link doc src/a.c#guard` and `doc src/k.swift#KeyManager`
 both refuse with `error: cannot compute fingerprint for target`; `doc src/r.rs#guard`
 links. A whole-file anchor works for any file, but for an unsupported language it is a
 **raw content** signature: a whitespace-only reformat of `a.c` went stale, while a

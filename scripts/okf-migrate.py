@@ -190,7 +190,24 @@ def resolve_node(kind: str, nid: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             continue
         if m.get("type") == "source" and m.get("filePath"):
-            return {"path": m["filePath"], "symbol": m.get("name") or m.get("symbol")}
+            # Measured on mex 0.8.2: the `source` record has NO `name`/`symbol` field, so the
+            # symbol has to come out of the first line of the matching range's content. It is
+            # what `/okf-migrate` step 6 narrows drift anchors from, so losing it costs the
+            # whole symbol-level binding pass.
+            sym = line_no = None
+            for rg in m.get("ranges") or []:
+                if f"{kind}:{nid}" not in (rg.get("nodeIds") or []):
+                    continue
+                first = (rg.get("content") or "").splitlines()[:1]
+                if not first:
+                    continue
+                head = re.sub(r"^\s*\d+:\s*", "", first[0])
+                mm = re.search(r"(?:function|class|const|let|var|def|fn|struct|enum|trait)\s+([A-Za-z_$][\w$]*)", head) \
+                     or re.match(r"(?:export\s+)?(?:async\s+)?([A-Za-z_$][\w$]*)\s*[(:=]", head)
+                if mm:
+                    sym, line_no = mm.group(1), rg.get("startLine")
+                    break
+            return {"path": m["filePath"], "symbol": sym, "line": line_no}
     return {"path": None, "error": r.stderr.strip() or f"mex exited {r.returncode} without a source record"}
 
 

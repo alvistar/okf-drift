@@ -81,7 +81,16 @@ uvx --with pyyaml python3 "${CLAUDE_PLUGIN_ROOT}/scripts/okf-migrate.py" resolve
 
 One `mex graph get <node> --detail source` per distinct id; prints `ok`/`MISS` per node
 and the count. Keep the map file until the commit — it is the provenance. A `MISS` is
-not an error to fix now; it is a row in `log.md`.
+`matchedNodes: 1` with `returnedNodes: 0`: the graph knows the id and holds no source for
+it, so it is not an error to fix now; it is a row in `log.md`.
+
+**A MISS whose id also appears as an inline anchor can usually be recovered**, because the
+anchor carries the label: `[`acceptSuggestionService()`](mex://function:89ea857d…)`. Grep
+the codebase for that declaration, and if exactly one file declares it, write the path into
+the map by hand and mark the row `RECOVERED by symbol name, not by the graph` in `log.md`.
+That is verification, not invention — and on ai-review it saved 2 of 6 misses. A `MISS`
+that appears only in a `grounds_to:` block has no label (mex records `node` and
+`fingerprint`, nothing else) and stays unresolved.
 
 ## Step 2 — Convert
 
@@ -138,6 +147,14 @@ document.
 2. **`.gitignore`**: remove the `.mex/graph.db*` block.
 3. **`orca.yaml`** (if present): remove the background `mex graph` build at worktree
    creation and any `.mex` shared path — a bundle is tracked Markdown, nothing to build.
+3b. **Inside the bundle too.** The migrator rewrites *links*, not prose paths, and a mex
+   scaffold is full of the latter: measured on ai-review, all five `patterns/` files ended
+   in an **`## Update Scaffold`** checklist telling the agent to edit `.mex/ROUTER.md`,
+   `.mex/context/` and `.mex/patterns/INDEX.md`, and four concepts cited a sibling as a bare
+   `` `context/auth-model.md` ``. Sweep
+   `grep -rn 'context/\|patterns/\|ROUTER\.md\|\.mex' knowledge/ | grep -v log.md`
+   and fix both: replace the scaffold checklist with one matching `CLAUDE.md`'s Work Loop,
+   and turn a prose citation into a real `[title](/category/slug.md)` link.
 4. **Every other file from Step 0's `git grep`**: `TODOS.md`, `docs/reference/*`,
    `docs/agents/*`, `CONCEPTS.md`, READMEs, `.claude/rules/*` — repoint to the new
    path. Historical plan files under `docs/plans/` are left alone; a dated plan naming
@@ -174,10 +191,26 @@ scripts/okf-check.sh knowledge                                         # step 6 
 ```
 
 Symbol-level anchors (`path#Symbol`) are worth it where the prose depends on one
-declaration and the language is Go/Java/Python/Rust/TypeScript/Zig — the map file
-carries the symbol name mex resolved for each node, which is exactly the list to
-narrow from. Do it after the commit, as its own change (`/okf-write` knows the rule:
-never re-stamp silently).
+declaration and the language is Go/Java/Python/Rust/TypeScript/Zig — the map file carries
+the symbol name for each node, which is exactly the list to narrow from. Three things
+measured on the ai-review migration, each of which costs the whole narrowing pass if you
+assume otherwise:
+
+- **mex's `source` record has no symbol NAME** (mex 0.8.2): `resolve` parses it out of the
+  first line of the range's `content`. Before that fix every `symbol` in the map was `null`.
+- **A bare name binds the first declaration of that name in the file** — check each one is
+  unique in its file before linking it (`grep -c 'function <name>\b'`), and say which
+  declaration you bound in `log.md` when it is not.
+- **`.mjs` and `.cjs` refuse a `#Symbol` anchor**; `.ts` accepts one. Node-side scripts stay
+  whole-file. See `okf-quirks.md`.
+
+**Do not re-run `okf-drift-bootstrap.sh` after narrowing.** It skips a `(doc, target)` pair
+the lock already holds, and `path#Symbol` is not the same pair as `path` — so a second run
+re-adds every whole-file binding you just replaced (measured: 48 bindings became 67). If it
+happens, `git checkout HEAD -- drift.lock`.
+
+Do it after the commit, as its own change (`/okf-write` knows the rule: never re-stamp
+silently).
 
 `~/.local/bin/mex` (the pinned wrapper) is per machine, not per repo: leave it until
 the last mex repo is gone.
