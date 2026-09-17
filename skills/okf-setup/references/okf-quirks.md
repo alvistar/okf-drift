@@ -184,6 +184,18 @@ Swift app only at file level, with
 every `clang-format`/`swift-format` pass reading as drift. Bind narrow files there, and
 expect to re-stamp after a formatter run.
 
+### What the bootstrap binds
+
+`okf-drift-bootstrap.sh` keeps every `code_refs` path for `okf`'s existence check, but
+automatically gives `drift` bindings only to this fixed extension list. Symbol-capable
+files are `go java py rs ts tsx zig`; file-level code is `js mjs cjs jsx sh bash zsh c h
+cc cpp hpp m swift kt kts rb php sql lua`. A trailing `#Symbol` is stripped before the
+extension test. A path with no extension (`VERSION`, `Makefile`) or a data/document
+extension (`json`, `yaml`, `toml`, `md`, `txt`, `lock`, …) is reported `not-code` and is
+not linked. If a concept describes the content of such a data file, use a hand
+`drift link` as the escape hatch; existing non-code bindings are reported with their
+exact `drift unlink` command and are never removed by the bootstrap.
+
 ### Which `#Symbol` names are accepted — measured, Rust and Python
 
 Measured 2026-09-16 on a scratch git repo, then applied to repo A. A refusal is

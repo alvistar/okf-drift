@@ -42,8 +42,9 @@ establish, and add one line on what would establish it.
 - `tags:` 4-8 lowercase words a task description would contain when this is
   the concept to load.
 - `code_refs:` repo-relative paths this concept GOVERNS — the ones
-  `okf search --for-path` should answer with it. Narrow directories or boundary
-  files, not `src/` on everything. Every path must exist.
+  `okf search --for-path` should answer with it. They may be any governed paths;
+  only code paths get a drift binding. Use narrow directories or boundary files,
+  not `src/` on everything. Every path must exist.
 - `sources:` the docs or files the content came from, each as
   `- resource: <repo-relative path or URL>` — okf --strict rejects a bare string.
 - `last_updated:` today; keep the `stale_after:` the scaffold set.

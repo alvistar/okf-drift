@@ -20,7 +20,8 @@
 #     tags, code_refs, matched_on, inbound, ...}. There is no `path`; the doc path is
 #     `<bundle>/<concept_id>.md`.
 #   * `drift check --format json` covers EVERY .md in the repository, not only the bundle,
-#     so the join is on the path, not on position. A doc with no anchors is `fresh`.
+#     so the join is on the path, not on position. A doc with no anchors is `fresh`,
+#     including a concept whose `code_refs` are all non-code paths.
 #   * per-doc `result` is `fresh` | `stale` | `broken`; `broken` is a dead markdown LINK,
 #     which is just as good a reason to withhold a concept as a moved anchor. A stale
 #     anchor carries `reason.code` and `blame {author, commit, date, subject}`.

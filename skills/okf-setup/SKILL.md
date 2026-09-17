@@ -187,8 +187,9 @@ drift --version                                             # expect: drift v0.1
 sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstrap.sh knowledge
 ```
 
-It reads every `code_refs:` entry in the bundle and runs one `drift link` per entry. It
-is idempotent by skipping what `drift.lock` already holds — it has to be, because
+It reads every `code_refs:` entry in the bundle and runs one `drift link` for each **code**
+path. Non-code paths remain under `okf`'s existence check alone. It is idempotent by
+skipping what `drift.lock` already holds — it has to be, because
 `drift link` **refuses** a binding the lock already carries (exit 1, "refused: target
 changed since last link") whether or not anything changed. A directory `code_ref` is
 expanded into its git-tracked files, because drift signs file content and rejects a
@@ -196,8 +197,9 @@ directory outright; one wider than `OKF_DRIFT_MAX_DIR_FILES` (20) is skipped, an
 is a narrower `code_ref`.
 
 Run it **after** Step 4 on a repo being populated — there is nothing to bind before the
-concepts have `code_refs`. On a bundle that is already populated, run it now. Either way
-the last line must be `drift check: pass`: a signature is taken from current content, so
+concepts have `code_refs`. On a bundle that is already populated, run it now to bind its
+code paths; non-code paths remain existence-only under `okf`. Either way the last line
+must be `drift check: pass`: a signature is taken from current content, so
 a binding written a second ago cannot be stale. If one is, the lock was not written by
 that run.
 
@@ -258,9 +260,10 @@ or the concept stays expired.
   both ways because `okf` reads no index.
 - **`description:` on one line, quoted when it contains `#` or `: `.** YAML truncated
   one at `(issue #48)` during the migration.
-- **`code_refs` are repo-relative, narrow, and must exist.** The directories or
-  boundary files the concept governs — not `src/` on everything, which makes
-  `--for-path` noise and the resync loop permanently hot.
+- **`code_refs` are repo-relative, narrow, and must exist.** They may name any governed
+  path; only code paths receive an automatic drift binding. Use directories or boundary
+  files the concept governs — not `src/` on everything, which makes `--for-path` noise
+  and the resync loop permanently hot.
 - **Comments and links inside comments count.** Search indexes comment text; okf
   resolves a link inside a comment. Annotations are replaced and deleted.
 - **`index.md` and `log.md` are reserved at every level; `README.md` is not.**

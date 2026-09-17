@@ -30,9 +30,14 @@ WORKFLOWS = {
     "84c2669a3da9249431771f8a861074161ce7edca73430c534eee546c87d16260",
     "c9cfd3865f4886360e6c3b0259c4a6906f9d616606fcc16016a0e63c9da333a3",
 }
-SECTIONS = {  # unchanged in official v0.5.0 through v0.6.2 templates
-    "Knowledge Bundle": "0c641e5e55c92165a85e76920416b1676906c7c24db4cf33c4a5d044f3d6b485",
-    "Work Loop": "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",
+SECTIONS = {  # accepted official template digests; current text is compared separately
+    "Knowledge Bundle": {
+        "0c641e5e55c92165a85e76920416b1676906c7c24db4cf33c4a5d044f3d6b485",
+    },
+    "Work Loop": {
+        "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.6.2
+        "0b46146628754f0316d682ae29210bd17a928076c174eef433236f41eee4849c",  # v0.7.0
+    },
 }
 LEGACY = [f"scripts/{name}.sh" for name in ("okf-check", "okf-recall", "okf-shim")]
 
@@ -72,7 +77,7 @@ def instructions(old):
     for title in SECTIONS:
         if title in existing:
             body = existing[title][0].rstrip()
-            if body != target[title][0].rstrip() and digest(body.encode()) != SECTIONS[title]:
+            if body != target[title][0].rstrip() and digest(body.encode()) not in SECTIONS[title]:
                 raise ValueError(f"CLAUDE.md: customized {title} section; merge explicitly")
     for title in (*SECTIONS, "Navigation"):
         existing = sections(text)
