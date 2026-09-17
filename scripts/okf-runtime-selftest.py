@@ -57,7 +57,7 @@ class RuntimeTests(unittest.TestCase):
             cache.mkdir(parents=True)
             self.env["XDG_CACHE_HOME"] = str(self.root / "cache")
             lines = ["v0.7.0"]
-            for name in ("okf-check.sh", "okf-recall.sh"):
+            for name in ("okf-check.sh", "okf-recall.sh", "okf-drift-bootstrap.sh"):
                 data = (SCRIPTS / name).read_bytes()
                 (cache / name).write_bytes(data)
                 lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
@@ -185,6 +185,157 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(list(self.root.glob("okf-check.*")), [])
                 self.assertEqual(list(self.root.glob("okf-recall.*")), [])
+
+
+class BootstrapTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="okf-bootstrap-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        bundle = self.root / "knowledge"
+        bundle.mkdir()
+        (bundle / "index.md").write_text(
+            '---\nokf_version: "0.2"\n---\n'
+            "- [Fixture](/concept.md) — Fixture concept.\n"
+        )
+        (bundle / "log.md").write_text("# Log\n")
+        (bundle / "concept.md").write_text(
+            "---\n"
+            "type: Reference\n"
+            "title: Fixture\n"
+            "description: Fixture concept.\n"
+            "last_updated: 2026-09-16\n"
+            "code_refs:\n"
+            "  - src/lib.rs\n"
+            "  - scripts/build.mjs\n"
+            "  - VERSION\n"
+            "  - package.json\n"
+            "  - .github/workflows/ci.yml\n"
+            "  - README.md\n"
+            "  - docs/\n"
+            "---\n"
+            "# Fixture\n\nA fixture concept.\n"
+        )
+        for relative, content in {
+            "src/lib.rs": "pub fn fixture() {}\n",
+            "scripts/build.mjs": "export const fixture = true;\n",
+            "VERSION": "0.7.0\n",
+            "package.json": "{}\n",
+            ".github/workflows/ci.yml": "name: fixture\n",
+            "README.md": "# Fixture\n",
+            "docs/notes.md": "# Notes\n",
+        }.items():
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+
+        self.stub = self.root / "bin"
+        self.stub.mkdir()
+        (self.stub / "okf").write_text(
+            '#!/bin/sh\n'
+            'case "$1" in\n'
+            'version) echo "okf v0.3.0" ;;\n'
+            'validate) cat "$OKF_VALIDATE_JSON" ;;\n'
+            '*) exit 2 ;;\n'
+            'esac\n'
+        )
+        (self.stub / "drift").write_text(
+            '#!/bin/sh\n'
+            'set -eu\n'
+            'case "${1:-}" in\n'
+            'link)\n'
+            '  shift\n'
+            '  printf "%s\\n" "$*" >> "$DRIFT_LINK_LOG"\n'
+            '  if [ ! -f "$DRIFT_LOCK" ]; then printf "version = 1\\n" > "$DRIFT_LOCK"; fi\n'
+            '  {\n'
+            '    printf "\\n[[bindings]]\\ndoc = \\"%s\\"\\ntarget = \\"%s\\"\\nsig = \\"fixture\\"\\n" "$1" "$2"\n'
+            '  } >> "$DRIFT_LOCK"\n'
+            '  ;;\n'
+            'check) cat "$DRIFT_CHECK_JSON" ;;\n'
+            '*) exit 2 ;;\n'
+            'esac\n'
+        )
+        for path in (self.stub / "okf", self.stub / "drift"):
+            path.chmod(0o755)
+
+        self.validate_json = self.root / "validate.json"
+        self.validate_json.write_text(json.dumps({"gate_passed": True, "is_conformant": True}))
+        self.drift_check_json = self.root / "drift-check.json"
+        self.drift_check_json.write_text(json.dumps({
+            "docs": [{
+                "path": "knowledge/concept.md",
+                "result": "fresh",
+                "anchors": [],
+                "links": [],
+            }]
+        }))
+        self.link_log = self.root / "drift-links.log"
+        self.link_log.write_text("")
+        self.env = dict(
+            os.environ,
+            OKF_VALIDATE_JSON=str(self.validate_json),
+            DRIFT_CHECK_JSON=str(self.drift_check_json),
+            DRIFT_LINK_LOG=str(self.link_log),
+            DRIFT_LOCK=str(self.root / "drift.lock"),
+            PATH=str(self.stub) + os.pathsep + os.environ["PATH"],
+            TMPDIR=str(self.root),
+        )
+        self.env.pop("OKF_DRIFT_ROOT", None)
+        if os.environ.get("OKF_SELFTEST_PINNED") == "1":
+            cache = self.root / "cache/okf-drift/v0.7.0"
+            cache.mkdir(parents=True)
+            self.env["XDG_CACHE_HOME"] = str(self.root / "cache")
+            lines = ["v0.7.0"]
+            for name in ("okf-check.sh", "okf-recall.sh", "okf-drift-bootstrap.sh"):
+                data = (SCRIPTS / name).read_bytes()
+                (cache / name).write_bytes(data)
+                lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
+            (self.root / ".okf-drift-version").write_text("\n".join(lines) + "\n")
+        subprocess.run(["git", "add", "."], cwd=self.root, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def run_script(self, script: str, *args: str) -> subprocess.CompletedProcess[str]:
+        if os.environ.get("OKF_SELFTEST_PINNED") == "1":
+            command = ["sh", str(SCRIPTS / "okf-shim.sh"), "--repo-root", str(self.root), script]
+        else:
+            command = [str(SCRIPTS / script)]
+        return subprocess.run(command + list(args), cwd=self.root, env=self.env,
+                              text=True, capture_output=True)
+
+    def test_bootstrap_binds_code_only_and_gate_accepts_unbound_paths(self) -> None:
+        result = self.run_script("okf-drift-bootstrap.sh", "knowledge")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            self.link_log.read_text().splitlines(),
+            ["knowledge/concept.md src/lib.rs", "knowledge/concept.md scripts/build.mjs"],
+        )
+        lock = (self.root / "drift.lock").read_text()
+        self.assertNotIn('target = "VERSION"', lock)
+        self.assertIn("not-code knowledge/concept.md -> VERSION", result.stdout)
+        self.assertIn("skip  knowledge/concept.md -> docs/", result.stdout)
+        self.assertNotIn("FAIL  knowledge/concept.md -> docs/", result.stdout)
+        self.assertIn("5 not-code", result.stdout)
+
+        gate = self.run_script("okf-check.sh", "knowledge")
+        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
+        self.assertIn("ok    knowledge:", gate.stdout)
+
+        lock_path = self.root / "drift.lock"
+        lock_path.write_text(
+            lock_path.read_text()
+            + '\n[[bindings]]\n'
+            'doc = "knowledge/concept.md"\n'
+            'target = "VERSION"\n'
+            'sig = "fixture"\n'
+        )
+        held = self.run_script("okf-drift-bootstrap.sh", "knowledge")
+        self.assertEqual(held.returncode, 0, held.stdout + held.stderr)
+        self.assertIn("held-non-code knowledge/concept.md -> VERSION", held.stdout)
+        self.assertIn("drift unlink knowledge/concept.md VERSION", held.stdout)
+
 
 
 if __name__ == "__main__":
