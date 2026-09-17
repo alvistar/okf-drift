@@ -120,7 +120,8 @@ drift section is in `../okf-setup/references/okf-quirks.md`.
 - `docs[]` has one entry per markdown file drift discovers **under the working
   directory** — run from the repository root that is every `.md` in the repo (74 in
   repo A), not only the bundle, so filter on `path`. A doc with no anchors is
-  `fresh`: a concept with no `code_refs` is never withheld, and never vouched for either.
+  `fresh`: a concept with no `code_refs`, or only non-code `code_refs`, is never withheld,
+  and never vouched for either.
 - Per-doc `result` is `fresh` | `stale` | `broken`. A stale anchor carries `reason.code`
   (`changed_after_baseline`) and `blame {author, commit, date, subject}`.
 - `okf search --json` is an **array** of `{concept_id, title, type, description, score,

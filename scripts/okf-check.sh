@@ -22,7 +22,8 @@
 #      the bundle that is not `fresh` — an anchor whose code changed after the concept was
 #      last believed (with the commit to blame) or a dead markdown link. Content-level
 #      drift is the one thing `code_refs` cannot give you: okf tells you a path VANISHED,
-#      drift tells you it CHANGED. Bindings come from `okf-drift-bootstrap.sh`; a concept
+#      drift tells you it CHANGED. Bindings come from `okf-drift-bootstrap.sh` for code
+#      `code_refs` entries; non-code paths remain under okf's existence check. A concept
 #      reviewed against a change is re-stamped with
 #      `drift link <doc> <path> --doc-is-still-accurate` and a line in log.md.
 #

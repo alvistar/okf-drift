@@ -1,12 +1,14 @@
 #!/bin/sh
-# okf-drift-bootstrap.sh — give every `code_refs:` entry in an OKF bundle a drift binding.
+# okf-drift-bootstrap.sh — give code `code_refs:` entries in an OKF bundle a drift binding.
 #
 #   okf-drift-bootstrap.sh [bundle-dir]     (default: knowledge)     run from the REPO ROOT
 #
-# `okf` knows which paths a concept governs (`code_refs:`); `drift` knows when a path has
-# changed since the doc was last believed (`drift.lock`). Nothing connects them, so this
-# does: one `drift link <bundle>/<concept>.md <path>` per entry, writing the repo-root
-# `drift.lock` that `okf-check.sh` step 6 and `okf-recall.sh` then read.
+# `okf` owns existence for every path a concept governs (`code_refs:`); `drift` owns
+# content change for code paths (`drift.lock`). The fixed code-extension list below keeps
+# data files out of content drift, while a hand `drift link` remains the escape hatch for
+# a data file whose content the concept describes. This writes one `drift link
+# <bundle>/<concept>.md <path>` per code entry into the repo-root `drift.lock` that
+# `okf-check.sh` step 6 and `okf-recall.sh` then read.
 #
 # Measured on drift v0.10.1 (2026-09-16); each branch below exists because of one of these:
 #
@@ -24,7 +26,8 @@
 #     on it. Here it is a FAIL line and a non-zero exit.
 #
 # Needs sh, perl 5.14+ (core), git, drift. Does not need okf.
-# Exit 0 = every code_ref is bound; 1 = at least one could not be.
+# Exit 0 = every code_ref is either bound or deliberately not-code; 1 = at least one
+# code path could not be bound.
 set -u
 bundle=${1:-knowledge}
 max_dir=${OKF_DRIFT_MAX_DIR_FILES:-20}
@@ -78,9 +81,27 @@ perl -ne '
 [ -f "$tmp.have" ] || : >|"$tmp.have"
 
 TAB=$(printf '\t')
-linked=0; skipped=0; failed=0; concepts=0; lastdoc=
+linked=0; skipped=0; not_code=0; failed=0; concepts=0; lastdoc=
+
+is_code_target() {   # is_code_target <path[#Symbol]>
+  case "${1%%#*}" in
+    *.go|*.java|*.py|*.rs|*.ts|*.tsx|*.zig|*.js|*.mjs|*.cjs|*.jsx|*.sh|*.bash|*.zsh|*.c|*.h|*.cc|*.cpp|*.hpp|*.m|*.swift|*.kt|*.kts|*.rb|*.php|*.sql|*.lua)
+      return 0 ;;
+    *)  return 1 ;;
+  esac
+}
 
 link_one() {   # link_one <doc> <target>
+  if ! is_code_target "$2"; then
+    not_code=$((not_code + 1))
+    if grep -qxF "$1$TAB$2" "$tmp.have"; then
+      echo "held-non-code $1 -> $2"
+      echo "               drift unlink $1 $2"
+    else
+      echo "not-code $1 -> $2"
+    fi
+    return 0
+  fi
   if grep -qxF "$1$TAB$2" "$tmp.have"; then
     echo "skip  $1 -> $2 (already in drift.lock)"
     skipped=$((skipped + 1))
@@ -109,12 +130,18 @@ while IFS="$TAB" read -r doc target; do
       skipped=$((skipped + 1)); continue
     fi
     echo "      $doc -> $target is a directory; drift binds file content — expanding to $n file(s)"
+    directory_code=0
     while read -r f; do
       [ -n "$f" ] || continue
+      is_code_target "$f" && directory_code=$((directory_code + 1))
       link_one "$doc" "$f"
     done <<EOF
 $(git ls-files -- "$target")
 EOF
+    if [ "$directory_code" -eq 0 ]; then
+      echo "skip  $doc -> $target (all $n tracked files are not-code)"
+      skipped=$((skipped + 1))
+    fi
     continue
   fi
   link_one "$doc" "$target"
@@ -122,7 +149,7 @@ done < "$tmp"
 
 held=$(grep -c '^[[:space:]]*target[[:space:]]*=' drift.lock 2>/dev/null || echo 0)
 echo "----"
-echo "$concepts concept(s) with code_refs: $linked linked, $skipped skipped, $failed failed; drift.lock holds $held binding(s)"
+echo "$concepts concept(s) with code_refs: $linked linked, $skipped skipped, $not_code not-code, $failed failed; drift.lock holds $held binding(s)"
 # drift check's exit code covers EVERY markdown file under the working directory, so an
 # unrelated broken link elsewhere in the repo fails it while the bundle is perfectly fresh
 # (measured on a TypeScript monorepo, repo B: 32 broken links in docs/ and .claude/rules/, 0 in the bundle).

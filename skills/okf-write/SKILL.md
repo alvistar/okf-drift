@@ -3,9 +3,10 @@ name: okf-write
 disable-model-invocation: true
 description: |
   Record into an OKF knowledge bundle — the Grow step: write the decision, the playbook
-  or the surgical concept edit, refresh project/state.md, bind every new `code_refs`
-  path with `drift link`, re-stamp a concept you reviewed against a code change (never
-  silently — a dated line in log.md goes with it), bump the dates, pass the gate.
+  or the surgical concept edit, refresh project/state.md, bind every new **code** `code_refs`
+  path with `drift link`; non-code paths are watched for existence by `okf` alone; re-stamp
+  a concept you reviewed against a code change (never silently — a dated line in log.md
+  goes with it), bump the dates, pass the gate.
 
   MANUAL TRIGGER ONLY: invoke only when the user types /okf-write.
 
@@ -99,7 +100,8 @@ it got here goes in `knowledge/log.md`.
 
 ## Step 2 — Bind the new ground
 
-Every `code_refs` entry you added needs a drift binding, or the concept is unwatched:
+Every **code** `code_refs` entry you added needs a drift binding; non-code paths are watched
+for existence by `okf` alone:
 
 ```sh
 drift link knowledge/<category>/<slug>.md <repo-relative-path>
@@ -171,7 +173,7 @@ is the only acceptable result before a commit. Step 6 warns rather than fails wh
 is no `drift.lock` — on a repo that has not adopted drift that warning is the whole
 story; on one that has, it means something is wrong with the lock.
 
-Report to the user: what was recorded and where; every `drift link` run and every
+Report to the user: what was recorded and where; every code-path `drift link` run and every
 re-stamp with the log line that accompanies it; the dates bumped; the gate's last line;
 and anything you chose **not** to record, with why.
 

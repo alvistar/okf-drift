@@ -194,7 +194,7 @@ Three searches you would actually type must hit the concept you meant first.
 ## Step 6 — drift, then remove mex
 
 ```bash
-sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstrap.sh knowledge     # drift.lock from every code_refs
+sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstrap.sh knowledge     # drift.lock from code paths in code_refs; okf watches every path
 drift check --format json | head -20                                   # all fresh, by construction
 git rm -r .mex && rm -rf .mex                                          # graph.db* was ignored; the wrapper stays
 # Invoke okf-drift:okf-runtime in gate mode                                         # step 6 now runs
