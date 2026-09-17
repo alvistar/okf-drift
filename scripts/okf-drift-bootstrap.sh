@@ -109,7 +109,7 @@ link_one() {   # link_one <doc> <target>
     fi
     return 0
   fi
-  if grep -qF "$1$TAB$2#" "$tmp.have"; then
+  if awk -F "\t" -v d="$1" -v p="$2#" '$1 == d && index($2, p) == 1 { f = 1 } END { exit !f }' "$tmp.have"; then
     echo "skip  $1 -> $2 (symbol binding(s) present in drift.lock)"
     skipped=$((skipped + 1))
     return 0
