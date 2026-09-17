@@ -184,6 +184,10 @@ Swift app only at file level, with
 every `clang-format`/`swift-format` pass reading as drift. Bind narrow files there, and
 expect to re-stamp after a formatter run.
 
+`#Symbol` belongs in `drift.lock`, via `drift link`; `code_refs` must contain the file path
+only. `okf validate --drift` treats `path#Symbol` as a non-existent path, and the bootstrap
+fails it before calling `drift link`.
+
 ### What the bootstrap binds
 
 `okf-drift-bootstrap.sh` keeps every `code_refs` path for `okf`'s existence check, but
@@ -195,6 +199,10 @@ extension (`json`, `yaml`, `toml`, `md`, `txt`, `lock`, …) is reported `not-co
 not linked. If a concept describes the content of such a data file, use a hand
 `drift link` as the escape hatch; existing non-code bindings are reported with their
 exact `drift unlink` command and are never removed by the bootstrap.
+
+For idempotency, a plain `code_refs` path is covered for the same document by either that
+plain binding or any `path#Symbol` binding already in `drift.lock`; the bootstrap skips it
+instead of adding a whole-file binding beside the symbol binding.
 
 ### Which `#Symbol` names are accepted — measured, Rust and Python
 

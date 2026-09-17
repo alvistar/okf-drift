@@ -92,6 +92,13 @@ is_code_target() {   # is_code_target <path[#Symbol]>
 }
 
 link_one() {   # link_one <doc> <target>
+  case "$2" in
+    *#*)
+      echo "FAIL  $1 -> $2 (#Symbol belongs in drift.lock via drift link, not in code_refs — list the file here)"
+      failed=$((failed + 1))
+      return 0
+      ;;
+  esac
   if ! is_code_target "$2"; then
     not_code=$((not_code + 1))
     if grep -qxF "$1$TAB$2" "$tmp.have"; then
@@ -100,6 +107,11 @@ link_one() {   # link_one <doc> <target>
     else
       echo "not-code $1 -> $2"
     fi
+    return 0
+  fi
+  if awk -F "\t" -v d="$1" -v p="$2#" '$1 == d && index($2, p) == 1 { f = 1 } END { exit !f }' "$tmp.have"; then
+    echo "skip  $1 -> $2 (symbol binding(s) present in drift.lock)"
+    skipped=$((skipped + 1))
     return 0
   fi
   if grep -qxF "$1$TAB$2" "$tmp.have"; then

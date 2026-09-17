@@ -366,6 +366,34 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("held-non-code knowledge/concept.md -> VERSION", held.stdout)
         self.assertIn("drift unlink knowledge/concept.md VERSION", held.stdout)
 
+    def test_bootstrap_treats_symbol_binding_as_covering_file(self) -> None:
+        (self.root / "drift.lock").write_text(
+            'version = 1\n\n[[bindings]]\n'
+            'doc = "knowledge/concept.md"\n'
+            'target = "src/lib.rs#fixture"\n'
+            'sig = "fixture"\n'
+        )
+        result = self.run_script("okf-drift-bootstrap.sh", "knowledge")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("knowledge/concept.md src/lib.rs", self.link_log.read_text())
+        self.assertIn(
+            "skip  knowledge/concept.md -> src/lib.rs "
+            "(symbol binding(s) present in drift.lock)",
+            result.stdout,
+        )
+
+    def test_bootstrap_rejects_symbol_code_ref(self) -> None:
+        concept = self.root / "knowledge/concept.md"
+        concept.write_text(concept.read_text().replace("  - src/lib.rs\n", "  - src/lib.rs#fixture\n"))
+        result = self.run_script("okf-drift-bootstrap.sh", "knowledge")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "FAIL  knowledge/concept.md -> src/lib.rs#fixture "
+            "(#Symbol belongs in drift.lock via drift link, not in code_refs — list the file here)",
+            result.stdout,
+        )
+        self.assertNotIn("knowledge/concept.md src/lib.rs#fixture", self.link_log.read_text())
+
 
 
 if __name__ == "__main__":
