@@ -274,7 +274,7 @@ if (length $drift_json) {
 
 # Keep structured stale diagnostics above, but never erase a failed subprocess status.
 bad("okf validate exited $okf_status") if $okf_status && !$fail;
-if ($drift_status && !$nonfresh) {
+if ($drift_status && !$nonfresh && !$fail) {
   bad("drift check exited $drift_status");
 } elsif ($drift_status && !$fail) {
   print "note  drift reports $outside_nonfresh non-fresh doc(s) outside $bundle_rel; not gated here\n";
