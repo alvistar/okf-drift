@@ -116,7 +116,10 @@ drift section is in `../okf-setup/references/okf-quirks.md`.
   drift repo at `docs/check-json-schema.md` with a JSON Schema alongside. (An earlier note
   claiming drift had no JSON output was wrong for this version.)
 - The exit code is independent of the format: 0 when nothing is stale and no link is
-  broken, 1 otherwise; `summary.result` mirrors it.
+  broken, 1 otherwise; `summary.result` mirrors it. The gate reads findings across the
+  repository: a non-zero report with stale/broken docs outside the knowledge bundle is
+  noted but does not fail a fresh bundle, while a non-zero report with no findings is an
+  execution error.
 - `docs[]` has one entry per markdown file drift discovers **under the working
   directory** — run from the repository root that is every `.md` in the repo (74 in
   repo A), not only the bundle, so filter on `path`. A doc with no anchors is

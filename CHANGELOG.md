@@ -9,6 +9,15 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-17
+
+### Fixed
+
+- The gate now distinguishes drift findings from execution errors: stale or broken
+  markdown outside the knowledge bundle is reported as a note and does not fail the gate
+  when every bundle concept is fresh, while a non-zero report with no findings remains
+  fatal. Runtime selftests cover both paths and are sabotage-verified.
+
 ## [0.8.0] - 2026-09-17
 
 ### Added
@@ -284,7 +293,8 @@ monorepo with `git subtree split`, so every commit under `0.4.0` predates this t
   `#Symbol` anchor forms each language accepts, and the one fact the whole design rests on:
   editing a doc does **not** clear its staleness.
 
-[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/alvistar/okf-drift/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/alvistar/okf-drift/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/alvistar/okf-drift/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/alvistar/okf-drift/compare/v0.6.1...v0.6.2
