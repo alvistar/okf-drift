@@ -98,7 +98,14 @@ class RuntimeTests(unittest.TestCase):
         for code in ("0", "7"):
             self.env["DRIFT_EXIT"] = code
             with self.subTest(code=code):
-                self.assert_unusable(self.run_script("okf-check.sh"))
+                result = self.run_script("okf-check.sh")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+    def test_gate_rejects_malformed_drift_json(self) -> None:
+        (self.root / "drift.json").write_text("garbage")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("drift check produced no JSON", result.stdout)
 
     def test_gate_rejects_nonzero_tools_even_with_fresh_json(self) -> None:
         for variable in ("DRIFT_EXIT", "VALIDATE_EXIT"):

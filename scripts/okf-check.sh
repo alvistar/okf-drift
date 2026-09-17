@@ -95,7 +95,10 @@ my $ISO = qr/^\d{4}-\d{2}-\d{2}$/;
 
 # 1. okf's own verdict, warnings included.
 my $v = eval { decode_json($json) };
-if (!$v) { bad("okf validate produced no JSON (run it without --json for the findings)") }
+if (!$v) {
+  bad("okf validate produced no JSON (run it without --json for the findings)");
+  exit 2;
+}
 else {
   for my $e (@{ $v->{errors} || [] })        { bad("okf validate error: $e") }
   for my $g (@{ $v->{gate_findings} || [] }) { bad("okf validate gate: $g") }
@@ -204,7 +207,10 @@ my ($nonfresh, $outside_nonfresh) = (0, 0);
 my $bundle_rel = '';
 if (length $drift_json) {
   my $dc = eval { decode_json($drift_json) };
-  if (!$dc) { bad("drift check produced no JSON — run `drift check --format json` from the bundle's parent") }
+  if (!$dc) {
+    bad("drift check produced no JSON — run `drift check --format json` from the bundle's parent");
+    exit 2;
+  }
   else {
     my $checked = 0;
     my %checked_paths;
