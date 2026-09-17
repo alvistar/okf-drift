@@ -32,7 +32,8 @@ WORKFLOWS = {
 }
 SECTIONS = {  # accepted official template digests; current text is compared separately
     "Knowledge Bundle": {
-        "0c641e5e55c92165a85e76920416b1676906c7c24db4cf33c4a5d044f3d6b485",
+        "0c641e5e55c92165a85e76920416b1676906c7c24db4cf33c4a5d044f3d6b485",  # v0.5.0-v0.6.2
+        "372e7ee23c7fe542a3808c6724fd590df150a9d4c77037739a8da4303edefe8d",  # v0.7.0
     },
     "Work Loop": {
         "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.6.2

@@ -306,6 +306,9 @@ class BootstrapTests(unittest.TestCase):
                               text=True, capture_output=True)
 
     def test_bootstrap_binds_code_only_and_gate_accepts_unbound_paths(self) -> None:
+        """The gate half runs against a stub `drift check` that answers `fresh`: it proves
+        okf-check.sh never cross-checks code_refs against drift.lock, not that real drift
+        reports an unbound doc as fresh (measured in okf-quirks.md, and by hand)."""
         result = self.run_script("okf-drift-bootstrap.sh", "knowledge")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(
