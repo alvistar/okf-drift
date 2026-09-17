@@ -20,8 +20,10 @@
 #   5. checks the reserved files: root okf_version, log.md, project/state.md's three lists;
 #   6. runs `drift check --format json` from the bundle's parent and fails on any doc in
 #      the bundle that is not `fresh` — an anchor whose code changed after the concept was
-#      last believed (with the commit to blame) or a dead markdown link. Content-level
-#      drift is the one thing `code_refs` cannot give you: okf tells you a path VANISHED,
+#      last believed (with the commit to blame) or a dead markdown link. A non-zero drift
+#      status with findings only outside the bundle is noted and tolerated; a non-zero
+#      status with no stale/broken findings is an execution failure. Content-level drift
+#      is the one thing `code_refs` cannot give you: okf tells you a path VANISHED,
 #      drift tells you it CHANGED. Bindings come from `okf-drift-bootstrap.sh` for code
 #      `code_refs` entries; non-code paths remain under okf's existence check. A concept
 #      reviewed against a change is re-stamped with
@@ -93,7 +95,10 @@ my $ISO = qr/^\d{4}-\d{2}-\d{2}$/;
 
 # 1. okf's own verdict, warnings included.
 my $v = eval { decode_json($json) };
-if (!$v) { bad("okf validate produced no JSON (run it without --json for the findings)") }
+if (!$v) {
+  bad("okf validate produced no JSON (run it without --json for the findings)");
+  exit 2;
+}
 else {
   for my $e (@{ $v->{errors} || [] })        { bad("okf validate error: $e") }
   for my $g (@{ $v->{gate_findings} || [] }) { bad("okf validate gate: $g") }
@@ -198,12 +203,24 @@ if (-f "$bundle/project/state.md") {
 
 # 6. Content drift: has the code a concept is bound to moved since the concept was written?
 my $drift_note = "step 6 skipped (no drift.lock)";
+my ($nonfresh, $outside_nonfresh) = (0, 0);
+my $bundle_rel = '';
 if (length $drift_json) {
   my $dc = eval { decode_json($drift_json) };
-  if (!$dc) { bad("drift check produced no JSON — run `drift check --format json` from the bundle's parent") }
+  if (!$dc) {
+    bad("drift check produced no JSON — run `drift check --format json` from the bundle's parent");
+    exit 2;
+  }
   else {
     my $checked = 0;
     my %checked_paths;
+    $bundle_rel = basename($bundle);
+    for my $d (@{ $dc->{docs} || [] }) {
+      my $r = $d->{result} // '';
+      next unless $r eq 'stale' || $r eq 'broken';
+      $nonfresh++;
+      $outside_nonfresh++ unless ($d->{path} // '') =~ m{^\Q$bundle_rel\E/};
+    }
     # drift runs from $parent and reports paths relative to it, so the prefix to match is
     # the bundle's name WITHIN $parent, never $bundle itself. Matching $bundle broke the
     # moment it was absolute or reached from a subdirectory: no drift path ever started
@@ -211,7 +228,6 @@ if (length $drift_json) {
     # "0 doc(s) / 0 drift anchor(s) fresh" and exited 0 over a genuinely stale concept.
     # Measured: with two concepts stale, `okf-check.sh knowledge` reported 2 FAIL / exit 1
     # and `okf-check.sh /abs/path/knowledge` reported ok / exit 0.
-    my $bundle_rel = basename($bundle);
     for my $d (@{ $dc->{docs} || [] }) {
       my $p = $d->{path} // next;
       next unless $p =~ m{^\Q$bundle_rel\E/};
@@ -264,7 +280,11 @@ if (length $drift_json) {
 
 # Keep structured stale diagnostics above, but never erase a failed subprocess status.
 bad("okf validate exited $okf_status") if $okf_status && !$fail;
-bad("drift check exited $drift_status") if $drift_status && !$fail;
+if ($drift_status && !$nonfresh && !$fail) {
+  bad("drift check exited $drift_status");
+} elsif ($drift_status && !$fail) {
+  print "note  drift reports $outside_nonfresh non-fresh doc(s) outside $bundle_rel; not gated here\n";
+}
 print "ok    $bundle: okf gate passed with no warnings, indexes consistent both ways, frontmatter complete, no template residue, $drift_note\n" unless $fail;
 exit $fail;
 PERL
