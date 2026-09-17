@@ -114,6 +114,26 @@ class RuntimeTests(unittest.TestCase):
         self.assert_unusable(result)
         self.assertIn("drift result 'stale'", result.stdout)
 
+    def test_gate_accepts_nonfresh_drift_outside_bundle(self) -> None:
+        self.payload("drift", {"docs": [
+            {"path": "knowledge/project/state.md", "result": "fresh", "anchors": [], "links": []},
+            {"path": "docs/outside.md", "result": "broken", "anchors": [], "links": []},
+        ]})
+        self.env["DRIFT_EXIT"] = "1"
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(
+            "note  drift reports 1 non-fresh doc(s) outside knowledge; not gated here",
+            result.stdout,
+        )
+
+    def test_gate_rejects_nonzero_drift_with_all_fresh_docs(self) -> None:
+        self.verdict("fresh")
+        self.env["DRIFT_EXIT"] = "1"
+        result = self.run_script("okf-check.sh")
+        self.assert_unusable(result)
+        self.assertIn("drift check exited 1", result.stdout)
+
     def test_recall_withholds_stale_for_equivalent_paths(self) -> None:
         self.verdict("stale")
         self.env["DRIFT_EXIT"] = "1"
