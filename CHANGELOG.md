@@ -9,6 +9,29 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-17
+
+### Added
+
+- The drift bootstrap now binds only code `code_refs` paths from a fixed extension list;
+  every governed path remains under okf's existence check. It reports `not-code` paths and
+  existing non-code bindings as `held-non-code` with the exact manual `drift unlink` command.
+- Offline runtime regression coverage exercises the code-only filter, all-non-code directory
+  expansion, held non-code bindings, and the gate's acceptance of unbound paths.
+
+### Changed
+
+- Setup, migration, writing, reading, templates, quirks, the README and runtime headers now
+  distinguish automatic code-content drift bindings from okf's existence-only checks for
+  non-code paths. Integration accepts the official v0.7.0 Work Loop digest while updating it.
+
+### Known gaps
+
+- A data file whose content a concept describes needs a hand `drift link`; the bootstrap does
+  not provide an environment override for its fixed code-extension list.
+- Existing non-code bindings are reported, not removed; remove them explicitly with the
+  printed `drift unlink` command.
+
 ## [0.7.0] - 2026-09-16
 
 ### Added
@@ -261,7 +284,9 @@ monorepo with `git subtree split`, so every commit under `0.4.0` predates this t
   `#Symbol` anchor forms each language accepts, and the one fact the whole design rests on:
   editing a doc does **not** clear its staleness.
 
-[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.7.0...HEAD
+[0.8.0]: https://github.com/alvistar/okf-drift/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/alvistar/okf-drift/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/alvistar/okf-drift/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/alvistar/okf-drift/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/alvistar/okf-drift/compare/v0.5.1...v0.6.0
