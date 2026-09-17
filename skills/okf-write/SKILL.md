@@ -101,7 +101,8 @@ it got here goes in `knowledge/log.md`.
 ## Step 2 — Bind the new ground
 
 Every **code** `code_refs` entry you added needs a drift binding; non-code paths are watched
-for existence by `okf` alone:
+for existence by `okf` alone. Keep `code_refs` entries as file paths — never put `#Symbol`
+there. A symbol anchor belongs in `drift.lock`, added with `drift link <doc> <path#Symbol>`:
 
 ```sh
 drift link knowledge/<category>/<slug>.md <repo-relative-path>
@@ -118,7 +119,9 @@ Measured on drift v0.10.1, and each of these will bite otherwise:
 - `drift link` on a binding the lock **already holds** exits 1 with *"refused: target
   changed since last link"* — even when `drift check` calls that same binding fresh. It
   is not telling you something changed; it refuses every second link on a path. Skip what
-  is already bound, do not relink it.
+  is already bound, do not relink it. The bootstrap treats a code path as already covered
+  when this document holds either the plain path or any `path#Symbol` binding, so rerunning
+  it does not add a whole-file binding beside a symbol binding.
 - A **directory** target is rejected (`error: ReadFailed`) — drift signs file content.
   The bootstrap expands a directory `code_ref` into its git-tracked files and skips one
   wider than 20 files. The fix for that skip is a narrower `code_ref`, not a bigger cap.

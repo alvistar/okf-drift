@@ -214,10 +214,12 @@ assume otherwise:
 - **`.mjs` and `.cjs` refuse a `#Symbol` anchor**; `.ts` accepts one. Node-side scripts stay
   whole-file. See `okf-quirks.md`.
 
-**Do not re-run `okf-drift-bootstrap.sh` after narrowing.** It skips a `(doc, target)` pair
-the lock already holds, and `path#Symbol` is not the same pair as `path` — so a second run
-re-adds every whole-file binding you just replaced (measured: 48 bindings became 67). If it
-happens, `git checkout HEAD -- drift.lock`.
+The bootstrap is idempotent per `(doc, path)`: a plain `code_refs` path is already covered
+when that document holds either the plain path or any `path#Symbol` binding, so rerunning
+after narrowing no longer adds a whole-file binding beside a symbol binding. Before 0.8.2,
+`path#Symbol` was treated as a different pair and a second run re-added every whole-file
+binding you had just replaced (measured: 48 bindings became 67); this was fixed in 0.8.2.
+Keep `#Symbol` only in `drift.lock` via `drift link`; write the file path alone in `code_refs`.
 
 Do it after the commit, as its own change (`/okf-write` knows the rule: never re-stamp
 silently).

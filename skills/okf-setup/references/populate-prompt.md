@@ -43,8 +43,10 @@ establish, and add one line on what would establish it.
   the concept to load.
 - `code_refs:` repo-relative paths this concept GOVERNS — the ones
   `okf search --for-path` should answer with it. They may be any governed paths;
-  only code paths get a drift binding. Use narrow directories or boundary files,
-  not `src/` on everything. Every path must exist.
+  only code paths get a drift binding. Write the file path here, never
+  `path#Symbol`; a symbol anchor belongs in `drift.lock` via `drift link`.
+  Use narrow directories or boundary files, not `src/` on everything. Every path
+  must exist.
 - `sources:` the docs or files the content came from, each as
   `- resource: <repo-relative path or URL>` — okf --strict rejects a bare string.
 - `last_updated:` today; keep the `stale_after:` the scaffold set.

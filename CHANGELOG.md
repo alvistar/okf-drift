@@ -9,6 +9,17 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-09-17
+
+### Fixed
+
+- The drift bootstrap now treats a code path as already bound when the same concept holds
+  either the whole file or a `path#Symbol` binding, so reruns do not add duplicate
+  whole-file bindings after symbol-level narrowing.
+- `#Symbol` entries in `code_refs` now fail fast with guidance to list the file in
+  `code_refs` and put the symbol anchor in `drift.lock` via `drift link`.
+- Runtime selftests cover both bootstrap regressions and sabotage-verify each fix.
+
 ## [0.8.1] - 2026-09-17
 
 ### Fixed
@@ -293,7 +304,8 @@ monorepo with `git subtree split`, so every commit under `0.4.0` predates this t
   `#Symbol` anchor forms each language accepts, and the one fact the whole design rests on:
   editing a doc does **not** clear its staleness.
 
-[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/alvistar/okf-drift/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/alvistar/okf-drift/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/alvistar/okf-drift/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/alvistar/okf-drift/compare/v0.6.2...v0.7.0

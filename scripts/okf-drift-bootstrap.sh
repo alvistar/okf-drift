@@ -109,13 +109,13 @@ link_one() {   # link_one <doc> <target>
     fi
     return 0
   fi
-  if grep -qxF "$1$TAB$2" "$tmp.have"; then
-    echo "skip  $1 -> $2 (already in drift.lock)"
+  if grep -qF "$1$TAB$2#" "$tmp.have"; then
+    echo "skip  $1 -> $2 (symbol binding(s) present in drift.lock)"
     skipped=$((skipped + 1))
     return 0
   fi
-  if grep -qF "$1$TAB$2#" "$tmp.have"; then
-    echo "skip  $1 -> $2 (symbol binding(s) present in drift.lock)"
+  if grep -qxF "$1$TAB$2" "$tmp.have"; then
+    echo "skip  $1 -> $2 (already in drift.lock)"
     skipped=$((skipped + 1))
     return 0
   fi
