@@ -9,6 +9,52 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Integration recognises the outgoing v0.8.0–v0.8.2 `Work Loop` body digest
+  (`dfacead5b7d2…`). A consumer's CLAUDE section is accepted when its body equals the
+  current template verbatim **or** its digest is listed, so without this entry the
+  template change below would refuse every official 0.8.2 consumer as "customized; merge
+  explicitly". The `SECTIONS` comments now name the release range each digest covers, and
+  a launcher case upgrades an official v0.8.2 `CLAUDE.md` with the current template.
+
+### Added
+
+- The Verify Checklist template carries a fixed first item: the knowledge gate ran with
+  drift and is green, at the START of the work as a baseline and again at the end. A code
+  change can stale a concept without touching `knowledge/`, so that directory is never
+  "out of scope" for the gate. Measured: the gate's template-residue step still rejects
+  the annotation beneath it and accepts the item.
+- The CLAUDE template's Context step gains an impact check — `drift check --changed
+  <path> --format json` for every path the task plans to touch, reported as candidates
+  that may alarm together with every planned path no concept covers — and a baseline gate
+  run whose output is kept, so an alarm already present is inherited rather than blamed on
+  the change. Verify names the gate as the checklist's first item.
+- `/okf-write` Step 2 gains "Where the anchor goes": anchor the claim's whole dependency
+  set rather than the deepest call — the entry point when routing or defaults live there,
+  every implementation the prose cites in every language, a whole file for an unsupported
+  language — and a claim of absence, exclusivity or count is watched by no anchor at all,
+  so it is removed, written as a dated measurement, or proved by a lane the concept names.
+  `okf-quirks.md` gains the wrapper-with-policy consequence behind it.
+- `/okf-read` and the CLAUDE template say when recall beats grep: recall answers what is
+  WRITTEN about an area and what was observed about it; Grep and LSP find code.
+
+### Changed
+
+- Non-code paths take no *automatic* binding, but a hand `drift link` on one is a
+  **deliberate** content anchor and stays valid: when a claim's truth lives in a workflow
+  trigger, a Kconfig value or a fixture's shape, hand-link it and accept that a reformat
+  will alarm, or restate the claim as a dated observation. The bootstrap now prints
+  `held-non-code <doc> -> <target> (deliberate content anchor — kept)` with no `drift
+  unlink` command beside it; that hint moved to its header comment. Setup, write, migrate,
+  the CLAUDE template, the populate prompt, quirks and the README carry the same sentence.
+- The resync prompt re-reads by hand every concept the gate reports with no tracked
+  target: nothing checked it, and `git log -- <its code_refs>` is vacuous on empty
+  `code_refs`, so neither existing check ever flags it.
+- The README's integration notes record the one manual upgrade step: integration never
+  writes `knowledge/project/conventions.md`, so an existing consumer adds the checklist
+  item itself.
+
 ## [0.8.2] - 2026-09-17
 
 ### Fixed
