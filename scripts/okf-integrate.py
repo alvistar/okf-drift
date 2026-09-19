@@ -30,14 +30,19 @@ WORKFLOWS = {
     "84c2669a3da9249431771f8a861074161ce7edca73430c534eee546c87d16260",
     "c9cfd3865f4886360e6c3b0259c4a6906f9d616606fcc16016a0e63c9da333a3",
 }
-SECTIONS = {  # accepted official template digests; current text is compared separately
+# Accepted official template digests; the current template text is compared separately.
+# Each entry names the releases whose template body digests to it, measured from the
+# source tags. The OUTGOING release's digests must be here BEFORE the template changes,
+# or every consumer still carrying the previous official body is refused as customized.
+SECTIONS = {
     "Knowledge Bundle": {
-        "0c641e5e55c92165a85e76920416b1676906c7c24db4cf33c4a5d044f3d6b485",  # v0.5.0-v0.6.2
-        "372e7ee23c7fe542a3808c6724fd590df150a9d4c77037739a8da4303edefe8d",  # v0.7.0
+        "0c641e5e55c92165a85e76920416b1676906c7c24db4cf33c4a5d044f3d6b485",  # v0.4.0-v0.6.2
+        "372e7ee23c7fe542a3808c6724fd590df150a9d4c77037739a8da4303edefe8d",  # v0.7.0-v0.8.2
     },
     "Work Loop": {
-        "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.6.2
+        "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.4.0-v0.6.2
         "0b46146628754f0316d682ae29210bd17a928076c174eef433236f41eee4849c",  # v0.7.0
+        "dfacead5b7d2f4ad91889329fb157a59a13bf3edc1aedd2d5c492b027279f09f",  # v0.8.0-v0.8.2
     },
 }
 LEGACY = [f"scripts/{name}.sh" for name in ("okf-check", "okf-recall", "okf-shim")]

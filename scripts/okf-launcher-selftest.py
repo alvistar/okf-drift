@@ -3,6 +3,7 @@
 import hashlib
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -319,6 +320,27 @@ class Integration(Fixture):
         self.assertIn("First read docs/HANDOVER.md", (self.repo / "CLAUDE.md").read_text())
         for name in ("okf-check.sh", "okf-recall.sh", "okf-shim.sh"):
             self.assertFalse((self.repo / "scripts" / name).exists())
+        self.assertEqual(self.integrate().returncode, 0)
+        self.assertEqual(after, self.snapshot())
+
+    def section(self, text, title):
+        return re.search(rf"^## {re.escape(title)}\n.*?(?=^## |\Z)", text, re.M | re.S)[0].rstrip()
+
+    def test_official_v0_8_2_sections_are_recognised_and_upgraded(self):
+        # The OUTGOING release's body digests must be in SECTIONS before the template text
+        # moves; otherwise every consumer carrying the previous official body is refused
+        # as "customized; merge explicitly" and cannot be upgraded at all.
+        official = self.historic("v0.8.2", "skills/okf-setup/templates/CLAUDE-knowledge-section.md").decode()
+        (self.repo / "CLAUDE.md").write_text("# Identity\n\n" + official + "\n## Other\nKeep this.\n")
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("customized", result.stderr)
+        text = (self.repo / "CLAUDE.md").read_text()
+        current = (SOURCE / "skills/okf-setup/templates/CLAUDE-knowledge-section.md").read_text()
+        for title in ("Knowledge Bundle", "Work Loop"):
+            self.assertIn(self.section(current, title), text, title)
+        self.assertIn("Keep this.", text)
+        after = self.snapshot()
         self.assertEqual(self.integrate().returncode, 0)
         self.assertEqual(after, self.snapshot())
 
