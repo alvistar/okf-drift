@@ -6,7 +6,9 @@
 # `okf` owns existence for every path a concept governs (`code_refs:`); `drift` owns
 # content change for code paths (`drift.lock`). The fixed code-extension list below keeps
 # data files out of content drift, while a hand `drift link` remains the escape hatch for
-# a data file whose content the concept describes. This writes one `drift link
+# a data file whose content the concept describes. Such a binding is DELIBERATE: a non-code
+# target already in the lock is reported `held-non-code` and kept, never undone here. To
+# remove one, run `drift unlink <doc> <target>` yourself, on purpose. This writes one `drift link
 # <bundle>/<concept>.md <path>` per code entry into the repo-root `drift.lock` that
 # `okf-check.sh` step 6 and `okf-recall.sh` then read.
 #
@@ -102,8 +104,7 @@ link_one() {   # link_one <doc> <target>
   if ! is_code_target "$2"; then
     not_code=$((not_code + 1))
     if grep -qxF "$1$TAB$2" "$tmp.have"; then
-      echo "held-non-code $1 -> $2"
-      echo "               drift unlink $1 $2"
+      echo "held-non-code $1 -> $2 (deliberate content anchor — kept)"
     else
       echo "not-code $1 -> $2"
     fi

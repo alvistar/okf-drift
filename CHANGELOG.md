@@ -7,7 +7,137 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
-## [Unreleased]
+## [0.9.0] - 2026-09-19
+
+### Fixed
+
+- Integration recognises the outgoing v0.8.0–v0.8.2 `Work Loop` body digest
+  (`dfacead5b7d2…`). A consumer's CLAUDE section is accepted when its body equals the
+  current template verbatim **or** its digest is listed, so without this entry the
+  template change below would refuse every official 0.8.2 consumer as "customized; merge
+  explicitly". The `SECTIONS` comments now name the release range each digest covers, and
+  a launcher case upgrades an official v0.8.2 `CLAUDE.md` with the current template.
+- The integration helper no longer parses concept frontmatter with a strict YAML parser.
+  okf accepts a `description:` whose value starts with an unquoted backtick — 12 concepts
+  on the reference consumer carry one — and PyYAML raises `while scanning for the next
+  token` on it, so `check_bindings` aborted with exit 2 before any CLAUDE.md logic and a
+  bundle that passes the gate could not be integrated at all. The helper needs only
+  `code_refs`, and now reads it with the same line rule the bootstrap and the gate use.
+  Pre-existing since 0.7.0. The script no longer imports PyYAML, so the `uvx --with
+  pyyaml` prefix is gone from every invocation in the README and `/okf-setup`.
+- The gate's and recall's re-stamp target is the anchor's `identity`, not its `path`.
+  drift's JSON carries the two separately and `drift link` takes the identity, so for a
+  stale **symbol** anchor the printed repair used to create a second, whole-file binding
+  and leave the symbol one exactly as stale as it was. Both are now shell-quoted with
+  single quotes (a doc path can hold a space; an identity always holds a `#`), and the
+  gate's "drifted from" line names the identity too.
+- Blame is labelled as what it is. drift computes it with `git log -1 -- <file>`, so the
+  commit it names is the **last commit to touch the file**, not necessarily the one that
+  moved the ground under the concept — and once a file has drifted, any later unrelated
+  commit to it takes that place and the real cause stops being mentioned anywhere. The
+  gate and recall now print `last commit touching this file (not necessarily the cause):
+  …`; `/okf-read` says to read the working tree and staged changes first and treat the
+  commit as a lead; `okf-quirks.md` records both consequences. Recall's missing-subject
+  fallback is aligned on the wording the gate and the skill already used,
+  `(uncommitted change — nothing to blame yet)`.
+
+### Added
+
+- The Verify Checklist template carries a fixed first item: the knowledge gate ran with
+  drift and is green, at the START of the work as a baseline and again at the end. A code
+  change can stale a concept without touching `knowledge/`, so that directory is never
+  "out of scope" for the gate. Measured: the gate's template-residue step still rejects
+  the annotation beneath it and accepts the item.
+- The CLAUDE template's Context step gains an impact check — `drift check --changed
+  <path> --format json` for every path the task plans to touch, reported as candidates
+  that may alarm together with every planned path no concept covers — and a baseline gate
+  run whose output is kept, so an alarm already present is inherited rather than blamed on
+  the change. Verify names the gate as the checklist's first item.
+- `/okf-write` Step 2 gains "Where the anchor goes": anchor the claim's whole dependency
+  set rather than the deepest call — the entry point when routing or defaults live there,
+  every implementation the prose cites in every language, a whole file for an unsupported
+  language — and a claim of absence, exclusivity or count is watched by no anchor at all,
+  so it is removed, written as a dated measurement, or proved by a lane the concept names.
+  `okf-quirks.md` gains the wrapper-with-policy consequence behind it.
+- `/okf-read` and the CLAUDE template say when recall beats grep: recall answers what is
+  WRITTEN about an area and what was observed about it; Grep and LSP find code.
+- Recall gives every surviving hit **three independent signals** in place of the single
+  word `fresh`: `N target(s) unchanged` or `no tracked target` (from drift's per-doc
+  `anchors[]`), the concept's own `status` or `no status`, and `review current` /
+  `review expired <date>` / `no review date` from `stale_after` against today. A paragraph
+  after the hit list says what they do and do not mean, the header no longer says "fresh",
+  and `/okf-read` carries the contract: no word in the output may be read as "verified" —
+  `targets unchanged` is an observation about the anchors, not a statement about the prose,
+  and it says nothing about claims the anchors do not cover. Measured on okf v0.3.0:
+  `okf search --json` does **not** emit `status` even for a concept whose frontmatter
+  carries it, so recall reads it from the file, by the same read that already yielded
+  `last_updated`. The WITHHELD block still wins: a stale concept never reaches the hit
+  list, deprecated or not.
+- `OKF_REQUIRE_TRACKING=<glob>[,<glob>...]` makes the coverage warning FATAL for the
+  concepts it matches — shell globs over the concept path relative to the bundle, `*`
+  stopping at a `/` and `**` crossing one, and the failure names the glob. Unset, the
+  default, leaves coverage a warning. Documented in `/okf-runtime` and the README.
+- A green gate must mean the detector ran. On a repository that has **adopted** drift —
+  `.okf-drift-version` and `drift.lock` both present at the bundle's parent — a missing
+  `drift` binary is now a FAIL, and so is a `drift --version` that disagrees with the
+  version pinned in `.github/workflows/knowledge.yml`. A repository that never adopted
+  drift keeps exactly today's warning. Without this a worker without drift gets two green
+  local runs and a red CI.
+- `/okf-write` Step 0's table gains the superseded row — `status: deprecated`, a
+  `Superseded by` link, and the successor written — a rule that existed only inside the
+  decision-format paragraph.
+- Plugin CI drives one scratch repo through the whole loop with the **real** pinned okf
+  and drift: the three signals, a deprecated concept with an expired review date, a moved
+  symbol anchor withheld, the gate's printed re-stamp command executed, and the lock
+  holding exactly one binding for that doc afterwards. The stubbed selftests cannot prove
+  parser compatibility; this step can.
+
+### Changed
+
+- Non-code paths take no *automatic* binding, but a hand `drift link` on one is a
+  **deliberate** content anchor and stays valid: when a claim's truth lives in a workflow
+  trigger, a Kconfig value or a fixture's shape, hand-link it and accept that a reformat
+  will alarm, or restate the claim as a dated observation. The bootstrap now prints
+  `held-non-code <doc> -> <target> (deliberate content anchor — kept)` with no `drift
+  unlink` command beside it; that hint moved to its header comment. Setup, write, migrate,
+  the CLAUDE template, the populate prompt, quirks and the README carry the same sentence.
+- The resync prompt re-reads by hand every concept the gate reports with no tracked
+  target: nothing checked it, and `git log -- <its code_refs>` is vacuous on empty
+  `code_refs`, so neither existing check ever flags it.
+- The README's integration notes record the one manual upgrade step: integration never
+  writes `knowledge/project/conventions.md`, so an existing consumer adds the checklist
+  item itself.
+- The gate's 29 identical `code_refs is empty` warnings become **two grouped lines from
+  two sources**, because they were two questions and one of them was answering for both:
+  `N concept(s) with no tracked target (no drift anchor; nothing checks them)` computed
+  from drift's report, and `N concept(s) with empty code_refs (okf search --for-path
+  cannot find them)` computed from `code_refs` as before. A concept with non-code
+  `code_refs` and no anchor is coverage-warned and not discoverability-warned; a concept
+  with a hand anchor and empty `code_refs` is the reverse; both were misreported.
+  `project/state.md` stays exempt from both, and when drift did not run nothing is said
+  about coverage at all.
+
+### Known gaps
+
+- **Coverage is a warning by default.** A concept that nothing checks does not fail the
+  gate unless a consumer opts in with `OKF_REQUIRE_TRACKING`. Making it fatal by default
+  would fail every bundle that has not finished binding — 29 concepts on the bundle this
+  release was measured against. Coverage is also computed from step 6's report, so neither
+  the warning nor the opt-in fatal can fire on a repository where drift did not run.
+- **Blame is `git log -1 -- <file>`, and this release only labels it.** It still names the
+  last commit to touch the file rather than the commit that moved the anchored
+  declaration; an unrelated later commit to the same file displaces the real cause
+  entirely. Finding the causing commit is drift's to fix, and is filed there.
+- **Removing a binding from `drift.lock` is only sometimes visible.** Nothing compares the
+  lock against what a concept claims to be watching, so deleting a `[[bindings]]` entry by
+  hand is not reported as a removal. The acceptance comparison on 2026-09-19 measured what
+  this release does catch: when the deleted entry was the concept's LAST binding, the
+  coverage warning names it (29 → 30 untracked concepts on the reference consumer), and
+  `OKF_REQUIRE_TRACKING` makes that fatal. What stays silent is a concept that keeps at
+  least one other binding — three anchors down to one loses coverage with every check
+  green — and any repository where drift did not run, since coverage is computed from the
+  drift report. The gate still notices only the opposite direction on its own: a binding
+  whose DOC no longer exists.
 
 ## [0.8.2] - 2026-09-17
 

@@ -3,6 +3,7 @@
 import hashlib
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -321,6 +322,47 @@ class Integration(Fixture):
             self.assertFalse((self.repo / "scripts" / name).exists())
         self.assertEqual(self.integrate().returncode, 0)
         self.assertEqual(after, self.snapshot())
+
+    def section(self, text, title):
+        return re.search(rf"^## {re.escape(title)}\n.*?(?=^## |\Z)", text, re.M | re.S)[0].rstrip()
+
+    def test_official_v0_8_2_sections_are_recognised_and_upgraded(self):
+        # The OUTGOING release's body digests must be in SECTIONS before the template text
+        # moves; otherwise every consumer carrying the previous official body is refused
+        # as "customized; merge explicitly" and cannot be upgraded at all.
+        official = self.historic("v0.8.2", "skills/okf-setup/templates/CLAUDE-knowledge-section.md").decode()
+        (self.repo / "CLAUDE.md").write_text("# Identity\n\n" + official + "\n## Other\nKeep this.\n")
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("customized", result.stderr)
+        text = (self.repo / "CLAUDE.md").read_text()
+        current = (SOURCE / "skills/okf-setup/templates/CLAUDE-knowledge-section.md").read_text()
+        for title in ("Knowledge Bundle", "Work Loop"):
+            self.assertIn(self.section(current, title), text, title)
+        self.assertIn("Keep this.", text)
+        after = self.snapshot()
+        self.assertEqual(self.integrate().returncode, 0)
+        self.assertEqual(after, self.snapshot())
+
+    def test_frontmatter_okf_accepts_is_not_parsed_as_strict_yaml(self):
+        # okf accepts a description whose value starts with an unquoted backtick; a strict
+        # YAML parser raises on it, and 12 concepts on the reference consumer carry one.
+        # Only code_refs is needed here, so it is read with the bootstrap's line rule.
+        self.legacy()
+        concept = self.repo / "knowledge/concept.md"
+        head = '---\ntype: Reference\ndescription: `a/b.sh` runs on every push\n'
+        concept.write_text(head + "code_refs:\n  - src/app.py\n  - 'docs/notes.md'\n---\nBody.\n")
+        before = self.snapshot()
+        result = self.integrate("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(before, self.snapshot())
+        # The same description, with a binding to a deletion candidate: the list is still read.
+        concept.write_text(head + "code_refs:\n  - scripts/okf-check.sh\n---\nBody.\n")
+        before = self.snapshot()
+        result = self.integrate("--dry-run")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("code_refs binds a deletion candidate", result.stderr)
+        self.assertEqual(before, self.snapshot())
 
     def test_modified_wrapper_preflight_changes_nothing_even_with_upgrade(self):
         self.legacy()

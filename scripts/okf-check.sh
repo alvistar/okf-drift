@@ -25,15 +25,39 @@
 #      status with no stale/broken findings is an execution failure. Content-level drift
 #      is the one thing `code_refs` cannot give you: okf tells you a path VANISHED,
 #      drift tells you it CHANGED. Bindings come from `okf-drift-bootstrap.sh` for code
-#      `code_refs` entries; non-code paths remain under okf's existence check. A concept
+#      `code_refs` entries; non-code paths take no *automatic* binding, but a hand
+#      `drift link` on one is a deliberate content anchor and stays valid. A concept
 #      reviewed against a change is re-stamped with
-#      `drift link <doc> <path> --doc-is-still-accurate` and a line in log.md.
+#      `drift link '<doc>' '<anchor identity>' --doc-is-still-accurate` and a line in
+#      log.md — the IDENTITY (`path#symbol` for a symbol anchor), never the bare path,
+#      which would create a second, whole-file binding and leave the stale one stale.
 #
-# Warnings (do not fail): empty code_refs, an okf version other than the one measured, and
-# a missing `drift.lock` or `drift` — the gate must keep working in a repo that has not
-# adopted the drift phase. The runtime skill and standalone CI bootstrap call the
-# pinned launcher; no consumer copy is needed. Run it from the repository root:
-# code_refs and drift.lock are both rooted there.
+# TWO SEPARATE DIAGNOSTICS, because they are two different questions and one of them used
+# to answer for both:
+#
+#   coverage         from drift's report — a concept with NO anchor at all. Nothing checks
+#                    it; a green gate says nothing about it. Grouped into one `warn` line.
+#   discoverability  from `code_refs` — a concept `okf search --for-path <file>` can never
+#                    return. Grouped into a second `warn` line.
+#
+# A concept with non-code `code_refs` and no anchor is coverage-warned and not
+# discoverability-warned; a concept with a hand anchor and empty `code_refs` is the
+# reverse. Coverage is a warning by default: making it fatal would fail every bundle that
+# has not finished binding. `OKF_REQUIRE_TRACKING=<glob>[,<glob>...]` (a shell glob over
+# the concept path relative to the bundle, e.g. `architecture/*`) makes it FATAL for that
+# subset. Unset, the default, is warning-only. Coverage is computed from step 6's report,
+# so neither the warning nor the opt-in fatal can fire when drift did not run.
+#
+# A GREEN GATE MUST MEAN THE DETECTOR RAN. On a repo that has NOT adopted drift — neither
+# `.okf-drift-version` nor `drift.lock` at the bundle's parent — a missing `drift` or a
+# missing lock is a warning, and the gate keeps working. On a repo that HAS adopted it
+# (both files present), a missing `drift` binary is FATAL, and so is a `drift --version`
+# that disagrees with the version pinned in `.github/workflows/knowledge.yml`; otherwise a
+# worker without drift gets two green local runs and a red CI.
+#
+# Other warnings (do not fail): an okf version other than the one measured. The runtime
+# skill and standalone CI bootstrap call the pinned launcher; no consumer copy is needed.
+# Run it from the repository root: code_refs and drift.lock are both rooted there.
 # Needs sh, perl 5.14+ (JSON::PP is core) and okf; drift is optional.
 set -u
 bundle=${1:-knowledge}
@@ -50,14 +74,40 @@ json=$(okf validate "$bundle" --strict --drift --stale --json)
 okf_status=$?
 drift_status=0
 
-# Step 6's input. Empty string = "not adopted here", which is a warning, not a failure.
+# Step 6's input. Empty string = "not adopted here", which is a warning, not a failure —
+# unless this repository has adopted drift, in which case a detector that did not run is
+# a gate that certifies nothing. `adoption_error` carries that verdict to perl so the
+# other five steps still report before it fails.
 drift_json=""
+adoption_error=""
 parent=$(dirname "$bundle")
+adopted=0
+[ -f "$parent/.okf-drift-version" ] && [ -f "$parent/drift.lock" ] && adopted=1
+
+# The drift version this repository's own workflow installs, when it pins one. Read from
+# the `drift` line so the okf pin beside it is never mistaken for it; absent file or
+# absent pin means the check is skipped in silence.
+pinned_drift=""
+if [ -f "$parent/.github/workflows/knowledge.yml" ]; then
+  pinned_drift=$(grep drift "$parent/.github/workflows/knowledge.yml" 2>/dev/null \
+    | sed -n 's/.*--version \(v\{0,1\}[0-9][0-9.]*\).*/\1/p' | head -1)
+fi
+
 if ! command -v drift >/dev/null 2>&1; then
-  echo "warn  drift not on PATH — step 6 (content drift) did not run; \`code_refs\` can only tell you a path vanished, not that it changed"
+  if [ "$adopted" = 1 ]; then
+    adoption_error="this repository adopted drift ($parent/.okf-drift-version and $parent/drift.lock are both present) but \`drift\` is not on PATH — step 6 (content drift) did not run, so a pass here would certify nothing was checked; install the pinned drift"
+  else
+    echo "warn  drift not on PATH — step 6 (content drift) did not run; \`code_refs\` can only tell you a path vanished, not that it changed"
+  fi
 elif [ ! -f "$parent/drift.lock" ]; then
   echo "warn  no drift.lock in $parent — step 6 (content drift) did not run; use /okf-setup for the explicit pinned drift bootstrap"
 else
+  if [ -n "$pinned_drift" ]; then
+    have_drift=$(drift --version 2>/dev/null | awk 'NR==1{print $NF}')
+    if [ "${pinned_drift#v}" != "${have_drift#v}" ]; then
+      adoption_error="drift on PATH is '$have_drift' but $parent/.github/workflows/knowledge.yml pins '$pinned_drift' — the local gate and CI are running different detectors; install the pinned version"
+    fi
+  fi
   drift_json=$( (cd "$parent" && drift check --format json) )
   drift_status=$?
   # An adopted checker failing at runtime is not the optional, unadopted case.
@@ -77,11 +127,11 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 printf '%s' "$json" > "$tmp/okf.json" || exit 2
 printf '%s' "$drift_json" > "$tmp/drift.json" || exit 2
 
-perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" "$okf_status" "$drift_status" <<'PERL'
+perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" "$okf_status" "$drift_status" "$adoption_error" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP; use File::Find; use File::Basename;
 binmode STDOUT, ':utf8';
-my ($bundle, $json_file, $drift_file, $parent, $okf_status, $drift_status) = @ARGV;
+my ($bundle, $json_file, $drift_file, $parent, $okf_status, $drift_status, $adoption_error) = @ARGV;
 # Read as raw bytes and decode explicitly: decode_json expects UTF-8 octets, and a
 # ':utf8' read would hand it characters instead.
 sub slurp_raw { my $f=shift; open my $h,'<:raw',$f or die "$f: $!"; local $/; my $c=<$h>; defined $c ? $c : '' }
@@ -90,8 +140,49 @@ my $drift_json = slurp_raw($drift_file);
 my $fail = 0;
 sub bad  { $fail = 1; print "FAIL  @_\n" }
 sub warnl{ print "warn  @_\n" }
+# A doc path may hold spaces; an anchor identity always holds a `#`. Single quotes make
+# the printed command copy-pasteable in either case.
+sub shq  { my $s = shift; $s =~ s/'/'\\''/g; "'$s'" }
 sub slurp{ my $f=shift; open my $h,'<:utf8',$f or die "$f: $!"; local $/; <$h> }
 my $ISO = qr/^\d{4}-\d{2}-\d{2}$/;
+# The snapshot is prose about the project, not about code: it is expected to carry
+# neither code_refs nor an anchor, and warning about it every run teaches skimming.
+my $EXEMPT = qr{^project/state\.md$};
+my (@no_code_refs, @no_anchor);
+
+# `OKF_REQUIRE_TRACKING=architecture/*,decisions/*` — a comma-separated list of shell
+# globs over the concept path RELATIVE to the bundle. `*` and `?` stop at a `/` as they do
+# in the shell; `**` crosses one. Unset (the default) leaves coverage a warning.
+my @require_tracking = grep { length } split /\s*,\s*/, ($ENV{OKF_REQUIRE_TRACKING} // '');
+sub glob_re {
+  my $g = shift;
+  my $re = '';
+  while ($g =~ /\G(\*\*|\*|\?|[^*?]+)/gc) {
+    my $t = $1;
+    $re .= $t eq '**' ? '.*' : $t eq '*' ? '[^/]*' : $t eq '?' ? '[^/]' : quotemeta $t;
+  }
+  return qr/\A$re\z/;
+}
+my @require_re = map { [ $_, glob_re($_) ] } @require_tracking;
+# One `warn` line per diagnostic, not one per concept: 29 identical lines are read as
+# noise, and the two questions they used to conflate have different answers.
+sub grouped {
+  my ($label, @members) = @_;
+  return unless @members;
+  my $head = sprintf("%d concept(s) %s: ", scalar @members, $label);
+  my $indent = '        ';
+  my @lines; my $line = ''; my $prefix = length("warn  ") + length($head);
+  for my $m (sort @members) {
+    my $piece = length($line) ? ", $m" : $m;
+    if (length($line) && $prefix + length($line) + length($piece) > 100) {
+      push @lines, "$line,"; $line = $m; $prefix = length($indent);
+    }
+    else { $line .= $piece }
+  }
+  push @lines, $line if length $line;
+  warnl($head . shift @lines);
+  print "$indent$_\n" for @lines;
+}
 
 # 1. okf's own verdict, warnings included.
 my $v = eval { decode_json($json) };
@@ -143,7 +234,7 @@ for my $rel (@concepts) {
   else { $desc{$rel} = $f{description} }
   bad("$rel: last_updated: must be an ISO date (got '".($f{last_updated}//'')."')") unless ($f{last_updated}//'') =~ $ISO;
   bad("$rel: stale_after: must be an ISO date") if exists $f{stale_after} && $f{stale_after} !~ $ISO;
-  warnl("$rel: code_refs is empty — `okf search --for-path` will never answer with this concept") unless @code_refs or $rel =~ m{^project/state\.md$};
+  push @no_code_refs, $rel unless @code_refs or $rel =~ $EXEMPT;
   bad("$rel: HTML comment left in a concept — replace the annotation, search indexes comment text") if $text =~ /<!--/;
   bad("$rel: unfilled placeholder") if $text =~ /\[TO DETERMINE\]|\[TO BE DETERMINED|\[VERIFY AFTER|\[Project Name\]|\{\{[A-Z_0-9]+\}\}/;
   # Two views of the body. `$masked` keeps a fenced block as a single opaque token, so a
@@ -213,7 +304,7 @@ if (length $drift_json) {
   }
   else {
     my $checked = 0;
-    my %checked_paths;
+    my (%checked_paths, %anchors_for);
     $bundle_rel = basename($bundle);
     for my $d (@{ $dc->{docs} || [] }) {
       my $r = $d->{result} // '';
@@ -239,6 +330,7 @@ if (length $drift_json) {
         bad("$p: bound in drift.lock but the file no longer exists — `drift unlink $p <target>` for each of its targets, or re-link the targets to the concept that replaced it");
         next;
       }
+      $anchors_for{$p} = scalar @{ $d->{anchors} || [] };
       my $r = $d->{result} // 'missing';
       next if $r eq 'fresh';
       for my $a (@{ $d->{anchors} || [] }) {
@@ -246,9 +338,15 @@ if (length $drift_json) {
         my $b = $a->{blame} || {};
         my $c = substr($b->{commit} // '', 0, 8) || '-';
         my $date = $b->{date} // ''; $date =~ s/T.*//;
-        bad("$p: drifted from ".($a->{path} // $a->{identity} // '?')." (".($a->{reason}{code} // $a->{result} // '?').")\n"
-           ."        blame: $c ".($date || '-')." ".($b->{subject} // '(uncommitted change — nothing to blame yet)')." (".($b->{author} // '-').")\n"
-           ."        review the concept against the code, then: drift link $p ".($a->{path} // '<path>')." --doc-is-still-accurate  + a dated line in $bundle/log.md");
+        # `identity` is the canonical anchor handle `drift link` takes — `path#symbol` for
+        # a symbol anchor. Printing `path` alone repaired a DIFFERENT, whole-file binding
+        # and left the stale symbol one exactly as it was.
+        my $target = $a->{identity} // $a->{path} // '<target>';
+        bad("$p: drifted from $target (".($a->{reason}{code} // $a->{result} // '?').")\n"
+           # drift blames with `git log -1 -- <file>`: the last commit to TOUCH the file,
+           # not necessarily the one that moved the ground under the concept.
+           ."        last commit touching this file (not necessarily the cause): $c ".($date || '-')." ".($b->{subject} // '(uncommitted change — nothing to blame yet)')." (".($b->{author} // '-').")\n"
+           ."        review the concept against the code, then: drift link ".shq($p)." ".shq($target)." --doc-is-still-accurate  + a dated line in $bundle/log.md");
       }
       for my $l (@{ $d->{links} || [] }) {
         next unless ($l->{result} // '') eq 'broken';
@@ -264,6 +362,9 @@ if (length $drift_json) {
     for my $rel (@concepts) {
       bad("$bundle_rel/$rel: no drift verdict; step 6 did not check this concept")
         unless $checked_paths{"$bundle_rel/$rel"};
+      # Coverage, over concepts only: index.md and log.md are reserved files that make no
+      # claim about code, and the state snapshot is prose about the project.
+      push @no_anchor, $rel unless $anchors_for{"$bundle_rel/$rel"} or $rel =~ $EXEMPT;
     }
     my $anchors = 0;
     $anchors += scalar @{ $_->{anchors} || [] } for grep { ($_->{path} // '') =~ m{^\Q$bundle_rel\E/} } @{ $dc->{docs} || [] };
@@ -277,6 +378,25 @@ if (length $drift_json) {
     $drift_note = "$checked doc(s) / $anchors drift anchor(s) fresh";
   }
 }
+
+# Coverage (what nothing checks) and discoverability (what --for-path cannot find) are two
+# questions with two answers. Coverage is only knowable when step 6 ran; when it did not,
+# the "step 6 skipped" note above is the whole of what can honestly be said.
+if (length $drift_json) {
+  grouped("with no tracked target (no drift anchor; nothing checks them)", @no_anchor);
+  for my $rel (@no_anchor) {
+    for my $r (@require_re) {
+      next unless $rel =~ $r->[1];
+      bad("$rel: no tracked target, and OKF_REQUIRE_TRACKING='$r->[0]' makes that fatal for this path — `drift link $bundle_rel/$rel <the declaration the claim depends on>`, or restate the claim");
+      last;
+    }
+  }
+}
+grouped("with empty code_refs (okf search --for-path cannot find them)", @no_code_refs);
+
+# A repository that adopted drift and then ran the gate without it gets a FAIL, not a
+# green run: the other five steps above are worth reporting first, so this lands here.
+bad($adoption_error) if length $adoption_error;
 
 # Keep structured stale diagnostics above, but never erase a failed subprocess status.
 bad("okf validate exited $okf_status") if $okf_status && !$fail;

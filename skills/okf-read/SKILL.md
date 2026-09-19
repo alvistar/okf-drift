@@ -35,6 +35,13 @@ Use it **instead of** `okf search`, for the same queries you would have typed. I
 `okf search --json`, runs `drift check --format json`, joins them on
 `<bundle>/<concept_id>.md`, and prints two blocks.
 
+Recall answers one question: *what is WRITTEN about this area, and what was observed about
+it?* Use it before asserting anything about the architecture or a decision in a plan, a PR
+body or a review, and before editing a file a concept governs (`okf search --for-path
+<file>`, then `git status` and `git log` on that file — the hit's `last_updated` cannot see
+an uncommitted edit). To find code — a symbol, a caller, a string — use Grep and LSP;
+recall does not index code.
+
 When you know the file rather than the topic, `okf search --for-path <file>` still
 answers — but it has no drift join, so check the result's `last_updated` against
 `git log` on that file before quoting it, or re-run the topic through `okf-recall.sh`.
@@ -42,11 +49,18 @@ answers — but it has no drift join, so check the result's `last_updated` again
 ## Reading the output
 
 ```
-3 fresh hit(s) for "cose domain separation" in knowledge
+4 hit(s) for "cose domain separation" in knowledge
 
-  architecture/protocol-core                   Reference    3.58
+  architecture/protocol-core                   Reference    3.58   11 targets unchanged · stable · review current
       The encoding and crypto layer — canonical CBOR, COSE Sign1 domain separation, …
-  …
+  decisions/cose-and-canonical-cbor-are-…      Decision     2.90   no tracked target · stable · review expired 2026-08-30
+      COSE and canonical CBOR are hand-rolled …
+  decisions/k-w-uses-ed25519                   Decision     1.12   no tracked target · deprecated · no review date
+      Superseded …
+
+"targets unchanged" means the code under the anchors did not move. It does not mean the
+prose is right, and it says nothing about claims the anchors do not cover. "no tracked
+target" means nothing was checked. A deprecated concept is history: read its successor.
 
 WITHHELD — 1 concept(s) matched, but the code under them moved after they were written.
 Do not quote these as facts. Read the code they point at, or fix the concept with
@@ -54,19 +68,36 @@ Do not quote these as facts. Read the code they point at, or fix the concept wit
 
   playbooks/bound-a-decode-path                Playbook     2.11   last_updated 2026-09-11
       Give a decode path receiver-chosen DecodeBounds and prove the bound arrived …
-      core/crates/core/src/cbor.rs  [changed_after_baseline]
-          4f2a11cb  2026-09-16  tighten the length guard (Alessandro Viganò)
+      core/crates/core/src/cbor.rs#decode_bounded  [changed_after_baseline]
+          last commit touching this file (not necessarily the cause): 4f2a11cb 2026-09-16 tighten the length guard (Alessandro Viganò)
 ```
 
-**The fresh block** is what `okf search` would have given you, minus the withheld. Use it
-normally.
+**No word in this output may be read as "verified".** Each surviving hit carries three
+INDEPENDENT signals, and none of them is a statement about the prose:
+
+| Signal | What it is | What it is not |
+|---|---|---|
+| `N target(s) unchanged` / `no tracked target` | an observation about the **anchors**: drift re-fingerprinted N declarations and none moved, or the concept has no anchor and nothing checked it | a statement that the concept is true, or that it covers what you are about to do — a claim no anchor touches is invisible to it, and a concept with a live anchor can still be false |
+| `stable` / `deprecated` / `draft` / `no status` | the author's own `status:` | a freshness signal. A **deprecated** concept is history: find its `Superseded by` link and read the successor instead |
+| `review current` / `review expired <date>` / `no review date` | `stale_after` against today — when a human said they would re-read it | a check that anyone did |
+
+The three disagree routinely, and that is the point: a concept can be `11 targets
+unchanged · deprecated · review expired`.
+
+**The hit block** is what `okf search` would have given you, minus the withheld. Use it
+normally, at the confidence the three signals actually support.
 
 **The WITHHELD block is not a softer result. It is a refusal.** A withheld concept is a
 document that was true when someone wrote it and has had the ground moved under it
 since. Its prose may still be right — but nothing has checked, and the concept cannot
 tell you which of its sentences the change touched. So:
 
-1. **Read the code**, at the path named, at the commit named. That is the fact now.
+1. **Read the code**, at the path named — the **current working tree and staged
+   changes** first, and only then the history. drift blames with `git log -1 -- <file>`,
+   so the commit it names is the LAST COMMIT TO TOUCH THE FILE, not necessarily the one
+   that moved the ground under the concept: an unrelated reformat lands there just as
+   readily. That is what the line says, in those words. The code as it stands is the fact
+   now; the commit is a lead.
 2. Do not quote, paraphrase or reason from the withheld concept's claims about that
    path. Its claims about *other* things are no safer: you do not know where the
    inaccuracy stops.

@@ -47,6 +47,10 @@ establish, and add one line on what would establish it.
   `path#Symbol`; a symbol anchor belongs in `drift.lock` via `drift link`.
   Use narrow directories or boundary files, not `src/` on everything. Every path
   must exist.
+- A standing claim whose truth lives in a NON-code path — a workflow trigger, a
+  Kconfig value, a fixture's shape — takes no automatic binding: hand-link that
+  path with `drift link` and accept that a reformat will alarm, or write the
+  claim as a dated observation instead.
 - `sources:` the docs or files the content came from, each as
   `- resource: <repo-relative path or URL>` — okf --strict rejects a bare string.
 - `last_updated:` today; keep the `stale_after:` the scaffold set.

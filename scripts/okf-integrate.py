@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install/convert only OKF integration. Python 3.11+ and PyYAML; plugin-local, never copied.
+"""Install/convert only OKF integration. Python 3.11+, no third-party imports; plugin-local, never copied.
 
 No scaffold, binding or bundle writes. Preflight all candidates before staging a pin or
 changing anything. Unknown integrations require a human merge, not a guessed migration.
@@ -15,8 +15,6 @@ import sys
 import tempfile
 import tomllib
 
-import yaml
-
 PLUGIN = Path(__file__).resolve().parent.parent
 TEMPLATES = PLUGIN / "skills/okf-setup/templates"
 MINIMUM = (0, 7, 0)
@@ -30,14 +28,19 @@ WORKFLOWS = {
     "84c2669a3da9249431771f8a861074161ce7edca73430c534eee546c87d16260",
     "c9cfd3865f4886360e6c3b0259c4a6906f9d616606fcc16016a0e63c9da333a3",
 }
-SECTIONS = {  # accepted official template digests; current text is compared separately
+# Accepted official template digests; the current template text is compared separately.
+# Each entry names the releases whose template body digests to it, measured from the
+# source tags. The OUTGOING release's digests must be here BEFORE the template changes,
+# or every consumer still carrying the previous official body is refused as customized.
+SECTIONS = {
     "Knowledge Bundle": {
-        "0c641e5e55c92165a85e76920416b1676906c7c24db4cf33c4a5d044f3d6b485",  # v0.5.0-v0.6.2
-        "372e7ee23c7fe542a3808c6724fd590df150a9d4c77037739a8da4303edefe8d",  # v0.7.0
+        "0c641e5e55c92165a85e76920416b1676906c7c24db4cf33c4a5d044f3d6b485",  # v0.4.0-v0.6.2
+        "372e7ee23c7fe542a3808c6724fd590df150a9d4c77037739a8da4303edefe8d",  # v0.7.0-v0.8.2
     },
     "Work Loop": {
-        "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.6.2
+        "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.4.0-v0.6.2
         "0b46146628754f0316d682ae29210bd17a928076c174eef433236f41eee4849c",  # v0.7.0
+        "dfacead5b7d2f4ad91889329fb157a59a13bf3edc1aedd2d5c492b027279f09f",  # v0.8.0-v0.8.2
     },
 }
 LEGACY = [f"scripts/{name}.sh" for name in ("okf-check", "okf-recall", "okf-shim")]
@@ -122,6 +125,36 @@ def protects(target, removed, root):
                or fnmatch.fnmatchcase(name, normalized) for name in removed)
 
 
+def code_refs(front):
+    """Read code_refs from frontmatter text with the bundle's own line rule.
+
+    The bootstrap and the gate parse frontmatter line by line, and okf accepts values a
+    strict YAML parser rejects -- a description whose value starts with an unquoted
+    backtick, for one, which 12 concepts on the reference consumer carry. Only code_refs
+    is needed here, so read it the same way rather than parsing the whole mapping.
+    """
+    def unquote(value):
+        return re.sub(r"""^(["'])(.*)\1$""", r"\2", value)
+
+    refs, inside = [], False
+    for line in front.split("\n"):
+        opener = re.fullmatch(r"code_refs:\s*(.*?)\s*", line)
+        if opener:
+            # An inline sequence closes the block immediately; "code_refs: []" is empty.
+            inside = not opener[1]
+            if opener[1].startswith("[") and opener[1].endswith("]"):
+                refs.extend(item for item in
+                            (unquote(x.strip()) for x in opener[1][1:-1].split(",")) if item)
+            continue
+        if re.match(r"[A-Za-z_]+:", line):
+            inside = False
+            continue
+        item = re.fullmatch(r"\s*-\s+(.+?)\s*", line) if inside else None
+        if item:
+            refs.append(unquote(item[1]))
+    return refs
+
+
 def check_bindings(root, removed):
     bundle = root / "knowledge"
     if bundle.is_symlink():
@@ -136,13 +169,7 @@ def check_bindings(root, removed):
             parts = text.split("\n---", 2)
             if len(parts) < 2:
                 raise ValueError(f"{file}: malformed frontmatter")
-            front = yaml.safe_load(parts[0][4:])
-            if not isinstance(front, dict):
-                raise ValueError(f"{file}: frontmatter must be a mapping")
-            refs = front.get("code_refs", [])
-            if not isinstance(refs, list):
-                raise ValueError(f"{file}: code_refs must be a list")
-            if any(protects(ref, removed, root) for ref in refs):
+            if any(protects(ref, removed, root) for ref in code_refs(parts[0][4:])):
                 raise ValueError(f"{file}: code_refs binds a deletion candidate; migration refused")
         if any(name in text for name in LEGACY):
             print(f"okf-integrate: historical operational reference in {file}; left untouched, CLAUDE.md is authoritative", file=sys.stderr)
@@ -231,7 +258,7 @@ def main():
         if not root.is_dir():
             raise ValueError(f"{root}: not a directory")
         integrate(root, args.tag, args.dry_run)
-    except (ValueError, OSError, UnicodeError, yaml.YAMLError, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, UnicodeError, subprocess.CalledProcessError) as error:
         print(f"okf-integrate: {error}", file=sys.stderr)
         return 2
     return 0

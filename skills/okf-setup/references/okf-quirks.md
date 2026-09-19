@@ -197,8 +197,10 @@ cc cpp hpp m swift kt kts rb php sql lua`. A trailing `#Symbol` is stripped befo
 extension test. A path with no extension (`VERSION`, `Makefile`) or a data/document
 extension (`json`, `yaml`, `toml`, `md`, `txt`, `lock`, …) is reported `not-code` and is
 not linked. If a concept describes the content of such a data file, use a hand
-`drift link` as the escape hatch; existing non-code bindings are reported with their
-exact `drift unlink` command and are never removed by the bootstrap.
+`drift link` as the escape hatch; an existing non-code binding is a deliberate content
+anchor, reported `held-non-code … (deliberate content anchor — kept)` and never removed
+by the bootstrap. Removing one is a deliberate act of your own: `drift unlink <doc>
+<target>`.
 
 For idempotency, a plain `code_refs` path is covered for the same document by either that
 plain binding or any `path#Symbol` binding already in `drift.lock`; the bootstrap skips it
@@ -216,7 +218,7 @@ exit 1 — it never says *why*, so a path-shaped name and a typo are indistingui
 | Python | module-level `def`, `async def`, `class`, a method by its **bare** name (`#resolve`, `#__init__`) | `#Class.method`; a **module-level assignment** (`MAX_LEN = 64`) |
 
 So there is no qualified form at all: you address a declaration by its bare identifier
-or not at all. Three consequences that decide how you bind:
+or not at all. Four consequences that decide how you bind:
 
 - **A bare name occurring twice in one file binds the FIRST occurrence only.** Two
   `impl` blocks each with `fn check`: the anchor tracked `A::check` and changing
@@ -231,11 +233,18 @@ or not at all. Three consequences that decide how you bind:
 - **A Python constant cannot be anchored**, where a Rust `pub const` can. If a
   concept's claim rests on a module-level list or dict (a registry, a roster, an
   invariant table), the whole file is the only anchor that watches it.
+- **A wrapper that chooses a policy is part of the claim, however short it is.** OPA's
+  `admit_reusable` is six lines and delegates, but the one thing it does on its own is
+  choose `DecodeBounds::DEFAULT`, where its sibling chooses `UNLIMITED`; the checks the
+  prose describes are in `admit_reusable_with_limits`. Anchoring only the body leaves the
+  default unwatched, anchoring only the wrapper leaves the checks unwatched, and the claim
+  depends on both. A line count does not decide this — what the caller chooses does.
 
-Narrowing is worth it: adding a statement to a bound `decode_canonical` in a 670-line
-`cbor.rs` staled exactly the two `#decode_canonical` anchors and left the other 16
-anchors on that file fresh; adding a statement to an unbound sibling function left all
-18 fresh, where a whole-file anchor on the same edit went stale.
+Narrowing is worth it when the narrowed set is the claim's whole dependency set: adding a
+statement to a bound `decode_canonical` in a 670-line `cbor.rs` staled exactly the two
+`#decode_canonical` anchors and left the other 16 anchors on that file fresh; adding a
+statement to an unbound sibling function left all 18 fresh, where a whole-file anchor on
+the same edit went stale.
 
 Keep a binding whole when the prose is a claim about the file *as a set* — "exporting
 33 functions plus three enums", an ABI's export list, a domain-tag registry that is a
@@ -269,9 +278,17 @@ the cap.
   "every doc `fresh`" is a stronger statement than `docs_stale == 0`, and is the condition
   the gate uses.
 - A stale anchor carries `reason: {code: "changed_after_baseline", message}` and
-  `blame: {author, commit, date, subject}`. An **uncommitted** change to a bound file is
-  stale too, with blame falling back to the last commit that touched the file — which
-  reads as a wrong accusation unless you know that.
+  `blame: {author, commit, date, subject}`. **Blame is `git log -1 -- <file>`**
+  (`vcs.zig:248`): the last commit to TOUCH the file, never an analysis of which commit
+  moved the anchored declaration. Two consequences, and both read as a wrong accusation
+  unless you know them. (a) An **uncommitted** change to a bound file is stale too, and
+  blame falls back to the last commit that touched it — someone else's. (b) Once a file
+  has drifted, any LATER unrelated commit to the same file — a reformat, a comment, a
+  neighbouring function — becomes the named commit, and the change that actually caused
+  the staleness is no longer mentioned anywhere. So read the working tree and the staged
+  changes first, then the history; the named commit is a lead, not a verdict. The gate
+  and recall both print it labelled that way: `last commit touching this file (not
+  necessarily the cause): …`.
 - `--changed <path>` narrows `docs[]` to the docs anchored to that path. The summary's
   `anchors_total` still counts every anchor on those docs, not just the matching one.
 

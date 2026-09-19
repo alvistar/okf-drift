@@ -44,6 +44,15 @@ recall hits are not weaker facts. Read their bound code instead of quoting them.
 If recall fails, stop: no bare-search fallback. The gate may warn when drift has
 not been adopted; report that degraded result rather than claiming drift passed.
 
+The gate warns, and does not fail, for a concept with no tracked target; a consumer
+that wants a subset to be mandatory sets `OKF_REQUIRE_TRACKING=<glob>[,<glob>...]`
+(shell globs over the concept path relative to the bundle, e.g. `architecture/*`),
+which turns coverage into a FAIL for the paths it matches and names the glob.
+On a repository that has ADOPTED drift — `.okf-drift-version` and `drift.lock` both
+present — a missing `drift` binary, or one whose version disagrees with the pin in
+`.github/workflows/knowledge.yml`, is a FAIL rather than a warning: a green gate has
+to mean the detector ran. Never work around that by uninstalling the pin.
+
 ## Scope and unavailable plugin
 
 This skill only runs gate/recall. It never pins, installs/converts integration,

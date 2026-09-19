@@ -221,6 +221,10 @@ after narrowing no longer adds a whole-file binding beside a symbol binding. Bef
 binding you had just replaced (measured: 48 bindings became 67); this was fixed in 0.8.2.
 Keep `#Symbol` only in `drift.lock` via `drift link`; write the file path alone in `code_refs`.
 
+Non-code paths take no *automatic* binding; when a claim's truth lives in one — a workflow
+trigger, a Kconfig value, a fixture's shape — hand-link it and accept that a reformat will
+alarm, or restate the claim as a dated observation.
+
 Do it after the commit, as its own change (`/okf-write` knows the rule: never re-stamp
 silently).
 

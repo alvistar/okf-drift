@@ -83,9 +83,201 @@ class RuntimeTests(unittest.TestCase):
 
     def assert_unusable(self, result: subprocess.CompletedProcess[str]) -> None:
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("1 fresh hit", result.stdout)
+        self.assertNotIn("1 hit(s)", result.stdout)
         self.assertNotIn("okf gate passed", result.stdout)
         self.assertNotIn("no concept", result.stdout)
+
+    def concept(self, rel: str, *, status: str | None = None,
+                stale_after: str | None = None) -> None:
+        """A second fixture concept, written only where a test needs one. It is deliberately
+        NOT in setUp: the gate requires an index row and a drift verdict for every concept,
+        and recall requires neither."""
+        path = self.bundle / f"{rel}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = ["type: Reference", "title: Second", "description: Second fixture.",
+                 "last_updated: 2026-09-16"]
+        if status is not None:
+            lines.append(f"status: {status}")
+        if stale_after is not None:
+            lines.append(f"stale_after: {stale_after}")
+        path.write_text("---\n" + "\n".join(lines) + "\n---\n# Second\n\nBody.\n")
+
+    def two_hits(self, anchors: list[object]) -> None:
+        self.payload("search", [
+            {"concept_id": "project/state", "description": "Fixture state.", "score": 2},
+            {"concept_id": "architecture/core", "description": "Second fixture.", "score": 1},
+        ])
+        self.payload("drift", {"docs": [
+            {"path": "knowledge/project/state.md", "result": "fresh",
+             "anchors": anchors, "links": []},
+            {"path": "knowledge/architecture/core.md", "result": "fresh",
+             "anchors": [], "links": []},
+        ]})
+
+    def anchor(self, symbol: str) -> dict:
+        return {"identity": f"src/lib.rs#{symbol}", "kind": "symbol", "path": "src/lib.rs",
+                "symbol": symbol, "result": "fresh", "reason": None, "blame": None}
+
+    def test_recall_prints_tracking_lifecycle_and_review_per_hit(self) -> None:
+        self.concept("architecture/core", status="deprecated", stale_after="2026-01-01")
+        self.two_hits([self.anchor("a"), self.anchor("b")])
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('2 hit(s) for "fixture" in knowledge', result.stdout)
+        self.assertIn("2 targets unchanged · no status · no review date", result.stdout)
+        self.assertIn("no tracked target · deprecated · review expired 2026-01-01",
+                      result.stdout)
+        self.assertIn('"targets unchanged" means the code under the anchors did not move.',
+                      result.stdout)
+
+    def test_recall_counts_one_anchor_in_the_singular_and_reads_a_future_review(self) -> None:
+        self.concept("architecture/core", status="stable", stale_after="2099-01-01")
+        self.two_hits([self.anchor("a")])
+        result = self.run_script("okf-recall.sh")
+        self.assertIn("1 target unchanged · no status · no review date", result.stdout)
+        self.assertIn("no tracked target · stable · review current", result.stdout)
+
+    def test_recall_withholds_a_deprecated_concept_whose_code_moved(self) -> None:
+        """The refusal wins over the lifecycle signal: a stale concept never reaches the
+        hit list, deprecated or not."""
+        self.concept("architecture/core", status="deprecated")
+        self.payload("search", [
+            {"concept_id": "architecture/core", "description": "Second fixture.", "score": 1},
+        ])
+        self.payload("drift", {"docs": [{
+            "path": "knowledge/architecture/core.md", "result": "stale",
+            "anchors": [{"identity": "src/lib.rs#a", "kind": "symbol", "path": "src/lib.rs",
+                         "symbol": "a", "result": "stale",
+                         "reason": {"code": "changed_after_baseline", "message": "m"},
+                         "blame": {}}],
+            "links": []}]})
+        self.env["DRIFT_EXIT"] = "1"
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("0 hit(s)", result.stdout)
+        self.assertIn("(none — every match is withheld below)", result.stdout)
+        self.assertIn("WITHHELD", result.stdout)
+        self.assertNotIn("· deprecated ·", result.stdout)
+        self.assertNotIn('"targets unchanged" means', result.stdout)
+
+    def gate_bundle(self) -> None:
+        """Four concepts that separate the two diagnostics. Coverage comes from drift's
+        report, discoverability from `code_refs`, and the pairs deliberately disagree:
+        `architecture/core` has neither, `playbooks/thing` has code_refs but no anchor,
+        `playbooks/bound` has both, and `project/state` is exempt from both."""
+        rows = {
+            "architecture/core": ("Core fixture.", []),
+            "playbooks/thing": ("Thing fixture.", ["src/lib.rs"]),
+            "playbooks/bound": ("Bound fixture.", ["src/lib.rs"]),
+        }
+        for rel, (desc, refs) in rows.items():
+            path = self.bundle / f"{rel}.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            code_refs = "code_refs: []\n" if not refs else \
+                "code_refs:\n" + "".join(f"  - {r}\n" for r in refs)
+            path.write_text(
+                f"---\ntype: Reference\ntitle: {rel}\ndescription: {desc}\n"
+                f"last_updated: 2026-09-16\n{code_refs}---\n# {rel}\n\nBody.\n"
+            )
+        for directory in ("architecture", "playbooks"):
+            (self.bundle / directory / "index.md").write_text("".join(
+                f"- [{rel}](/{rel}.md) — {desc}\n"
+                for rel, (desc, _) in rows.items() if rel.startswith(directory + "/")
+            ))
+        anchor = {"identity": "src/lib.rs#a", "kind": "symbol", "path": "src/lib.rs",
+                  "symbol": "a", "result": "fresh", "reason": None, "blame": None}
+        self.payload("drift", {"docs": [
+            {"path": "knowledge/project/state.md", "result": "fresh",
+             "anchors": [anchor], "links": []},
+            {"path": "knowledge/architecture/core.md", "result": "fresh",
+             "anchors": [], "links": []},
+            {"path": "knowledge/playbooks/thing.md", "result": "fresh",
+             "anchors": [], "links": []},
+            {"path": "knowledge/playbooks/bound.md", "result": "fresh",
+             "anchors": [anchor], "links": []},
+        ]})
+
+    def test_gate_groups_coverage_and_discoverability_separately(self) -> None:
+        self.gate_bundle()
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # One line per diagnostic, wrapped at ~100 chars with a continuation indent.
+        self.assertIn(
+            "warn  2 concept(s) with no tracked target (no drift anchor; nothing checks "
+            "them): architecture/core.md,\n        playbooks/thing.md\n",
+            result.stdout,
+        )
+        self.assertIn(
+            "warn  1 concept(s) with empty code_refs (okf search --for-path cannot find "
+            "them): architecture/core.md",
+            result.stdout,
+        )
+        # A concept that has both is in neither list; the exempt snapshot is in neither.
+        self.assertNotIn("playbooks/bound.md", result.stdout)
+        self.assertNotIn("project/state.md", result.stdout)
+        # And the old per-concept line is gone.
+        self.assertNotIn("code_refs is empty", result.stdout)
+
+    def test_require_tracking_is_fatal_only_for_the_matching_glob(self) -> None:
+        self.gate_bundle()
+        self.env["OKF_REQUIRE_TRACKING"] = "architecture/*"
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "FAIL  architecture/core.md: no tracked target, and "
+            "OKF_REQUIRE_TRACKING='architecture/*' makes that fatal for this path",
+            result.stdout,
+        )
+        self.assertNotIn("FAIL  playbooks/thing.md", result.stdout)
+        self.assertIn("2 concept(s) with no tracked target", result.stdout)
+        # `*` stops at a `/`, as it does in the shell: a bare `*` matches no concept in a
+        # bundle whose concepts all live in a category directory.
+        self.env["OKF_REQUIRE_TRACKING"] = "*"
+        bare = self.run_script("okf-check.sh")
+        self.assertEqual(bare.returncode, 0, bare.stdout + bare.stderr)
+        # `**` does cross one.
+        self.env["OKF_REQUIRE_TRACKING"] = "**"
+        deep = self.run_script("okf-check.sh")
+        self.assertEqual(deep.returncode, 1, deep.stdout + deep.stderr)
+
+    def test_require_tracking_unset_leaves_coverage_a_warning(self) -> None:
+        self.gate_bundle()
+        self.env.pop("OKF_REQUIRE_TRACKING", None)
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("no tracked target, and OKF_REQUIRE_TRACKING", result.stdout)
+
+    @unittest.skipIf(os.environ.get("OKF_SELFTEST_PINNED") == "1",
+                     ".okf-drift-version is the launcher's own input in pinned mode")
+    def test_a_repo_that_adopted_drift_fails_when_drift_is_absent(self) -> None:
+        """A green gate must mean the detector ran. Without this the worker who has no
+        drift gets two green local runs and a red CI."""
+        pin = self.root / ".okf-drift-version"
+        if not pin.exists():
+            pin.write_text("v0.9.0\n")
+        (self.stub / "drift").unlink()
+        # Keep the system tools the scripts need; drop every directory that could hold a
+        # real drift (~/.local/bin, GOPATH/bin).
+        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
+                                            "/usr/sbin", "/sbin"])
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL  this repository adopted drift", result.stdout)
+        self.assertNotIn("okf gate passed", result.stdout)
+
+    @unittest.skipIf(os.environ.get("OKF_SELFTEST_PINNED") == "1",
+                     ".okf-drift-version is the launcher's own input in pinned mode")
+    def test_a_repo_that_never_adopted_drift_still_only_warns(self) -> None:
+        (self.root / ".okf-drift-version").unlink(missing_ok=True)
+        (self.stub / "drift").unlink()
+        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
+                                            "/usr/sbin", "/sbin"])
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("warn  drift not on PATH", result.stdout)
+        self.assertNotIn("FAIL", result.stdout)
+        # Coverage is unknowable without the report, so it is not guessed at.
+        self.assertNotIn("no tracked target", result.stdout)
 
     def test_gate_and_recall_accept_fresh_verdict(self) -> None:
         for script in ("okf-check.sh", "okf-recall.sh"):
@@ -149,7 +341,74 @@ class RuntimeTests(unittest.TestCase):
                 result = self.run_script("okf-recall.sh", bundle)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("WITHHELD", result.stdout)
-                self.assertNotIn("1 fresh hit", result.stdout)
+                self.assertNotIn("1 hit(s)", result.stdout)
+
+    def stale_symbol(self, blame: object = None) -> None:
+        """A doc whose ONLY stale anchor is a symbol binding. `path` and `identity` differ
+        here on purpose: a repair printed from `path` binds the whole file and leaves the
+        symbol anchor exactly as stale as it was."""
+        self.payload("drift", {"docs": [{
+            "path": "knowledge/project/state.md",
+            "result": "stale",
+            "anchors": [{
+                "identity": "src/lib.rs#admit_reusable",
+                "raw": "src/lib.rs#admit_reusable@sig:1d22599b721b091a",
+                "kind": "symbol",
+                "path": "src/lib.rs",
+                "symbol": "admit_reusable",
+                "provenance": {"kind": "sig", "value": "1d22599b721b091a"},
+                "result": "stale",
+                "reason": {"code": "changed_after_baseline", "message": "content changed"},
+                "blame": blame if blame is not None else {
+                    "author": "Alessandro Viganò",
+                    "commit": "0123456789abcdef0123456789abcdef01234567",
+                    "date": "2026-09-16T20:18:31+02:00",
+                    "subject": "chore: reformat, unrelated",
+                },
+            }],
+            "links": [],
+        }]})
+        self.env["DRIFT_EXIT"] = "1"
+
+    def test_gate_restamp_command_names_the_symbol_binding_not_the_file(self) -> None:
+        self.stale_symbol()
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "drift link 'knowledge/project/state.md' 'src/lib.rs#admit_reusable' "
+            "--doc-is-still-accurate",
+            result.stdout,
+        )
+        self.assertNotIn("drift link 'knowledge/project/state.md' 'src/lib.rs' ", result.stdout)
+        self.assertIn("drifted from src/lib.rs#admit_reusable", result.stdout)
+
+    def test_gate_labels_blame_as_the_last_commit_touching_the_file(self) -> None:
+        self.stale_symbol()
+        result = self.run_script("okf-check.sh")
+        self.assertIn(
+            "last commit touching this file (not necessarily the cause): 01234567 "
+            "2026-09-16 chore: reformat, unrelated (Alessandro Viganò)",
+            result.stdout,
+        )
+        self.assertNotIn("blame: 01234567", result.stdout)
+
+    def test_recall_withheld_names_the_identity_and_labels_blame(self) -> None:
+        self.stale_symbol()
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("src/lib.rs#admit_reusable  [changed_after_baseline]", result.stdout)
+        self.assertIn(
+            "last commit touching this file (not necessarily the cause): 01234567 "
+            "2026-09-16 chore: reformat, unrelated (Alessandro Viganò)",
+            result.stdout,
+        )
+
+    def test_uncommitted_change_keeps_its_own_wording_in_both_scripts(self) -> None:
+        self.stale_symbol(blame={})
+        for script in ("okf-check.sh", "okf-recall.sh"):
+            with self.subTest(script=script):
+                result = self.run_script(script)
+                self.assertIn("(uncommitted change — nothing to blame yet)", result.stdout)
 
     def test_gate_rejects_partial_report_even_when_an_index_matched(self) -> None:
         self.payload("drift", {"docs": [{"path": "knowledge/index.md", "result": "fresh"}]})
@@ -363,8 +622,11 @@ class BootstrapTests(unittest.TestCase):
         )
         held = self.run_script("okf-drift-bootstrap.sh", "knowledge")
         self.assertEqual(held.returncode, 0, held.stdout + held.stderr)
-        self.assertIn("held-non-code knowledge/concept.md -> VERSION", held.stdout)
-        self.assertIn("drift unlink knowledge/concept.md VERSION", held.stdout)
+        # A hand binding on a non-code path is a deliberate content anchor: the bootstrap
+        # reports it and keeps it, and no longer prints an unlink command beside it.
+        self.assertIn("held-non-code knowledge/concept.md -> VERSION (deliberate content anchor — kept)",
+                      held.stdout)
+        self.assertNotIn("drift unlink", held.stdout)
 
     def test_bootstrap_treats_symbol_binding_as_covering_file(self) -> None:
         (self.root / "drift.lock").write_text(

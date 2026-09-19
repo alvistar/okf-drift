@@ -23,7 +23,7 @@ trusting a green validation.
 |---|---|
 | `/okf-setup` | Lays the bundle down in a repo that has none: a fixed layout that validates `--strict` from the first commit, the population and resync prompts, the `CLAUDE.md` sections, the gate, the drift bootstrap, and the CI job. |
 | `/okf-migrate` | Builds the same bundle from an existing [mex](https://github.com/mex-memory/mex) scaffold, resolving every `grounds_to` and inline `mex://` anchor to a path **while the graph still exists**. |
-| `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot; binds every new **code** `code_refs` path; non-code paths are watched for existence by okf alone; re-stamps a reviewed binding — never silently. |
+| `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot; binds every new **code** `code_refs` path; non-code paths take no *automatic* binding, so a claim whose truth lives in one is hand-linked or restated as a dated observation; re-stamps a reviewed binding — never silently. |
 | `/okf-read` | Recalls from it: `okf search` joined with `drift check`, withholding any concept whose bound code moved after it was written, with the commit to blame. |
 
 All four are **manual trigger only** — they run when you type the slash command.
@@ -92,6 +92,18 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-recall.sh "<t
 assumed environment variables. No versioned cache path is saved in project files.
 Updating the installed plugin does **not** update the project's pinned runtime.
 
+The gate reports a concept with **no tracked target** — no drift anchor at all, so
+nothing checks it — as a warning, separately from a concept with empty `code_refs`,
+which is the different complaint that `okf search --for-path` can never return it.
+Set `OKF_REQUIRE_TRACKING=<glob>[,<glob>...]` to make coverage FATAL for a subset:
+shell globs over the concept path relative to the bundle (`architecture/*`, with `*`
+stopping at a `/` and `**` crossing one). Unset — the default — leaves it a warning,
+because making it fatal everywhere would fail every bundle that has not finished
+binding. On a repository that has adopted drift (`.okf-drift-version` and
+`drift.lock` both present) a missing `drift`, or one whose version disagrees with the
+pin in `.github/workflows/knowledge.yml`, fails the gate: a green gate must mean the
+detector ran.
+
 ### Compatibility and the lockfile
 
 **First compatible release: v0.7.0.**
@@ -158,10 +170,10 @@ scripts, not the separately downloaded drift installer.
 ### Integration conversion
 
 The plugin-only `scripts/okf-integrate.py` is shared by setup and migration. It needs
-Python 3.11+ and PyYAML. For a fresh integration or conversion of existing wrappers:
+Python 3.11+ and no third-party packages. For a fresh integration or conversion of existing wrappers:
 
 ```sh
-uvx --with pyyaml python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
+python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
   --repo-root "$REPO_ROOT" --tag v0.7.0 --dry-run
 # Review, then repeat without --dry-run. Omit --tag to preserve a compatible pin.
 ```
@@ -183,6 +195,11 @@ writes nothing to the consumer. The apply preflights every candidate before writ
   Historical operational references are reported, not rewritten; the new CLAUDE
   section makes them non-authoritative. No scaffold, population or log update runs.
 
+Integration never touches `knowledge/project/conventions.md`, so a consumer that
+already has a bundle does **not** get the Verify Checklist's first item — the knowledge
+gate, at the baseline and again at the end — from an upgrade. Add it by hand, from
+`skills/okf-setup/templates/knowledge/project/conventions.md`.
+
 The second application makes no changes. Customized integrations need an explicit
 human merge rather than force/overwrite flags. Candidates are rechecked before
 apply to detect edits during downloads; apply uses atomic file replacement, **not a
@@ -196,7 +213,7 @@ apply can leave a partial integration (rerun after correcting it, review the dif
 scripts/okf-scaffold.sh             the fixed bundle, laid down and validated
 scripts/okf-check.sh                the gate, six steps
 scripts/okf-recall.sh               search joined with drift; withholds what it cannot vouch for
-scripts/okf-drift-bootstrap.sh      one drift link per code `code_refs` entry; okf watches non-code paths
+scripts/okf-drift-bootstrap.sh      one drift link per code `code_refs` entry; a hand binding on a non-code path is kept
 scripts/okf-migrate.py              inventory / resolve / convert, for a mex scaffold
 scripts/okf-shim.sh                 sole root-aware, content-pinned launcher (plugin/CI/legacy)
 scripts/okf-integrate.py            conservative plugin-only integration install/conversion
