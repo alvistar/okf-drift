@@ -50,8 +50,8 @@ that wants a subset to be mandatory sets `OKF_REQUIRE_TRACKING=<glob>[,<glob>...
 which turns coverage into a FAIL for the paths it matches and names the glob.
 On a repository that has ADOPTED drift — `.okf-drift-version` and `drift.lock` both
 present — a missing `drift` binary, or one whose version disagrees with the pin in
-`.github/workflows/knowledge.yml`, is a FAIL rather than a warning: a green gate has
-to mean the detector ran. Never work around that by uninstalling the pin.
+`.github/workflows/knowledge.yml` (or that file renamed `.yaml`), is a FAIL rather
+than a warning: a green gate has to mean the detector ran. Never work around that by uninstalling the pin.
 
 ## Scope and unavailable plugin
 

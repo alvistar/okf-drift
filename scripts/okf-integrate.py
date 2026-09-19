@@ -185,8 +185,19 @@ def check_bindings(root, removed):
                 raise ValueError("drift.lock: binding targets a deletion candidate; migration refused")
 
 
+def workflow_name(root):
+    """The consumer's gate workflow. The template ships `.yml`, but a repository whose
+    every other workflow is `.yaml` renames it; writing the template name regardless
+    would install a SECOND gate beside the one already there."""
+    renamed = ".github/workflows/knowledge.yaml"
+    if (root / renamed).is_file() and not (root / ".github/workflows/knowledge.yml").is_file():
+        return renamed
+    return ".github/workflows/knowledge.yml"
+
+
 def integrate(root, tag, dry_run):
-    candidates = [*LEGACY, "CLAUDE.md", ".github/workflows/knowledge.yml", ".okf-drift-version"]
+    gate = workflow_name(root)
+    candidates = [*LEGACY, "CLAUDE.md", gate, ".okf-drift-version"]
     before = {name: regular(root, name) for name in candidates}
     removed = []
     for name in LEGACY:
@@ -205,10 +216,10 @@ def integrate(root, tag, dry_run):
         removed.append(name)
     changes = {"CLAUDE.md": instructions(before["CLAUDE.md"])}
     workflow = (TEMPLATES / "knowledge.yml").read_bytes()
-    old_workflow = before[".github/workflows/knowledge.yml"]
+    old_workflow = before[gate]
     if old_workflow is not None and old_workflow != workflow and digest(old_workflow) not in WORKFLOWS:
-        raise ValueError(f"{root / '.github/workflows/knowledge.yml'}: customized workflow; merge explicitly")
-    changes[".github/workflows/knowledge.yml"] = workflow
+        raise ValueError(f"{root / gate}: customized workflow; merge explicitly")
+    changes[gate] = workflow
     check_bindings(root, removed)
     # Pin generation is staged only AFTER every consumer candidate passed preflight.
     if tag:

@@ -52,8 +52,9 @@
 # `.okf-drift-version` nor `drift.lock` at the bundle's parent — a missing `drift` or a
 # missing lock is a warning, and the gate keeps working. On a repo that HAS adopted it
 # (both files present), a missing `drift` binary is FATAL, and so is a `drift --version`
-# that disagrees with the version pinned in `.github/workflows/knowledge.yml`; otherwise a
-# worker without drift gets two green local runs and a red CI.
+# that disagrees with the version pinned in `.github/workflows/knowledge.yml` (or the same
+# file named `.yaml`); otherwise a worker without drift gets two green local runs and a
+# red CI.
 #
 # Other warnings (do not fail): an okf version other than the one measured. The runtime
 # skill and standalone CI bootstrap call the pinned launcher; no consumer copy is needed.
@@ -86,10 +87,19 @@ adopted=0
 
 # The drift version this repository's own workflow installs, when it pins one. Read from
 # the `drift` line so the okf pin beside it is never mistaken for it; absent file or
-# absent pin means the check is skipped in silence.
+# absent pin means the check is skipped in silence. BOTH extensions are looked for: the
+# template ships `.yml`, but a repository whose every other workflow is `.yaml` renames
+# it, and with a single hardcoded name that rename silently disabled this whole check —
+# the only symptom being a version comparison that never ran.
 pinned_drift=""
-if [ -f "$parent/.github/workflows/knowledge.yml" ]; then
-  pinned_drift=$(grep drift "$parent/.github/workflows/knowledge.yml" 2>/dev/null \
+workflow=""
+for candidate in "$parent/.github/workflows/knowledge.yml" "$parent/.github/workflows/knowledge.yaml"; do
+  [ -f "$candidate" ] || continue
+  workflow=$candidate
+  break
+done
+if [ -n "$workflow" ]; then
+  pinned_drift=$(grep drift "$workflow" 2>/dev/null \
     | sed -n 's/.*--version \(v\{0,1\}[0-9][0-9.]*\).*/\1/p' | head -1)
 fi
 
@@ -105,7 +115,7 @@ else
   if [ -n "$pinned_drift" ]; then
     have_drift=$(drift --version 2>/dev/null | awk 'NR==1{print $NF}')
     if [ "${pinned_drift#v}" != "${have_drift#v}" ]; then
-      adoption_error="drift on PATH is '$have_drift' but $parent/.github/workflows/knowledge.yml pins '$pinned_drift' — the local gate and CI are running different detectors; install the pinned version"
+      adoption_error="drift on PATH is '$have_drift' but $workflow pins '$pinned_drift' — the local gate and CI are running different detectors; install the pinned version"
     fi
   fi
   drift_json=$( (cd "$parent" && drift check --format json) )

@@ -1,6 +1,6 @@
 {
   "name": "okf-drift",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Project memory as an OKF v0.2 bundle with content-level drift on top: /okf-setup scaffolds a fixed layout (project/{state,stack,setup,conventions}, architecture/, one concept per decision and per playbook) that validates --strict from the first commit and binds code paths in code_refs into a drift.lock while okf watches every governed path for existence; /okf-migrate converts a mex scaffold into that layout without losing a document or a grounding; /okf-write records into it, re-stamping a reviewed binding only alongside a dated line in log.md; /okf-read recalls through okf-recall.sh, withholding drifted concepts and naming the last commit to touch the file (not necessarily the cause), and giving every surviving hit three independent signals — tracked targets, lifecycle status, review date — none of which reads as verified. The model-invocable okf-runtime skill runs pinned gate/recall without consumer scripts; the four named skills remain manual. Ships the six-step gate — which reports coverage (no drift anchor; nothing checks the concept) separately from discoverability (empty code_refs), makes coverage fatal for an opt-in glob via OKF_REQUIRE_TRACKING, and fails outright when a repository that adopted drift runs without it — and a standalone verified CI bootstrap.",
   "author": {
     "name": "Alessandro Viganò"

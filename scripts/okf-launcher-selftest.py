@@ -308,6 +308,24 @@ class Integration(Fixture):
         self.assertEqual(before, self.snapshot())
         self.assertIn("okf-runtime", (self.repo / "CLAUDE.md").read_text())
 
+    def test_an_existing_knowledge_yaml_is_upgraded_in_place_not_duplicated(self):
+        """A repository whose every workflow is `.yaml` renames the gate. Writing the
+        template's own name regardless would install a SECOND gate workflow beside it,
+        and the two would both run on every PR."""
+        yml = self.repo / ".github/workflows/knowledge.yml"
+        yaml = self.repo / ".github/workflows/knowledge.yaml"
+        yaml.parent.mkdir(parents=True, exist_ok=True)
+        yaml.write_bytes(self.historic("v0.8.2", "skills/okf-setup/templates/knowledge.yml"))
+        yml.unlink(missing_ok=True)
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(yml.exists(), "a second gate workflow was installed")
+        self.assertEqual(yaml.read_bytes(),
+                         (SOURCE / "skills/okf-setup/templates/knowledge.yml").read_bytes())
+        after = self.snapshot()
+        self.assertEqual(self.integrate().returncode, 0)
+        self.assertEqual(after, self.snapshot())
+
     def test_legacy_conversion_preserves_bundle_lock_and_custom_navigation(self):
         self.legacy()
         before = self.snapshot()
