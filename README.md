@@ -183,6 +183,11 @@ writes nothing to the consumer. The apply preflights every candidate before writ
   Historical operational references are reported, not rewritten; the new CLAUDE
   section makes them non-authoritative. No scaffold, population or log update runs.
 
+Integration never touches `knowledge/project/conventions.md`, so a consumer that
+already has a bundle does **not** get the Verify Checklist's first item — the knowledge
+gate, at the baseline and again at the end — from an upgrade. Add it by hand, from
+`skills/okf-setup/templates/knowledge/project/conventions.md`.
+
 The second application makes no changes. Customized integrations need an explicit
 human merge rather than force/overwrite flags. Candidates are rechecked before
 apply to detect edits during downloads; apply uses atomic file replacement, **not a
