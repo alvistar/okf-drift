@@ -83,9 +83,82 @@ class RuntimeTests(unittest.TestCase):
 
     def assert_unusable(self, result: subprocess.CompletedProcess[str]) -> None:
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("1 fresh hit", result.stdout)
+        self.assertNotIn("1 hit(s)", result.stdout)
         self.assertNotIn("okf gate passed", result.stdout)
         self.assertNotIn("no concept", result.stdout)
+
+    def concept(self, rel: str, *, status: str | None = None,
+                stale_after: str | None = None) -> None:
+        """A second fixture concept, written only where a test needs one. It is deliberately
+        NOT in setUp: the gate requires an index row and a drift verdict for every concept,
+        and recall requires neither."""
+        path = self.bundle / f"{rel}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = ["type: Reference", "title: Second", "description: Second fixture.",
+                 "last_updated: 2026-09-16"]
+        if status is not None:
+            lines.append(f"status: {status}")
+        if stale_after is not None:
+            lines.append(f"stale_after: {stale_after}")
+        path.write_text("---\n" + "\n".join(lines) + "\n---\n# Second\n\nBody.\n")
+
+    def two_hits(self, anchors: list[object]) -> None:
+        self.payload("search", [
+            {"concept_id": "project/state", "description": "Fixture state.", "score": 2},
+            {"concept_id": "architecture/core", "description": "Second fixture.", "score": 1},
+        ])
+        self.payload("drift", {"docs": [
+            {"path": "knowledge/project/state.md", "result": "fresh",
+             "anchors": anchors, "links": []},
+            {"path": "knowledge/architecture/core.md", "result": "fresh",
+             "anchors": [], "links": []},
+        ]})
+
+    def anchor(self, symbol: str) -> dict:
+        return {"identity": f"src/lib.rs#{symbol}", "kind": "symbol", "path": "src/lib.rs",
+                "symbol": symbol, "result": "fresh", "reason": None, "blame": None}
+
+    def test_recall_prints_tracking_lifecycle_and_review_per_hit(self) -> None:
+        self.concept("architecture/core", status="deprecated", stale_after="2026-01-01")
+        self.two_hits([self.anchor("a"), self.anchor("b")])
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('2 hit(s) for "fixture" in knowledge', result.stdout)
+        self.assertIn("2 targets unchanged · no status · no review date", result.stdout)
+        self.assertIn("no tracked target · deprecated · review expired 2026-01-01",
+                      result.stdout)
+        self.assertIn('"targets unchanged" means the code under the anchors did not move.',
+                      result.stdout)
+
+    def test_recall_counts_one_anchor_in_the_singular_and_reads_a_future_review(self) -> None:
+        self.concept("architecture/core", status="stable", stale_after="2099-01-01")
+        self.two_hits([self.anchor("a")])
+        result = self.run_script("okf-recall.sh")
+        self.assertIn("1 target unchanged · no status · no review date", result.stdout)
+        self.assertIn("no tracked target · stable · review current", result.stdout)
+
+    def test_recall_withholds_a_deprecated_concept_whose_code_moved(self) -> None:
+        """The refusal wins over the lifecycle signal: a stale concept never reaches the
+        hit list, deprecated or not."""
+        self.concept("architecture/core", status="deprecated")
+        self.payload("search", [
+            {"concept_id": "architecture/core", "description": "Second fixture.", "score": 1},
+        ])
+        self.payload("drift", {"docs": [{
+            "path": "knowledge/architecture/core.md", "result": "stale",
+            "anchors": [{"identity": "src/lib.rs#a", "kind": "symbol", "path": "src/lib.rs",
+                         "symbol": "a", "result": "stale",
+                         "reason": {"code": "changed_after_baseline", "message": "m"},
+                         "blame": {}}],
+            "links": []}]})
+        self.env["DRIFT_EXIT"] = "1"
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("0 hit(s)", result.stdout)
+        self.assertIn("(none — every match is withheld below)", result.stdout)
+        self.assertIn("WITHHELD", result.stdout)
+        self.assertNotIn("· deprecated ·", result.stdout)
+        self.assertNotIn('"targets unchanged" means', result.stdout)
 
     def test_gate_and_recall_accept_fresh_verdict(self) -> None:
         for script in ("okf-check.sh", "okf-recall.sh"):
@@ -149,7 +222,7 @@ class RuntimeTests(unittest.TestCase):
                 result = self.run_script("okf-recall.sh", bundle)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("WITHHELD", result.stdout)
-                self.assertNotIn("1 fresh hit", result.stdout)
+                self.assertNotIn("1 hit(s)", result.stdout)
 
     def stale_symbol(self, blame: object = None) -> None:
         """A doc whose ONLY stale anchor is a symbol binding. `path` and `identity` differ
