@@ -160,6 +160,125 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn("· deprecated ·", result.stdout)
         self.assertNotIn('"targets unchanged" means', result.stdout)
 
+    def gate_bundle(self) -> None:
+        """Four concepts that separate the two diagnostics. Coverage comes from drift's
+        report, discoverability from `code_refs`, and the pairs deliberately disagree:
+        `architecture/core` has neither, `playbooks/thing` has code_refs but no anchor,
+        `playbooks/bound` has both, and `project/state` is exempt from both."""
+        rows = {
+            "architecture/core": ("Core fixture.", []),
+            "playbooks/thing": ("Thing fixture.", ["src/lib.rs"]),
+            "playbooks/bound": ("Bound fixture.", ["src/lib.rs"]),
+        }
+        for rel, (desc, refs) in rows.items():
+            path = self.bundle / f"{rel}.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            code_refs = "code_refs: []\n" if not refs else \
+                "code_refs:\n" + "".join(f"  - {r}\n" for r in refs)
+            path.write_text(
+                f"---\ntype: Reference\ntitle: {rel}\ndescription: {desc}\n"
+                f"last_updated: 2026-09-16\n{code_refs}---\n# {rel}\n\nBody.\n"
+            )
+        for directory in ("architecture", "playbooks"):
+            (self.bundle / directory / "index.md").write_text("".join(
+                f"- [{rel}](/{rel}.md) — {desc}\n"
+                for rel, (desc, _) in rows.items() if rel.startswith(directory + "/")
+            ))
+        anchor = {"identity": "src/lib.rs#a", "kind": "symbol", "path": "src/lib.rs",
+                  "symbol": "a", "result": "fresh", "reason": None, "blame": None}
+        self.payload("drift", {"docs": [
+            {"path": "knowledge/project/state.md", "result": "fresh",
+             "anchors": [anchor], "links": []},
+            {"path": "knowledge/architecture/core.md", "result": "fresh",
+             "anchors": [], "links": []},
+            {"path": "knowledge/playbooks/thing.md", "result": "fresh",
+             "anchors": [], "links": []},
+            {"path": "knowledge/playbooks/bound.md", "result": "fresh",
+             "anchors": [anchor], "links": []},
+        ]})
+
+    def test_gate_groups_coverage_and_discoverability_separately(self) -> None:
+        self.gate_bundle()
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # One line per diagnostic, wrapped at ~100 chars with a continuation indent.
+        self.assertIn(
+            "warn  2 concept(s) with no tracked target (no drift anchor; nothing checks "
+            "them): architecture/core.md,\n        playbooks/thing.md\n",
+            result.stdout,
+        )
+        self.assertIn(
+            "warn  1 concept(s) with empty code_refs (okf search --for-path cannot find "
+            "them): architecture/core.md",
+            result.stdout,
+        )
+        # A concept that has both is in neither list; the exempt snapshot is in neither.
+        self.assertNotIn("playbooks/bound.md", result.stdout)
+        self.assertNotIn("project/state.md", result.stdout)
+        # And the old per-concept line is gone.
+        self.assertNotIn("code_refs is empty", result.stdout)
+
+    def test_require_tracking_is_fatal_only_for_the_matching_glob(self) -> None:
+        self.gate_bundle()
+        self.env["OKF_REQUIRE_TRACKING"] = "architecture/*"
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "FAIL  architecture/core.md: no tracked target, and "
+            "OKF_REQUIRE_TRACKING='architecture/*' makes that fatal for this path",
+            result.stdout,
+        )
+        self.assertNotIn("FAIL  playbooks/thing.md", result.stdout)
+        self.assertIn("2 concept(s) with no tracked target", result.stdout)
+        # `*` stops at a `/`, as it does in the shell: a bare `*` matches no concept in a
+        # bundle whose concepts all live in a category directory.
+        self.env["OKF_REQUIRE_TRACKING"] = "*"
+        bare = self.run_script("okf-check.sh")
+        self.assertEqual(bare.returncode, 0, bare.stdout + bare.stderr)
+        # `**` does cross one.
+        self.env["OKF_REQUIRE_TRACKING"] = "**"
+        deep = self.run_script("okf-check.sh")
+        self.assertEqual(deep.returncode, 1, deep.stdout + deep.stderr)
+
+    def test_require_tracking_unset_leaves_coverage_a_warning(self) -> None:
+        self.gate_bundle()
+        self.env.pop("OKF_REQUIRE_TRACKING", None)
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("no tracked target, and OKF_REQUIRE_TRACKING", result.stdout)
+
+    @unittest.skipIf(os.environ.get("OKF_SELFTEST_PINNED") == "1",
+                     ".okf-drift-version is the launcher's own input in pinned mode")
+    def test_a_repo_that_adopted_drift_fails_when_drift_is_absent(self) -> None:
+        """A green gate must mean the detector ran. Without this the worker who has no
+        drift gets two green local runs and a red CI."""
+        pin = self.root / ".okf-drift-version"
+        if not pin.exists():
+            pin.write_text("v0.9.0\n")
+        (self.stub / "drift").unlink()
+        # Keep the system tools the scripts need; drop every directory that could hold a
+        # real drift (~/.local/bin, GOPATH/bin).
+        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
+                                            "/usr/sbin", "/sbin"])
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL  this repository adopted drift", result.stdout)
+        self.assertNotIn("okf gate passed", result.stdout)
+
+    @unittest.skipIf(os.environ.get("OKF_SELFTEST_PINNED") == "1",
+                     ".okf-drift-version is the launcher's own input in pinned mode")
+    def test_a_repo_that_never_adopted_drift_still_only_warns(self) -> None:
+        (self.root / ".okf-drift-version").unlink(missing_ok=True)
+        (self.stub / "drift").unlink()
+        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
+                                            "/usr/sbin", "/sbin"])
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("warn  drift not on PATH", result.stdout)
+        self.assertNotIn("FAIL", result.stdout)
+        # Coverage is unknowable without the report, so it is not guessed at.
+        self.assertNotIn("no tracked target", result.stdout)
+
     def test_gate_and_recall_accept_fresh_verdict(self) -> None:
         for script in ("okf-check.sh", "okf-recall.sh"):
             with self.subTest(script=script):
