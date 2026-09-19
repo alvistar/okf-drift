@@ -17,6 +17,14 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
   template change below would refuse every official 0.8.2 consumer as "customized; merge
   explicitly". The `SECTIONS` comments now name the release range each digest covers, and
   a launcher case upgrades an official v0.8.2 `CLAUDE.md` with the current template.
+- The integration helper no longer parses concept frontmatter with a strict YAML parser.
+  okf accepts a `description:` whose value starts with an unquoted backtick — 12 concepts
+  on the reference consumer carry one — and PyYAML raises `while scanning for the next
+  token` on it, so `check_bindings` aborted with exit 2 before any CLAUDE.md logic and a
+  bundle that passes the gate could not be integrated at all. The helper needs only
+  `code_refs`, and now reads it with the same line rule the bootstrap and the gate use.
+  Pre-existing since 0.7.0. The script no longer imports PyYAML, so the `uvx --with
+  pyyaml` prefix is gone from every invocation in the README and `/okf-setup`.
 - The gate's and recall's re-stamp target is the anchor's `identity`, not its `path`.
   drift's JSON carries the two separately and `drift link` takes the identity, so for a
   stale **symbol** anchor the printed repair used to create a second, whole-file binding
@@ -120,12 +128,16 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
   last commit to touch the file rather than the commit that moved the anchored
   declaration; an unrelated later commit to the same file displaces the real cause
   entirely. Finding the causing commit is drift's to fix, and is filed there.
-- **Removing a binding from `drift.lock` is invisible.** Nothing compares the lock against
-  what a concept claims to be watching, so deleting a `[[bindings]]` entry by hand silently
-  reduces coverage to zero for that pair and every check stays green. The gate notices only
-  the opposite direction — a binding whose DOC no longer exists. The new coverage warning
-  catches the case where the doc is left with no anchor at all, and nothing catches a
-  concept dropping from three anchors to one.
+- **Removing a binding from `drift.lock` is only sometimes visible.** Nothing compares the
+  lock against what a concept claims to be watching, so deleting a `[[bindings]]` entry by
+  hand is not reported as a removal. The acceptance comparison on 2026-09-19 measured what
+  this release does catch: when the deleted entry was the concept's LAST binding, the
+  coverage warning names it (29 → 30 untracked concepts on the reference consumer), and
+  `OKF_REQUIRE_TRACKING` makes that fatal. What stays silent is a concept that keeps at
+  least one other binding — three anchors down to one loses coverage with every check
+  green — and any repository where drift did not run, since coverage is computed from the
+  drift report. The gate still notices only the opposite direction on its own: a binding
+  whose DOC no longer exists.
 
 ## [0.8.2] - 2026-09-17
 

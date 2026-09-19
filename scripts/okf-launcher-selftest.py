@@ -344,6 +344,26 @@ class Integration(Fixture):
         self.assertEqual(self.integrate().returncode, 0)
         self.assertEqual(after, self.snapshot())
 
+    def test_frontmatter_okf_accepts_is_not_parsed_as_strict_yaml(self):
+        # okf accepts a description whose value starts with an unquoted backtick; a strict
+        # YAML parser raises on it, and 12 concepts on the reference consumer carry one.
+        # Only code_refs is needed here, so it is read with the bootstrap's line rule.
+        self.legacy()
+        concept = self.repo / "knowledge/concept.md"
+        head = '---\ntype: Reference\ndescription: `a/b.sh` runs on every push\n'
+        concept.write_text(head + "code_refs:\n  - src/app.py\n  - 'docs/notes.md'\n---\nBody.\n")
+        before = self.snapshot()
+        result = self.integrate("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(before, self.snapshot())
+        # The same description, with a binding to a deletion candidate: the list is still read.
+        concept.write_text(head + "code_refs:\n  - scripts/okf-check.sh\n---\nBody.\n")
+        before = self.snapshot()
+        result = self.integrate("--dry-run")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("code_refs binds a deletion candidate", result.stderr)
+        self.assertEqual(before, self.snapshot())
+
     def test_modified_wrapper_preflight_changes_nothing_even_with_upgrade(self):
         self.legacy()
         with (self.repo / "scripts/okf-check.sh").open("a") as f:

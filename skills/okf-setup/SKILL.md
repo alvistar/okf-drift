@@ -132,10 +132,10 @@ sections and workflow, and removes recognized generated legacy files. It never
 scaffolds, edits `knowledge/`, writes `drift.lock`, or changes project navigation.
 
 ```bash
-uvx --with pyyaml python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
+python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
   --repo-root "$REPO_ROOT" --tag v0.7.0 --dry-run
 # Review the proposed paths, then repeat without --dry-run.
-uvx --with pyyaml python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
+python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
   --repo-root "$REPO_ROOT" --tag v0.7.0
 ```
 

@@ -170,10 +170,10 @@ scripts, not the separately downloaded drift installer.
 ### Integration conversion
 
 The plugin-only `scripts/okf-integrate.py` is shared by setup and migration. It needs
-Python 3.11+ and PyYAML. For a fresh integration or conversion of existing wrappers:
+Python 3.11+ and no third-party packages. For a fresh integration or conversion of existing wrappers:
 
 ```sh
-uvx --with pyyaml python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
+python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
   --repo-root "$REPO_ROOT" --tag v0.7.0 --dry-run
 # Review, then repeat without --dry-run. Omit --tag to preserve a compatible pin.
 ```

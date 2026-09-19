@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install/convert only OKF integration. Python 3.11+ and PyYAML; plugin-local, never copied.
+"""Install/convert only OKF integration. Python 3.11+, no third-party imports; plugin-local, never copied.
 
 No scaffold, binding or bundle writes. Preflight all candidates before staging a pin or
 changing anything. Unknown integrations require a human merge, not a guessed migration.
@@ -14,8 +14,6 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-
-import yaml
 
 PLUGIN = Path(__file__).resolve().parent.parent
 TEMPLATES = PLUGIN / "skills/okf-setup/templates"
@@ -127,6 +125,36 @@ def protects(target, removed, root):
                or fnmatch.fnmatchcase(name, normalized) for name in removed)
 
 
+def code_refs(front):
+    """Read code_refs from frontmatter text with the bundle's own line rule.
+
+    The bootstrap and the gate parse frontmatter line by line, and okf accepts values a
+    strict YAML parser rejects -- a description whose value starts with an unquoted
+    backtick, for one, which 12 concepts on the reference consumer carry. Only code_refs
+    is needed here, so read it the same way rather than parsing the whole mapping.
+    """
+    def unquote(value):
+        return re.sub(r"""^(["'])(.*)\1$""", r"\2", value)
+
+    refs, inside = [], False
+    for line in front.split("\n"):
+        opener = re.fullmatch(r"code_refs:\s*(.*?)\s*", line)
+        if opener:
+            # An inline sequence closes the block immediately; "code_refs: []" is empty.
+            inside = not opener[1]
+            if opener[1].startswith("[") and opener[1].endswith("]"):
+                refs.extend(item for item in
+                            (unquote(x.strip()) for x in opener[1][1:-1].split(",")) if item)
+            continue
+        if re.match(r"[A-Za-z_]+:", line):
+            inside = False
+            continue
+        item = re.fullmatch(r"\s*-\s+(.+?)\s*", line) if inside else None
+        if item:
+            refs.append(unquote(item[1]))
+    return refs
+
+
 def check_bindings(root, removed):
     bundle = root / "knowledge"
     if bundle.is_symlink():
@@ -141,13 +169,7 @@ def check_bindings(root, removed):
             parts = text.split("\n---", 2)
             if len(parts) < 2:
                 raise ValueError(f"{file}: malformed frontmatter")
-            front = yaml.safe_load(parts[0][4:])
-            if not isinstance(front, dict):
-                raise ValueError(f"{file}: frontmatter must be a mapping")
-            refs = front.get("code_refs", [])
-            if not isinstance(refs, list):
-                raise ValueError(f"{file}: code_refs must be a list")
-            if any(protects(ref, removed, root) for ref in refs):
+            if any(protects(ref, removed, root) for ref in code_refs(parts[0][4:])):
                 raise ValueError(f"{file}: code_refs binds a deletion candidate; migration refused")
         if any(name in text for name in LEGACY):
             print(f"okf-integrate: historical operational reference in {file}; left untouched, CLAUDE.md is authoritative", file=sys.stderr)
@@ -236,7 +258,7 @@ def main():
         if not root.is_dir():
             raise ValueError(f"{root}: not a directory")
         integrate(root, args.tag, args.dry_run)
-    except (ValueError, OSError, UnicodeError, yaml.YAMLError, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, UnicodeError, subprocess.CalledProcessError) as error:
         print(f"okf-integrate: {error}", file=sys.stderr)
         return 2
     return 0
