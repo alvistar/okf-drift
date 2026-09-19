@@ -198,7 +198,9 @@ is a narrower `code_ref`.
 
 Run it **after** Step 4 on a repo being populated — there is nothing to bind before the
 concepts have `code_refs`. On a bundle that is already populated, run it now to bind its
-code paths; non-code paths remain existence-only under `okf`. Either way the last line
+code paths; non-code paths take no *automatic* binding; when a claim's truth lives in one
+— a workflow trigger, a Kconfig value, a fixture's shape — hand-link it and accept that a
+reformat will alarm, or restate the claim as a dated observation. Either way the last line
 must be `drift check: pass`: a signature is taken from current content, so
 a binding written a second ago cannot be stale. If one is, the lock was not written by
 that run.

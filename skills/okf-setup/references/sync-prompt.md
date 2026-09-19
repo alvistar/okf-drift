@@ -56,6 +56,11 @@ last_updated, or that I name below:
 6. Refresh project/state.md if what is working / not built / broken has moved.
    Keep it a snapshot; put the story in log.md.
 
+Every concept the gate reports with no tracked target is re-read against the
+repository by hand during this resync: nothing checked it, and `git log -- <its
+code_refs>` is vacuous on empty code_refs, so it is never flagged by either check
+above.
+
 Playbooks: run the Steps of each flagged playbook mentally against the current
 code. A command that no longer exists, a path that moved, a gotcha that was
 fixed — update or delete. A playbook nobody could follow is worse than none.

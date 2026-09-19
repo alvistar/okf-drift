@@ -4,7 +4,8 @@ disable-model-invocation: true
 description: |
   Record into an OKF knowledge bundle — the Grow step: write the decision, the playbook
   or the surgical concept edit, refresh project/state.md, bind every new **code** `code_refs`
-  path with `drift link`; non-code paths are watched for existence by `okf` alone; re-stamp
+  path with `drift link`; non-code paths take no *automatic* binding, and a claim whose
+  truth lives in one is hand-linked or restated as a dated observation; re-stamp
   a concept you reviewed against a code change (never silently — a dated line in log.md
   goes with it), bump the dates, pass the gate.
 
@@ -100,15 +101,49 @@ it got here goes in `knowledge/log.md`.
 
 ## Step 2 — Bind the new ground
 
-Every **code** `code_refs` entry you added needs a drift binding; non-code paths are watched
-for existence by `okf` alone. Keep `code_refs` entries as file paths — never put `#Symbol`
+Every **code** `code_refs` entry you added needs a drift binding; non-code paths take no
+*automatic* binding; when a claim's truth lives in one — a workflow trigger, a Kconfig
+value, a fixture's shape — hand-link it and accept that a reformat will alarm, or restate
+the claim as a dated observation. Keep `code_refs` entries as file paths — never put `#Symbol`
 there. A symbol anchor belongs in `drift.lock`, added with `drift link <doc> <path#Symbol>`:
 
 ```sh
 drift link knowledge/<category>/<slug>.md <repo-relative-path>
 ```
 
-or, for a whole bundle at once (idempotent — it skips what the lock already holds):
+### Where the anchor goes
+
+The bootstrap binds whole files; narrowing is a hand `drift link` per symbol, and this is
+the rule for choosing what to link.
+
+**List what this claim depends on, then anchor all of it.** For each sentence the concept
+makes about code, name the declarations, the dispatch, the defaults and the data the
+sentence would be false without. Anchor every one of them. Stop following calls only at a
+boundary you state in the log line.
+
+1. **The entry point stays anchored when routing or defaults live there.** OPA's
+   `admit_reusable` is a six-line wrapper, but it chooses `DecodeBounds::DEFAULT`; its
+   sibling chooses `UNLIMITED`; the checks the prose describes are in
+   `admit_reusable_with_limits`. The claim depends on all three. Anchoring only the body
+   misses a change to the defaults; anchoring only the wrapper misses a change to the
+   checks.
+2. **Every implementation the prose cites, in every language.** "Rust checks the ceiling
+   and Python re-derives the total" with one Rust anchor is half-watched.
+3. **A claim of absence, exclusivity or count is not watched by any anchor**, symbol or
+   file: adding a member changes no watched declaration, and anchoring the test that
+   counts members does not run it. Either the claim is removed (OPA removed the glossary
+   term count on 2026-09-18, and `CLAUDE.md` says why), or it is written as a dated
+   measurement, or the check that proves it runs in a lane the concept names.
+4. **An unsupported language is a whole file.** C, Swift, shell, `.mjs`/`.cjs`: bind the
+   narrowest file, and a formatter alarm is still reviewed against the diff, never
+   acknowledged on sight.
+
+A bare `#name` binds the **first** declaration of that name in the file, silently. Before
+binding a common name (`vend`, `new`, `check`), confirm it is unique in the file; if it is
+not and the intended one is not the first, keep the whole file. The log line names the
+declaration chosen and the boundary where you stopped following the claim.
+
+For a whole bundle at once (idempotent — it skips what the lock already holds):
 
 ```sh
 sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstrap.sh knowledge

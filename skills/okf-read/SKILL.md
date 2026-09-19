@@ -35,6 +35,13 @@ Use it **instead of** `okf search`, for the same queries you would have typed. I
 `okf search --json`, runs `drift check --format json`, joins them on
 `<bundle>/<concept_id>.md`, and prints two blocks.
 
+Recall answers one question: *what is WRITTEN about this area, and what was observed about
+it?* Use it before asserting anything about the architecture or a decision in a plan, a PR
+body or a review, and before editing a file a concept governs (`okf search --for-path
+<file>`, then `git status` and `git log` on that file — the hit's `last_updated` cannot see
+an uncommitted edit). To find code — a symbol, a caller, a string — use Grep and LSP;
+recall does not index code.
+
 When you know the file rather than the topic, `okf search --for-path <file>` still
 answers — but it has no drift join, so check the result's `last_updated` against
 `git log` on that file before quoting it, or re-run the topic through `okf-recall.sh`.

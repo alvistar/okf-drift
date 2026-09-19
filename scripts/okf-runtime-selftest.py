@@ -363,8 +363,11 @@ class BootstrapTests(unittest.TestCase):
         )
         held = self.run_script("okf-drift-bootstrap.sh", "knowledge")
         self.assertEqual(held.returncode, 0, held.stdout + held.stderr)
-        self.assertIn("held-non-code knowledge/concept.md -> VERSION", held.stdout)
-        self.assertIn("drift unlink knowledge/concept.md VERSION", held.stdout)
+        # A hand binding on a non-code path is a deliberate content anchor: the bootstrap
+        # reports it and keeps it, and no longer prints an unlink command beside it.
+        self.assertIn("held-non-code knowledge/concept.md -> VERSION (deliberate content anchor — kept)",
+                      held.stdout)
+        self.assertNotIn("drift unlink", held.stdout)
 
     def test_bootstrap_treats_symbol_binding_as_covering_file(self) -> None:
         (self.root / "drift.lock").write_text(
