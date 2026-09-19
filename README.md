@@ -101,8 +101,9 @@ stopping at a `/` and `**` crossing one). Unset — the default — leaves it a 
 because making it fatal everywhere would fail every bundle that has not finished
 binding. On a repository that has adopted drift (`.okf-drift-version` and
 `drift.lock` both present) a missing `drift`, or one whose version disagrees with the
-pin in `.github/workflows/knowledge.yml`, fails the gate: a green gate must mean the
-detector ran.
+pin in `.github/workflows/knowledge.yml` — or in that same file renamed `.yaml`,
+as a repository whose other workflows carry that extension does — fails the gate:
+a green gate must mean the detector ran.
 
 ### Compatibility and the lockfile
 

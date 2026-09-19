@@ -7,6 +7,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [0.9.1] - 2026-09-19
+
+### Fixed
+
+- The drift version check reads the pin from `.github/workflows/knowledge.yml` **or** from
+  that same file renamed `.yaml`. 0.9.0 made a `drift --version` disagreeing with the
+  workflow's pin fatal on an adopted repository, but read it from one hardcoded name, so a
+  consumer whose every other workflow carries `.yaml` — and which therefore renamed this
+  one — had the whole comparison skipped in silence: the gate stayed green with the local
+  and CI detectors disagreeing, which is the exact failure the check was added to catch.
+  Measured on the reference consumer, whose 17 workflows are all `.yaml`. The FAIL message
+  now names the file that was actually read. Sabotage-verified: against 0.9.0's script the
+  `.yaml` case passes the gate.
+- Integration writes the gate workflow to the name the consumer already uses. With the
+  template's `.yml` hardcoded as the write target, a repository carrying `knowledge.yaml`
+  got a SECOND gate workflow installed beside the first, both running on every PR.
+  `knowledge.yaml` is now upgraded in place when no `knowledge.yml` is present; a
+  customized one is refused for an explicit merge exactly as before.
+
 ## [0.9.0] - 2026-09-19
 
 ### Fixed

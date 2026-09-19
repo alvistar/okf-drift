@@ -42,7 +42,7 @@ class RuntimeTests(unittest.TestCase):
         self.stub.mkdir()
         for name, text in {
             "okf": '#!/bin/sh\ncase "$1" in\nversion) echo "okf v0.3.0";;\nvalidate) cat "$FIXTURE/validate.json"; exit "${VALIDATE_EXIT:-0}";;\nsearch) cat "$FIXTURE/search.json"; exit "${SEARCH_EXIT:-0}";;\nesac\n',
-            "drift": '#!/bin/sh\ncat "$FIXTURE/drift.json"\nexit "${DRIFT_EXIT:-0}"\n',
+            "drift": '#!/bin/sh\ncase "$1" in\n--version) echo "drift ${DRIFT_VERSION:-v0.10.1}"; exit 0;;\nesac\ncat "$FIXTURE/drift.json"\nexit "${DRIFT_EXIT:-0}"\n',
         }.items():
             path = self.stub / name
             path.write_text(text)
@@ -278,6 +278,44 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn("FAIL", result.stdout)
         # Coverage is unknowable without the report, so it is not guessed at.
         self.assertNotIn("no tracked target", result.stdout)
+
+    def workflow(self, name: str, drift_version: str) -> None:
+        """The consumer's own gate workflow, as /okf-setup installs it (`.yml`) or as a
+        repository whose every other workflow is `.yaml` renames it."""
+        path = self.root / ".github/workflows" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "      - name: okf v0.3.0 and drift, pinned\n"
+            "        run: |\n"
+            "          go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.3.0\n"
+            f"          curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version {drift_version}\n"
+        )
+
+    def test_drift_version_mismatch_is_fatal_under_either_workflow_extension(self) -> None:
+        """The pin is read from `knowledge.yml` OR `knowledge.yaml`. With a single
+        hardcoded name, renaming the workflow to the repository's own convention disabled
+        this check in silence — the gate stayed green with the two detectors disagreeing."""
+        for name in ("knowledge.yml", "knowledge.yaml"):
+            with self.subTest(workflow=name):
+                self.setUp()
+                self.workflow(name, "v0.10.1")
+                self.env["DRIFT_VERSION"] = "v0.9.9"
+                result = self.run_script("okf-check.sh")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("FAIL  drift on PATH is 'v0.9.9'", result.stdout)
+                # The message names the file that was actually read, not a guess.
+                self.assertIn(f".github/workflows/{name} pins 'v0.10.1'", result.stdout)
+                self.assertNotIn("okf gate passed", result.stdout)
+
+    def test_drift_version_agreement_leaves_the_gate_green(self) -> None:
+        for name in ("knowledge.yml", "knowledge.yaml"):
+            with self.subTest(workflow=name):
+                self.setUp()
+                self.workflow(name, "v0.10.1")
+                self.env["DRIFT_VERSION"] = "v0.10.1"
+                result = self.run_script("okf-check.sh")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("different detectors", result.stdout)
 
     def test_gate_and_recall_accept_fresh_verdict(self) -> None:
         for script in ("okf-check.sh", "okf-recall.sh"):
