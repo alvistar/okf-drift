@@ -143,8 +143,14 @@ for my $e (@held) {
     my $b = $a->{blame} || {};
     my $c = substr($b->{commit} // '', 0, 8);
     my $date = ($b->{date} // ''); $date =~ s/T.*//;
-    printf "      %s  [%s]\n", $a->{path} // $a->{identity} // '?', $a->{reason}{code} // ($a->{result} // '?');
-    printf "          %-9s %-11s %s (%s)\n", $c || '-', $date || '-', $b->{subject} // '(uncommitted change — no commit to blame yet)', $b->{author} // '-';
+    # `identity` is the canonical handle `drift link` takes (`path#symbol` for a symbol
+    # anchor); `path` alone would name a DIFFERENT, whole-file binding.
+    my $target = $a->{identity} // $a->{path} // '?';
+    printf "      %s  [%s]\n", $target, $a->{reason}{code} // ($a->{result} // '?');
+    # drift blames with `git log -1 -- <file>`: the last commit to TOUCH the file, which
+    # is not necessarily the one that moved the ground. Label it as what it is.
+    printf "          last commit touching this file (not necessarily the cause): %s %s %s (%s)\n",
+      $c || '-', $date || '-', $b->{subject} // '(uncommitted change — nothing to blame yet)', $b->{author} // '-';
   }
   for my $l (@{ $d->{links} || [] }) {
     next if ($l->{result} // '') ne 'broken';

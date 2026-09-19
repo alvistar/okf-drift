@@ -90,6 +90,9 @@ my $drift_json = slurp_raw($drift_file);
 my $fail = 0;
 sub bad  { $fail = 1; print "FAIL  @_\n" }
 sub warnl{ print "warn  @_\n" }
+# A doc path may hold spaces; an anchor identity always holds a `#`. Single quotes make
+# the printed command copy-pasteable in either case.
+sub shq  { my $s = shift; $s =~ s/'/'\\''/g; "'$s'" }
 sub slurp{ my $f=shift; open my $h,'<:utf8',$f or die "$f: $!"; local $/; <$h> }
 my $ISO = qr/^\d{4}-\d{2}-\d{2}$/;
 
@@ -246,9 +249,15 @@ if (length $drift_json) {
         my $b = $a->{blame} || {};
         my $c = substr($b->{commit} // '', 0, 8) || '-';
         my $date = $b->{date} // ''; $date =~ s/T.*//;
-        bad("$p: drifted from ".($a->{path} // $a->{identity} // '?')." (".($a->{reason}{code} // $a->{result} // '?').")\n"
-           ."        blame: $c ".($date || '-')." ".($b->{subject} // '(uncommitted change — nothing to blame yet)')." (".($b->{author} // '-').")\n"
-           ."        review the concept against the code, then: drift link $p ".($a->{path} // '<path>')." --doc-is-still-accurate  + a dated line in $bundle/log.md");
+        # `identity` is the canonical anchor handle `drift link` takes — `path#symbol` for
+        # a symbol anchor. Printing `path` alone repaired a DIFFERENT, whole-file binding
+        # and left the stale symbol one exactly as it was.
+        my $target = $a->{identity} // $a->{path} // '<target>';
+        bad("$p: drifted from $target (".($a->{reason}{code} // $a->{result} // '?').")\n"
+           # drift blames with `git log -1 -- <file>`: the last commit to TOUCH the file,
+           # not necessarily the one that moved the ground under the concept.
+           ."        last commit touching this file (not necessarily the cause): $c ".($date || '-')." ".($b->{subject} // '(uncommitted change — nothing to blame yet)')." (".($b->{author} // '-').")\n"
+           ."        review the concept against the code, then: drift link ".shq($p)." ".shq($target)." --doc-is-still-accurate  + a dated line in $bundle/log.md");
       }
       for my $l (@{ $d->{links} || [] }) {
         next unless ($l->{result} // '') eq 'broken';

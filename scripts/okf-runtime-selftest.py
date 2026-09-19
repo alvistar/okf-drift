@@ -151,6 +151,73 @@ class RuntimeTests(unittest.TestCase):
                 self.assertIn("WITHHELD", result.stdout)
                 self.assertNotIn("1 fresh hit", result.stdout)
 
+    def stale_symbol(self, blame: object = None) -> None:
+        """A doc whose ONLY stale anchor is a symbol binding. `path` and `identity` differ
+        here on purpose: a repair printed from `path` binds the whole file and leaves the
+        symbol anchor exactly as stale as it was."""
+        self.payload("drift", {"docs": [{
+            "path": "knowledge/project/state.md",
+            "result": "stale",
+            "anchors": [{
+                "identity": "src/lib.rs#admit_reusable",
+                "raw": "src/lib.rs#admit_reusable@sig:1d22599b721b091a",
+                "kind": "symbol",
+                "path": "src/lib.rs",
+                "symbol": "admit_reusable",
+                "provenance": {"kind": "sig", "value": "1d22599b721b091a"},
+                "result": "stale",
+                "reason": {"code": "changed_after_baseline", "message": "content changed"},
+                "blame": blame if blame is not None else {
+                    "author": "Alessandro Viganò",
+                    "commit": "0123456789abcdef0123456789abcdef01234567",
+                    "date": "2026-09-16T20:18:31+02:00",
+                    "subject": "chore: reformat, unrelated",
+                },
+            }],
+            "links": [],
+        }]})
+        self.env["DRIFT_EXIT"] = "1"
+
+    def test_gate_restamp_command_names_the_symbol_binding_not_the_file(self) -> None:
+        self.stale_symbol()
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "drift link 'knowledge/project/state.md' 'src/lib.rs#admit_reusable' "
+            "--doc-is-still-accurate",
+            result.stdout,
+        )
+        self.assertNotIn("drift link 'knowledge/project/state.md' 'src/lib.rs' ", result.stdout)
+        self.assertIn("drifted from src/lib.rs#admit_reusable", result.stdout)
+
+    def test_gate_labels_blame_as_the_last_commit_touching_the_file(self) -> None:
+        self.stale_symbol()
+        result = self.run_script("okf-check.sh")
+        self.assertIn(
+            "last commit touching this file (not necessarily the cause): 01234567 "
+            "2026-09-16 chore: reformat, unrelated (Alessandro Viganò)",
+            result.stdout,
+        )
+        self.assertNotIn("blame: 01234567", result.stdout)
+
+    def test_recall_withheld_names_the_identity_and_labels_blame(self) -> None:
+        self.stale_symbol()
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("src/lib.rs#admit_reusable  [changed_after_baseline]", result.stdout)
+        self.assertIn(
+            "last commit touching this file (not necessarily the cause): 01234567 "
+            "2026-09-16 chore: reformat, unrelated (Alessandro Viganò)",
+            result.stdout,
+        )
+
+    def test_uncommitted_change_keeps_its_own_wording_in_both_scripts(self) -> None:
+        self.stale_symbol(blame={})
+        for script in ("okf-check.sh", "okf-recall.sh"):
+            with self.subTest(script=script):
+                result = self.run_script(script)
+                self.assertIn("(uncommitted change — nothing to blame yet)", result.stdout)
+
     def test_gate_rejects_partial_report_even_when_an_index_matched(self) -> None:
         self.payload("drift", {"docs": [{"path": "knowledge/index.md", "result": "fresh"}]})
         result = self.run_script("okf-check.sh")
