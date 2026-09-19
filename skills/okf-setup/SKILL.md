@@ -188,7 +188,8 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstr
 ```
 
 It reads every `code_refs:` entry in the bundle and runs one `drift link` for each **code**
-path. Non-code paths remain under `okf`'s existence check alone. It is idempotent by
+path. Non-code paths take no *automatic* binding; a hand `drift link` on one is a
+deliberate content anchor and stays valid. It is idempotent by
 skipping what `drift.lock` already holds — it has to be, because
 `drift link` **refuses** a binding the lock already carries (exit 1, "refused: target
 changed since last link") whether or not anything changed. A directory `code_ref` is

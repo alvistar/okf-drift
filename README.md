@@ -92,6 +92,18 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-recall.sh "<t
 assumed environment variables. No versioned cache path is saved in project files.
 Updating the installed plugin does **not** update the project's pinned runtime.
 
+The gate reports a concept with **no tracked target** — no drift anchor at all, so
+nothing checks it — as a warning, separately from a concept with empty `code_refs`,
+which is the different complaint that `okf search --for-path` can never return it.
+Set `OKF_REQUIRE_TRACKING=<glob>[,<glob>...]` to make coverage FATAL for a subset:
+shell globs over the concept path relative to the bundle (`architecture/*`, with `*`
+stopping at a `/` and `**` crossing one). Unset — the default — leaves it a warning,
+because making it fatal everywhere would fail every bundle that has not finished
+binding. On a repository that has adopted drift (`.okf-drift-version` and
+`drift.lock` both present) a missing `drift`, or one whose version disagrees with the
+pin in `.github/workflows/knowledge.yml`, fails the gate: a green gate must mean the
+detector ran.
+
 ### Compatibility and the lockfile
 
 **First compatible release: v0.7.0.**

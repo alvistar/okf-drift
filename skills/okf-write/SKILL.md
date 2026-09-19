@@ -47,6 +47,7 @@ Answer before writing anything. One of four shapes:
 | A choice was made that closes off alternatives | `decisions/<slug>.md` |
 | A task was done that will recur, and a wrong turn was available | `playbooks/<slug>.md` |
 | A concept says something that is no longer true | a surgical edit to that concept |
+| A decision has been superseded | `status: deprecated` on it, a `Superseded by` link to its successor, and the successor written |
 | What works / is missing / is broken moved | `project/state.md` |
 
 More than one can be true. None being true is a legitimate answer — say so and stop. A

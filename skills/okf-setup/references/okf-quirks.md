@@ -278,9 +278,17 @@ the cap.
   "every doc `fresh`" is a stronger statement than `docs_stale == 0`, and is the condition
   the gate uses.
 - A stale anchor carries `reason: {code: "changed_after_baseline", message}` and
-  `blame: {author, commit, date, subject}`. An **uncommitted** change to a bound file is
-  stale too, with blame falling back to the last commit that touched the file — which
-  reads as a wrong accusation unless you know that.
+  `blame: {author, commit, date, subject}`. **Blame is `git log -1 -- <file>`**
+  (`vcs.zig:248`): the last commit to TOUCH the file, never an analysis of which commit
+  moved the anchored declaration. Two consequences, and both read as a wrong accusation
+  unless you know them. (a) An **uncommitted** change to a bound file is stale too, and
+  blame falls back to the last commit that touched it — someone else's. (b) Once a file
+  has drifted, any LATER unrelated commit to the same file — a reformat, a comment, a
+  neighbouring function — becomes the named commit, and the change that actually caused
+  the staleness is no longer mentioned anywhere. So read the working tree and the staged
+  changes first, then the history; the named commit is a lead, not a verdict. The gate
+  and recall both print it labelled that way: `last commit touching this file (not
+  necessarily the cause): …`.
 - `--changed <path>` narrows `docs[]` to the docs anchored to that path. The summary's
   `anchors_total` still counts every anchor on those docs, not just the matching one.
 
