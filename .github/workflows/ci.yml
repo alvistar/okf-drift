@@ -85,6 +85,203 @@ jobs:
 
       - run: okf version && drift --version
 
+      # The stubbed selftests prove the scripts' own logic; they cannot prove that the
+      # REAL parsers still emit what those stubs pretend. This drives one scratch repo
+      # through the whole loop with the pinned okf and the pinned drift: the three recall
+      # signals, a deprecated concept with an expired review date, a moved SYMBOL anchor
+      # withheld, the gate's printed re-stamp command EXECUTED, and the lock holding one
+      # binding afterwards — the binding it already had, not a second whole-file one.
+      - name: recall's three signals and the gate's repair, through the real tools
+        run: |
+          set -eu
+          W="${GITHUB_WORKSPACE:-$PWD}"
+          repo=$(mktemp -d)
+          cd "$repo"
+          git init -q . && git config user.email t@example.com && git config user.name Test
+
+          mkdir -p src knowledge/architecture knowledge/playbooks knowledge/project
+          cat > src/lib.rs <<'RS'
+          pub fn admit_reusable(x: u32) -> u32 {
+              // the check the concept describes
+              x + 1
+          }
+
+          pub fn unrelated(y: u32) -> u32 {
+              y
+          }
+          RS
+
+          cat > knowledge/index.md <<'MD'
+          ---
+          okf_version: "0.2"
+          ---
+          # Index
+
+          - [Architecture](/architecture/index.md) — Architecture concepts.
+          - [Playbooks](/playbooks/index.md) — Playbook concepts.
+          - [Project](/project/index.md) — Project concepts.
+          MD
+          printf '# Log\n\n- 2026-09-19 — scratch bundle, written by this CI step.\n' > knowledge/log.md
+
+          cat > knowledge/architecture/index.md <<'MD'
+          # Architecture
+
+          - [Core](/architecture/core.md) — The admission path and the ceiling it enforces.
+          MD
+          cat > knowledge/architecture/core.md <<'MD'
+          ---
+          type: Reference
+          title: Core
+          description: The admission path and the ceiling it enforces.
+          last_updated: 2026-09-19
+          stale_after: 2099-01-01
+          code_refs:
+            - src/lib.rs
+          ---
+          # Core
+
+          `admit_reusable` enforces the ceiling.
+
+          ## Related
+
+          - [Superseded way](/playbooks/superseded-way.md)
+          MD
+
+          cat > knowledge/playbooks/index.md <<'MD'
+          # Playbooks
+
+          - [Superseded way](/playbooks/superseded-way.md) — How admission used to be checked, kept for history.
+          MD
+          cat > knowledge/playbooks/superseded-way.md <<'MD'
+          ---
+          type: Playbook
+          title: Superseded way
+          description: How admission used to be checked, kept for history.
+          status: deprecated
+          last_updated: 2026-01-01
+          stale_after: 2026-02-01
+          code_refs: []
+          ---
+          # Superseded way
+
+          Superseded by [Core](/architecture/core.md).
+
+          ## Related
+
+          - [Core](/architecture/core.md)
+          MD
+
+          cat > knowledge/project/index.md <<'MD'
+          # Project
+
+          - [State](/project/state.md) — What is working, what is not yet built, what is broken.
+          MD
+          cat > knowledge/project/state.md <<'MD'
+          ---
+          type: Reference
+          title: State
+          description: What is working, what is not yet built, what is broken.
+          last_updated: 2026-09-19
+          code_refs: []
+          ---
+          # State
+
+          **Working:**
+          - The scratch bundle.
+
+          **Not yet built:**
+          - Nothing.
+
+          **Known issues:**
+          - None.
+
+          ## Related
+
+          - [Core](/architecture/core.md)
+          MD
+
+          git add -A && git commit -qm "scratch bundle"
+
+          # ONE deliberate SYMBOL binding. `path` (src/lib.rs) and `identity`
+          # (src/lib.rs#admit_reusable) differ here, which is the whole point of the printed
+          # re-stamp command asserted below.
+          drift link knowledge/architecture/core.md 'src/lib.rs#admit_reusable'
+
+          say() { printf '\n== %s ==\n' "$1"; }
+          fail() { echo "::error::$1"; exit 1; }
+          has() { printf '%s\n' "$2" | grep -qF "$1"; }
+
+          say "recall on a clean tree prints three independent signals per hit"
+          out=$(sh "$W/scripts/okf-recall.sh" "admission ceiling" knowledge)
+          printf '%s\n' "$out"
+          has '1 target unchanged · no status · review current' "$out" \
+            || fail "tracking/lifecycle/review signals missing for the bound concept"
+          has 'no tracked target · deprecated · review expired 2026-02-01' "$out" \
+            || fail "signals missing for the deprecated, unbound, expired concept"
+          has '"targets unchanged" means the code under the anchors did not move.' "$out" \
+            || fail "the explanatory paragraph did not print"
+          if has 'fresh hit' "$out"; then fail "the header still calls its hits fresh"; fi
+
+          # `okf validate --stale` treats an expired `stale_after` as a finding, and this gate treats
+          # okf's warnings as fatal — so the same bundle cannot both demonstrate `review expired` and
+          # be green. Move the date forward now that recall has been asserted against it.
+          say "bump the expired review date so the gate can be green"
+          perl -pi -e 's/^stale_after: 2026-02-01$/stale_after: 2099-02-01/' knowledge/playbooks/superseded-way.md
+
+          say "the gate is green before anything moves"
+          gate=$(sh "$W/scripts/okf-check.sh" knowledge) || { printf '%s\n' "$gate"; fail "the gate was not green on an untouched bundle"; }
+          printf '%s\n' "$gate"
+          has 'ok    knowledge:' "$gate" || fail "the gate printed no ok line"
+          has '1 concept(s) with no tracked target (no drift anchor; nothing checks them): playbooks/superseded-way.md' "$gate" \
+            || fail "the coverage warning is missing or names the wrong concepts"
+          has '1 concept(s) with empty code_refs (okf search --for-path cannot find them): playbooks/superseded-way.md' "$gate" \
+            || fail "the discoverability warning is missing or names the wrong concepts"
+          if has 'project/state.md' "$gate"; then fail "the state snapshot is exempt from both lists"; fi
+
+          say "move the anchored symbol: recall must WITHHOLD"
+          perl -pi -e 's/    x \+ 1/    x + 2/' src/lib.rs
+          out=$(sh "$W/scripts/okf-recall.sh" "admission ceiling" knowledge)
+          printf '%s\n' "$out"
+          has 'WITHHELD' "$out" || fail "a moved anchor did not withhold the concept"
+          has 'src/lib.rs#admit_reusable  [changed_after_baseline]' "$out" \
+            || fail "the withheld block did not name the anchor identity"
+          has 'last commit touching this file (not necessarily the cause):' "$out" \
+            || fail "blame is not labelled as the last commit touching the file"
+
+          say "the gate fails and prints a re-stamp command naming the exact binding"
+          gate=$(sh "$W/scripts/okf-check.sh" knowledge) && fail "the gate passed over a moved anchor"
+          printf '%s\n' "$gate"
+          has "drift link 'knowledge/architecture/core.md' 'src/lib.rs#admit_reusable' --doc-is-still-accurate" "$gate" \
+            || fail "the printed re-stamp command does not name the symbol identity"
+          if has "drift link 'knowledge/architecture/core.md' 'src/lib.rs' " "$gate"; then
+            fail "the gate printed a whole-file repair for a symbol anchor"
+          fi
+          has 'drifted from src/lib.rs#admit_reusable' "$gate" || fail "the drifted-from line lost the identity"
+
+          say "execute exactly what it printed"
+          cmd=$(printf '%s\n' "$gate" | sed -n "s/^ *review the concept against the code, then: \(drift link .*--doc-is-still-accurate\).*/\1/p" | head -1)
+          [ -n "$cmd" ] || fail "could not extract the printed command"
+          echo "+ $cmd"
+          eval "$cmd"
+
+          say "the gate is green again, and the lock holds exactly one binding for that doc"
+          gate=$(sh "$W/scripts/okf-check.sh" knowledge) || { printf '%s\n' "$gate"; fail "the printed command did not restore a green gate"; }
+          printf '%s\n' "$gate" | tail -3
+          n=$(grep -c '^doc = "knowledge/architecture/core.md"$' drift.lock)
+          [ "$n" = "1" ] || { cat drift.lock; fail "expected 1 binding for the doc, found $n"; }
+          grep -qF 'target = "src/lib.rs#admit_reusable' drift.lock || { cat drift.lock; fail "the re-stamped binding is not the symbol one"; }
+          if grep -qE '^target = "src/lib\.rs"$' drift.lock; then cat drift.lock; fail "the repair added a whole-file binding"; fi
+
+          say "OKF_REQUIRE_TRACKING makes coverage fatal for the paths it names, and only those"
+          if OKF_REQUIRE_TRACKING='playbooks/*' sh "$W/scripts/okf-check.sh" knowledge >/dev/null 2>&1; then
+            fail "OKF_REQUIRE_TRACKING did not make an untracked concept fatal"
+          fi
+          OKF_REQUIRE_TRACKING='architecture/*' sh "$W/scripts/okf-check.sh" knowledge >/dev/null \
+            || fail "OKF_REQUIRE_TRACKING fired on a glob that matches only a tracked concept"
+
+          echo
+          echo "ok — real okf and real drift agree with the stubbed selftests"
+
       # Four content-pin properties, against a real tag so the fetch is real. (a) and (b)
       # FAIL against the 0.5.1 shim, which validated a download only by "first line starts
       # with #!": two lines of a 221-line script were accepted, cached forever, and the
