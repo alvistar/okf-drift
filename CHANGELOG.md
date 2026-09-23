@@ -11,11 +11,20 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ### Changed
 
-- `okf-runtime` now says when to run the gate: once as a baseline, once before each
-  commit, and after a FAIL only once every named finding is fixed — with
+- `okf-runtime` now says when to run the gate: once as a baseline, once before pushing,
+  and after a FAIL only once every named finding is fixed — with
   `drift check --changed <path>` for the mid-work question about one path. The skill said
   how to run the gate and never when, and the reference consumer's heaviest sessions ran
   it 57–60 times each, 13–17 of them FAILs re-run after fixing a single finding.
+- The local gate moves from "before committing" to "before pushing", in the `Work Loop`
+  template and in `okf-write`. CI already runs the same gate on every PR and only the
+  branch head merges, so a per-commit run bought nothing the pre-push run does not.
+
+### Fixed
+
+- Integration recognises the outgoing v0.9.0–v0.9.1 `Work Loop` body digest
+  (`e9a9556dff30…`), added before the template changed, so an official 0.9.x consumer's
+  CLAUDE section is upgraded in place rather than refused as customized.
 
 ## [0.9.1] - 2026-09-19
 

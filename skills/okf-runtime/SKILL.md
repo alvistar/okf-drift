@@ -60,7 +60,9 @@ do next, not after every edit:
 
 - **Once as a baseline**, before touching anything, and keep the output: an alarm
   present then is inherited, not yours.
-- **Once before each commit** that touches the bundle or code a concept binds.
+- **Once before pushing.** CI runs the same gate on every PR and on push to `main`,
+  and only the branch head merges, so a green gate on an intermediate commit buys
+  nothing a green gate before the push does not.
 - **On a FAIL, fix every finding it named, then re-run once.** Re-running after each
   single fix prints the same report again. The reference consumer's heaviest sessions
   ran the gate 57–60 times, 13–17 of them FAILs inside such a loop.
