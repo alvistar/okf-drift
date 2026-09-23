@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [0.9.2] - 2026-09-23
+
+### Changed
+
+- `okf-runtime` now says when to run the gate: once as a baseline, once before each
+  commit, and after a FAIL only once every named finding is fixed — with
+  `drift check --changed <path>` for the mid-work question about one path. The skill said
+  how to run the gate and never when, and the reference consumer's heaviest sessions ran
+  it 57–60 times each, 13–17 of them FAILs re-run after fixing a single finding.
+
 ## [0.9.1] - 2026-09-19
 
 ### Fixed
@@ -453,7 +463,10 @@ monorepo with `git subtree split`, so every commit under `0.4.0` predates this t
   `#Symbol` anchor forms each language accepts, and the one fact the whole design rests on:
   editing a doc does **not** clear its staleness.
 
-[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/alvistar/okf-drift/compare/v0.9.1...v0.9.2
+[0.9.1]: https://github.com/alvistar/okf-drift/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/alvistar/okf-drift/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/alvistar/okf-drift/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/alvistar/okf-drift/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/alvistar/okf-drift/compare/v0.7.0...v0.8.0
