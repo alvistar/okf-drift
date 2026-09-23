@@ -41,6 +41,7 @@ SECTIONS = {
         "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.4.0-v0.6.2
         "0b46146628754f0316d682ae29210bd17a928076c174eef433236f41eee4849c",  # v0.7.0
         "dfacead5b7d2f4ad91889329fb157a59a13bf3edc1aedd2d5c492b027279f09f",  # v0.8.0-v0.8.2
+        "e9a9556dff30fe8af69b550524116927e9a3e6424405ce6e89107e6c78300171",  # v0.9.0-v0.9.1
     },
 }
 LEGACY = [f"scripts/{name}.sh" for name in ("okf-check", "okf-recall", "okf-shim")]

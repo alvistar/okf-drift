@@ -208,7 +208,7 @@ an unearned re-stamp is worse than no drift at all.
 
 Six steps: okf's own gate with its warnings treated as fatal, the indexes both ways, the
 frontmatter okf ignores, template residue, the reserved files, and `drift check`. Green
-is the only acceptable result before a commit. Step 6 warns rather than fails when there
+is the only acceptable result before a push. Step 6 warns rather than fails when there
 is no `drift.lock` — on a repo that has not adopted drift that warning is the whole
 story; on one that has, it means something is wrong with the lock.
 

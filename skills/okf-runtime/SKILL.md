@@ -53,6 +53,24 @@ present — a missing `drift` binary, or one whose version disagrees with the pi
 `.github/workflows/knowledge.yml` (or that file renamed `.yaml`), is a FAIL rather
 than a warning: a green gate has to mean the detector ran. Never work around that by uninstalling the pin.
 
+## When to run the gate
+
+The gate reads the whole bundle every time. Run it where its answer changes what you
+do next, not after every edit:
+
+- **Once as a baseline**, before touching anything, and keep the output: an alarm
+  present then is inherited, not yours.
+- **Once before pushing.** CI runs the same gate on every PR and on push to `main`,
+  and only the branch head merges, so a green gate on an intermediate commit buys
+  nothing a green gate before the push does not.
+- **On a FAIL, fix every finding it named, then re-run once.** Re-running after each
+  single fix prints the same report again. The reference consumer's heaviest sessions
+  ran the gate 57–60 times, 13–17 of them FAILs inside such a loop.
+
+Mid-work, to learn whether a path you are about to change is bound, ask drift for that
+path alone (`drift check --changed <path>`); the gate answers for the bundle, not the
+path.
+
 ## Scope and unavailable plugin
 
 This skill only runs gate/recall. It never pins, installs/converts integration,
