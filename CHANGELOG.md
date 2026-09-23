@@ -25,6 +25,10 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 - Integration recognises the outgoing v0.9.0–v0.9.1 `Work Loop` body digest
   (`e9a9556dff30…`), added before the template changed, so an official 0.9.x consumer's
   CLAUDE section is upgraded in place rather than refused as customized.
+- The scaffolded `decisions/index.md` no longer spells its superseded-decision example as
+  link syntax. okf v0.4.2 parses links inside inline code and reports the placeholder
+  `/decisions/<new-slug>.md` as a broken link, which the gate treats as fatal; okf v0.3.0
+  did not. The sentence now names the path without the `[title](…)` form.
 
 ## [0.9.1] - 2026-09-19
 
