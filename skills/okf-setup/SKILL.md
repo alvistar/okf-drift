@@ -44,7 +44,8 @@ knowledge/
   log.md                    reserved — dated history and rationale
   project/
     index.md
-    state.md                Reference — Working / Not yet built / Known issues: a SNAPSHOT
+    state.md                Reference — Working / Not yet built / Known issues: a one-line SNAPSHOT
+    state-evidence.md       Reference — the evidence behind each state line, read by item
     stack.md                Reference — what is used and under which constraints (the why is a decision)
     setup.md                Reference — clone-to-running and what goes wrong on the way
     conventions.md          Reference — naming, structure, patterns, the project's Verify Checklist
@@ -61,7 +62,7 @@ drift.lock                  one content signature per (concept, code_ref) pair (
 CLAUDE.md                   + Knowledge Bundle · Work Loop · Navigation (Step 3)
 ```
 
-Five concepts, pre-wired with `## Related` links so `okf validate --strict` passes
+Six concepts, pre-wired with `## Related` links so `okf validate --strict` passes
 before a word is written. Decisions and playbooks are one file each, added during
 population and from real work.
 
@@ -168,7 +169,8 @@ every concept has a row in its category index; one-line descriptions, ISO
 `status: deprecated` (the vocabulary `draft|stable|deprecated` is okf's own and
 `--strict` enforces it — `active` is rejected); no HTML comment left in
 a concept (search indexes comment text), no placeholder, no empty section; root
-`okf_version`, `log.md`, and `state.md`'s three lists. Empty `code_refs` is a warning:
+`okf_version`, `log.md`, and `state.md`'s three lists (a state item past 300 characters
+is a warning). Empty `code_refs` is a warning:
 coverage is a judgement.
 
 Step 6 of the gate is the drift join — see Step 3b. Until there is a `drift.lock` it
@@ -273,8 +275,10 @@ or the concept stays expired.
 - **Decisions: slug is permanent, file is never deleted.** In force → `status: stable`;
   superseded → `status: deprecated`, a `Superseded by` link, the new file links back, no
   `stale_after`. `--strict` rejects any other status word.
-- **`state.md` is a snapshot.** Working 3-7; Not yet built and Known issues 0-7 with an
-  explicit "None known." when empty; history goes to `log.md`.
+- **`state.md` is a one-line snapshot.** One line per item, ending with how far the claim
+  reaches; "None known." when a list is empty. Per-item evidence goes to
+  `state-evidence.md` under the same item, the story to `log.md`. The budget is the line,
+  not the count: without an evidence file, the reference consumer's snapshot reached 58 KB.
 
 ## What OKF does not give you, said once
 

@@ -23,7 +23,7 @@ trusting a green validation.
 |---|---|
 | `/okf-setup` | Lays the bundle down in a repo that has none: a fixed layout that validates `--strict` from the first commit, the population and resync prompts, the `CLAUDE.md` sections, the gate, the drift bootstrap, and the CI job. |
 | `/okf-migrate` | Builds the same bundle from an existing [mex](https://github.com/mex-memory/mex) scaffold, resolving every `grounds_to` and inline `mex://` anchor to a path **while the graph still exists**. |
-| `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot; binds every new **code** `code_refs` path; non-code paths take no *automatic* binding, so a claim whose truth lives in one is hand-linked or restated as a dated observation; re-stamps a reviewed binding — never silently. |
+| `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot and its evidence; binds every new **code** `code_refs` path; non-code paths take no *automatic* binding, so a claim whose truth lives in one is hand-linked or restated as a dated observation; re-stamps a reviewed binding — never silently. |
 | `/okf-read` | Recalls from it: `okf search` joined with `drift check`, withholding any concept whose bound code moved after it was written, with the commit to blame. |
 
 All four are **manual trigger only** — they run when you type the slash command.

@@ -218,6 +218,34 @@ class RuntimeTests(unittest.TestCase):
         # And the old per-concept line is gone.
         self.assertNotIn("code_refs is empty", result.stdout)
 
+    def test_gate_exempts_state_evidence_like_the_snapshot(self) -> None:
+        (self.bundle / "project/index.md").write_text(
+            "- [State](/project/state.md) — Fixture state.\n"
+            "- [Evidence](/project/state-evidence.md) — Fixture evidence.\n"
+        )
+        (self.bundle / "project/state-evidence.md").write_text(
+            "---\ntype: Reference\ntitle: Evidence\ndescription: Fixture evidence.\n"
+            "last_updated: 2026-09-16\ncode_refs: []\n---\n# Evidence\n\nBody.\n"
+        )
+        self.payload("drift", {"docs": [
+            {"path": f"knowledge/project/{name}.md", "result": "fresh", "anchors": [], "links": []}
+            for name in ("state", "state-evidence")
+        ]})
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("state-evidence.md", result.stdout)
+
+    def test_gate_warns_on_a_state_item_long_enough_to_be_evidence(self) -> None:
+        state = self.bundle / "project/state.md"
+        text = state.read_text()
+        for length, warned in ((300, False), (301, True)):
+            with self.subTest(length=length):
+                state.write_text(text.replace("- Fixture.", "- " + "x" * length))
+                result = self.run_script("okf-check.sh")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                line = "project/state.md: 1 item(s) over 300 characters"
+                (self.assertIn if warned else self.assertNotIn)(line, result.stdout)
+
     def test_require_tracking_is_fatal_only_for_the_matching_glob(self) -> None:
         self.gate_bundle()
         self.env["OKF_REQUIRE_TRACKING"] = "architecture/*"

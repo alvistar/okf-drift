@@ -61,8 +61,11 @@ If a domain is deep enough that architecture.md would go long or shallow, add
 architecture/<domain>.md with the same frontmatter shape, a `## Related`
 section, and a row in architecture/index.md. Only for domains with real depth.
 
-Fill project/state.md: Working 3-7 items; Not yet built and Known issues 0-7,
-"None known." when empty. One line each, no history — history is log.md.
+Fill project/state.md: Working, Not yet built and Known issues, "None known." when
+empty. One line each (under 300 characters), ending with a bracket saying how far the
+claim reaches ([code], [CI], [prod]…). The evidence for each line — where it was
+observed, when, what is still owed — goes to project/state-evidence.md under the same
+item; history is log.md.
 
 Update CLAUDE.md: project name, one-sentence description, non-negotiables (3-5
 hard rules), the daily commands (this is their only home; setup.md does not
@@ -131,7 +134,7 @@ the format at the top of decisions/index.md, dated today, linked to
 project/stack.md, with a row in decisions/index.md.
 
 Set project/state.md: Working "None yet.", Not yet built from the answers,
-Known issues "None known.". Update CLAUDE.md with the name, description,
+Known issues "None known."; mirror the same items in project/state-evidence.md. Update CLAUDE.md with the name, description,
 non-negotiables and the commands you can already state.
 
 Write 2-3 playbooks for the tasks a developer will do first on this stack, in

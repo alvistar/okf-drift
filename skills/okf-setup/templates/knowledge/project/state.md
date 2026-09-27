@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: state
-description: What is working, what is not yet built, and what is known to be broken — a snapshot, not a history.
+description: What is working, what is not yet built, and what is known to be broken — one line per item, a snapshot and not a history. The evidence behind each line is in state-evidence.
 tags:
 - state
 - status
@@ -15,11 +15,16 @@ stale_after: {{STALE_3M}}
 
 # Current Project State
 
-<!-- A SNAPSHOT. Re-read at the start of every session, rewritten whenever significant
-     work lands. History, dates, measurements and rationale go to log.md — not here.
-     Working: 3-7 items. Not yet built and Known issues: 0-7 items each; when there are
-     none, write the single item "None known." rather than inventing one.
-     One line per item. Name the thing, not the story of how it got there. -->
+<!-- A SNAPSHOT, read at the start of every session: keep it cheap to read.
+     One line per item, one or two sentences. Name the thing and end with a bracket
+     saying how far the claim reaches — the project's own ladder, e.g. [spec], [code],
+     [CI], [staging], [prod] — so a reader can tell "tests pass" from "seen in production".
+     The evidence behind a line (dates, PRs, figures, what was observed where, what is
+     still owed) goes to state-evidence.md, under the same item in the same order. The
+     story of how it got here goes to log.md. The gate warns on a line past 300 characters.
+     When a list is empty, write the single item "None known." rather than inventing one. -->
+
+The bracket on each line says how far the claim reaches. The evidence is in [state-evidence](/project/state-evidence.md), under the same item in the same order.
 
 **Working:**
 - [TO DETERMINE]
@@ -32,4 +37,5 @@ stale_after: {{STALE_3M}}
 
 ## Related
 
+- [state-evidence](/project/state-evidence.md) — the dates, figures and owed checks behind each line
 - [architecture](/architecture/architecture.md) — the components these items belong to

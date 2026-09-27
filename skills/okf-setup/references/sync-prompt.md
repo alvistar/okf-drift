@@ -53,8 +53,9 @@ last_updated, or that I name below:
 5. Bump last_updated. If you actually reviewed the whole concept, advance
    stale_after too — otherwise a reviewed concept stays expired. If the
    description changed, change the same line in its index row.
-6. Refresh project/state.md if what is working / not built / broken has moved.
-   Keep it a snapshot; put the story in log.md.
+6. Refresh project/state.md if what is working / not built / broken has moved:
+   one line per item, the evidence in project/state-evidence.md under the same
+   item, the story in log.md.
 
 Every concept the gate reports with no tracked target is re-read against the
 repository by hand during this resync: nothing checked it, and `git log -- <its

@@ -10,4 +10,4 @@ Find concepts with the model-invocable `okf-drift:okf-runtime` skill in recall m
 - [Architecture](/architecture/index.md) — How the pieces connect.
 - [Decisions](/decisions/index.md) — One concept per decision, with status, date, reasoning and the alternatives rejected.
 - [Playbooks](/playbooks/index.md) — Task-specific runbooks. Check here before starting a task — if a playbook exists, follow it.
-- [state](/project/state.md) — What is working, what is not yet built, and what is known to be broken — a snapshot, not a history.
+- [state](/project/state.md) — What is working, what is not yet built, and what is known to be broken — one line per item, a snapshot and not a history. The evidence behind each line is in state-evidence.
