@@ -350,6 +350,9 @@ class Integration(Fixture):
     def test_official_v0_9_1_sections_are_recognised_and_upgraded(self):
         self.assert_official_sections_upgrade("v0.9.1")
 
+    def test_official_v0_9_2_sections_are_recognised_and_upgraded(self):
+        self.assert_official_sections_upgrade("v0.9.2")
+
     def assert_official_sections_upgrade(self, tag):
         # The OUTGOING release's body digests must be in SECTIONS before the template text
         # moves; otherwise every consumer carrying the previous official body is refused

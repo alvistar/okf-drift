@@ -7,6 +7,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [0.10.0] - 2026-09-27
+
+### Added
+
+- `project/state-evidence.md` is scaffolded next to `project/state.md`: one entry per state
+  line, same headings, same order, holding what was observed, where, when and what is
+  still owed. It is read by item, never whole, and the gate exempts it from the coverage
+  and discoverability warnings exactly like the snapshot. Measured on the reference
+  consumer: with nowhere to put per-item evidence, its snapshot grew to 58 KB (~15k
+  tokens, read at the start of every session, the longest item 2,744 characters) while
+  keeping the three lists. Split into a one-line snapshot and an evidence file, the same
+  items came to 7.7 KB, the longest 201.
+- The gate warns on a `state.md` item longer than 300 characters. Against the reference
+  consumer's pre-split snapshot it reports 38; against the split one, none.
+
+### Changed
+
+- `state.md`'s rule is one line per item ending with a bracket saying how far the claim
+  reaches (the project's own ladder, e.g. `[code]`, `[CI]`, `[prod]`). The fixed counts
+  (Working 3-7, the others 0-7) are gone. The reference consumer holds 34 working items
+  in 7.7 KB and reads fine, so the budget is the line, not the count.
+- `Work Loop`: **Context** also reads `main`'s changes to `state.md` since the merge-base
+  when the branch is behind `origin/main`, because a branch's snapshot is only as new as
+  its merge-base. On the reference consumer a stale worktree snapshot once led to
+  re-implementing a PR already merged. It opens `state-evidence.md` only for the items
+  the task touches. **Grow** updates both the line and its evidence entry. The template
+  `Navigation` says the same, for new consumers only (an existing one is kept
+  byte-for-byte).
+- `okf-write`, `okf-setup`, `okf-migrate` and the population and resync prompts follow
+  the new rule.
+
+### Fixed
+
+- Integration recognises the outgoing v0.9.2 `Work Loop` body digest (`460a6d6b3a95…`),
+  so a 0.9.2 consumer's CLAUDE section is upgraded in place rather than refused as
+  customized.
+
 ## [0.9.2] - 2026-09-23
 
 ### Changed
@@ -477,6 +514,7 @@ monorepo with `git subtree split`, so every commit under `0.4.0` predates this t
   editing a doc does **not** clear its staleness.
 
 [Unreleased]: https://github.com/alvistar/okf-drift/compare/v0.9.2...HEAD
+[0.10.0]: https://github.com/alvistar/okf-drift/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/alvistar/okf-drift/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/alvistar/okf-drift/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/alvistar/okf-drift/compare/v0.8.2...v0.9.0

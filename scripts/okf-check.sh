@@ -17,7 +17,8 @@
 #      vocabulary itself, draft|stable|deprecated, okf --strict does enforce);
 #   4. fails on leftover template material: HTML comments (search indexes them), the
 #      population placeholders, and a section with no content;
-#   5. checks the reserved files: root okf_version, log.md, project/state.md's three lists;
+#   5. checks the reserved files: root okf_version, log.md, project/state.md's three lists,
+#      and warns on a state item long enough to be evidence;
 #   6. runs `drift check --format json` from the bundle's parent and fails on any doc in
 #      the bundle that is not `fresh` — an anchor whose code changed after the concept was
 #      last believed (with the commit to blame) or a dead markdown link. A non-zero drift
@@ -155,9 +156,11 @@ sub warnl{ print "warn  @_\n" }
 sub shq  { my $s = shift; $s =~ s/'/'\\''/g; "'$s'" }
 sub slurp{ my $f=shift; open my $h,'<:utf8',$f or die "$f: $!"; local $/; <$h> }
 my $ISO = qr/^\d{4}-\d{2}-\d{2}$/;
-# The snapshot is prose about the project, not about code: it is expected to carry
-# neither code_refs nor an anchor, and warning about it every run teaches skimming.
-my $EXEMPT = qr{^project/state\.md$};
+my $STATE_ITEM_MAX = 300;
+# The snapshot and its evidence are prose about the project, not about code: they are
+# expected to carry neither code_refs nor an anchor, and warning about them every run
+# teaches skimming.
+my $EXEMPT = qr{^project/state(?:-evidence)?\.md$};
 my (@no_code_refs, @no_anchor);
 
 # `OKF_REQUIRE_TRACKING=architecture/*,decisions/*` — a comma-separated list of shell
@@ -300,6 +303,11 @@ for my $rel (@concepts) {
 if (-f "$bundle/project/state.md") {
   my $s = slurp("$bundle/project/state.md");
   for my $h ('Working', 'Not yet built', 'Known issues') { bad("project/state.md: missing the '**$h:**' list") unless $s =~ /^\*\*\Q$h\E:\*\*/m }
+  # The snapshot is read at the start of every session, so its cost is paid on every turn
+  # after. A long item is evidence that has nowhere else to go: it belongs in
+  # project/state-evidence.md. A warning, because a line's length is a judgement.
+  my @long = grep { length($_) > $STATE_ITEM_MAX } ($s =~ /^- (.*)$/mg);
+  warnl(sprintf("project/state.md: %d item(s) over %d characters — keep the line, move the evidence to project/state-evidence.md", scalar @long, $STATE_ITEM_MAX)) if @long;
 } else { warnl("project/state.md: absent — the session bootstrap has no snapshot to read") }
 
 # 6. Content drift: has the code a concept is bound to moved since the concept was written?

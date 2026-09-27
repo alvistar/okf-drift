@@ -48,7 +48,7 @@ Answer before writing anything. One of four shapes:
 | A task was done that will recur, and a wrong turn was available | `playbooks/<slug>.md` |
 | A concept says something that is no longer true | a surgical edit to that concept |
 | A decision has been superseded | `status: deprecated` on it, a `Superseded by` link to its successor, and the successor written |
-| What works / is missing / is broken moved | `project/state.md` |
+| What works / is missing / is broken moved | its one line in `project/state.md`, its entry in `project/state-evidence.md` |
 
 More than one can be true. None being true is a legitimate answer — say so and stop. A
 session that fixed a typo does not owe the bundle anything.
@@ -96,9 +96,23 @@ The bundle's worth is that a reader can trust an old line as much as a new one.
 
 ### `project/state.md`
 
-A **snapshot**, not a history: Working (3-7), Not yet built and Known issues (0-7 each,
-with an explicit "None known." when empty). The gate checks all three lists exist. How
-it got here goes in `knowledge/log.md`.
+A **snapshot**, not a history, read at the start of every session — so every character
+in it is paid on every turn after. Three lists, Working, Not yet built and Known issues,
+with an explicit "None known." when one is empty; the gate checks all three exist.
+
+- **One line per item**, one or two sentences, ending with a bracket saying how far the
+  claim reaches (the project's own ladder: `[spec]`, `[code]`, `[CI]`, `[staging]`,
+  `[prod]`…). The gate warns on an item past 300 characters.
+- **The evidence goes to `project/state-evidence.md`**, under the same item in the same
+  order: what was observed, where, when, and what is still owed. That file is read by
+  item, never whole.
+- **The story goes to `knowledge/log.md`.** When an evidence entry has become history
+  rather than evidence, move it there.
+
+The item count is not the budget; the line length is. Measured on the reference
+consumer: with nowhere to put per-item evidence, the snapshot grew to 58 KB (~15k tokens,
+the longest item 2,744 characters) while keeping its three lists. Split into a one-line
+snapshot and an evidence file, the same items came to 7.7 KB, the longest 201.
 
 ## Step 2 — Bind the new ground
 

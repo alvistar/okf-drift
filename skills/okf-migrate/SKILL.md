@@ -184,9 +184,10 @@ okf validate knowledge --strict --drift --stale
 
 Expect failures of three kinds, in this order of effort: out-of-bundle links the
 migrator could not prove (Step 3); `[TO DETERMINE]` where a document had no
-description; and `project/state.md` over the snapshot rule — Working 3-7, Not yet
-built 0-7, Known issues 0-7, one line each. The narrative that was in the ROUTER goes
-to `log.md` as dated entries, every date and number kept. That last one is editorial
+description; and `project/state.md` over the snapshot rule — one line per item, the gate warning
+past 300 characters. Per-item evidence goes to `project/state-evidence.md` (the okf-setup
+template, with a row in `project/index.md`) under the same item; the narrative that was
+in the ROUTER goes to `log.md` as dated entries, every date and number kept. That last one is editorial
 work, not mechanical; do it, do not skip it, and say what moved.
 
 Three searches you would actually type must hit the concept you meant first.
