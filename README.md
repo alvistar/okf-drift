@@ -88,6 +88,9 @@ CLAUDE.md                        managed Knowledge Bundle / Work Loop instructio
 .github/workflows/knowledge.yml   standalone verified bootstrap, PR + push to main
 ```
 
+A `wiki` consumer (see **Profiles**) carries `knowledge/`, `.okf-profile` and, to run the
+gate through `okf-runtime`, a `.okf-drift-version` pinned at v0.11.0 or later.
+
 Local sessions invoke `okf-drift:okf-runtime`. It resolves the launcher from the
 absolute skill directory supplied by the host, two levels up, and calls:
 
@@ -231,6 +234,7 @@ scripts/okf-pin.sh                  writes a consumer repo's .okf-drift-version 
 scripts/okf-shim-selftest.sh        the shim's regression test, run by CI against a real tag
 skills/okf-{setup,migrate,write,read,runtime}/SKILL.md
 skills/okf-setup/templates/         the bundle, the CLAUDE.md sections, the CI workflow
+skills/okf-setup/templates-wiki/    the wiki-profile bundle (okf-scaffold.sh --profile wiki)
 skills/okf-setup/references/        okf-quirks.md and the population/resync prompts
 ```
 

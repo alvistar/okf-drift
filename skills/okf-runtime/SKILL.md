@@ -35,7 +35,7 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-recall.sh "<t
 
 The launcher enters the consumer root and selects runtime bytes solely through its
 `.okf-drift-version`, not the installed plugin's version. Minimum compatible pin:
-**v0.7.0**. An older/missing/malformed pin is a blocker, never an implicit upgrade.
+**v0.7.0** (**v0.11.0** for a bundle declared `wiki` in `.okf-profile`). An older/missing/malformed pin is a blocker, never an implicit upgrade.
 `OKF_DRIFT_ROOT` is a visible development-only bypass; use it only when explicitly
 working on the runtime, never as a recovery from verification failure.
 

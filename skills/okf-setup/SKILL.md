@@ -174,7 +174,9 @@ is a warning). Empty `code_refs` is a warning:
 coverage is a judgement.
 
 Step 6 of the gate is the drift join — see Step 3b. Until there is a `drift.lock` it
-`warn`s and skips, so the gate keeps working in a repo that has not adopted drift.
+`warn`s and skips, so the gate keeps working in a repo that has not adopted drift. (A
+`wiki` bundle with no `drift.lock` reports step 6 as not applicable instead; see
+*Profile: wiki*.)
 
 ## Step 3b — Bind the bundle to the code
 

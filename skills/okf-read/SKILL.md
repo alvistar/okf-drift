@@ -78,7 +78,7 @@ INDEPENDENT signals, and none of them is a statement about the prose:
 
 | Signal | What it is | What it is not |
 |---|---|---|
-| `N target(s) unchanged` / `no tracked target` | an observation about the **anchors**: drift re-fingerprinted N declarations and none moved, or the concept has no anchor and nothing checked it | a statement that the concept is true, or that it covers what you are about to do — a claim no anchor touches is invisible to it, and a concept with a live anchor can still be false |
+| `N target(s) unchanged` / `no tracked target` / `not drift-tracked (wiki)` | an observation about the **anchors**: drift re-fingerprinted N declarations and none moved, or the concept has no anchor and nothing checked it, or (a `wiki` bundle with no `drift.lock`) drift did not run at all | a statement that the concept is true, or that it covers what you are about to do — a claim no anchor touches is invisible to it, and a concept with a live anchor can still be false |
 | `stable` / `deprecated` / `draft` / `no status` | the author's own `status:` | a freshness signal. A **deprecated** concept is history: find its `Superseded by` link and read the successor instead |
 | `review current` / `review expired <date>` / `no review date` | `stale_after` against today — when a human said they would re-read it | a check that anyone did |
 
@@ -132,6 +132,12 @@ degrades into an unverified one is worse than no recall, because the caller cann
 the two apart — and the caller is usually a model that will happily quote either. If you
 hit this, stop and request the explicit binding bootstrap described in `/okf-setup` Step 3b.
 Do not fall back to unverified search.
+
+The one exception is a bundle declared `wiki` in `.okf-profile` with no `drift.lock` at the
+repository root or beside the bundle: it binds no code, so recall runs without the join and
+labels every hit `not drift-tracked (wiki)` rather than implying a freshness nobody
+measured. A wiki that has a `drift.lock` gets the join, and this refusal, back. An unknown
+profile value exits 2. See `/okf-setup`, *Profile: wiki*.
 
 The gate takes the opposite position for the same reason: the pinned gate's step 6
 only **warns** when there is no lock, because a gate must keep working in a repository
