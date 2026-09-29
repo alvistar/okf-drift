@@ -1,7 +1,11 @@
 #!/bin/sh
 # okf-scaffold.sh — lay down the fixed OKF v0.2 knowledge bundle in a repository.
 #
-#   okf-scaffold.sh [--name "Project Name"] [--force] [target-dir]
+#   okf-scaffold.sh [--name "Project Name"] [--profile code|wiki] [--force] [target-dir]
+#
+# --profile wiki lays down the bundle for a knowledge base that describes no code
+# (reference/, playbooks/, decisions/, no project snapshot, no code_refs) and writes
+# `.okf-profile` beside it, which the gate and recall read. Default: code.
 #
 # Copies the templates next to this script into <target-dir>/knowledge/, substituting
 # {{PROJECT_NAME}}, {{DATE}}, {{STALE_3M}} and {{STALE_6M}}, and runs
@@ -18,18 +22,27 @@ templates="$here/../skills/okf-setup/templates/knowledge"
 claude_section="$here/../skills/okf-setup/templates/CLAUDE-knowledge-section.md"
 
 name=""
+profile=code
 force=0
 target="."
 while [ $# -gt 0 ]; do
   case "$1" in
     --name) name="$2"; shift 2 ;;
     --name=*) name="${1#--name=}"; shift ;;
+    --profile) [ $# -ge 2 ] || { echo "--profile needs a value (code or wiki)" >&2; exit 2; }; profile="$2"; shift 2 ;;
+    --profile=*) profile="${1#--profile=}"; shift ;;
     --force) force=1; shift ;;
     -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) target="$1"; shift ;;
   esac
 done
+
+case "$profile" in
+  code) ;;
+  wiki) templates="$here/../skills/okf-setup/templates-wiki/knowledge" ;;
+  *) echo "unknown profile: $profile (expected code or wiki)" >&2; exit 2 ;;
+esac
 
 target=$(cd "$target" && pwd)
 bundle="$target/knowledge"
@@ -41,6 +54,24 @@ plus_months() {
 }
 stale3=$(plus_months 3)
 stale6=$(plus_months 6)
+
+# The profile file is read by the gate and recall and switches checks off, so the scaffold
+# never lets it disagree with what is being laid down — refused here, before anything is
+# written, so a refusal leaves nothing half-done behind.
+declared=""
+[ -f "$target/.okf-profile" ] && declared=$(tr -d '[:space:]' < "$target/.okf-profile")
+if [ -n "$declared" ] && [ "$declared" != "$profile" ]; then
+  echo "refusing: $target/.okf-profile declares '$declared', not '$profile'" >&2
+  exit 1
+fi
+if [ "$profile" = wiki ]; then
+  for marker in drift.lock .okf-drift-version knowledge/project/state.md; do
+    if [ -e "$target/$marker" ]; then
+      echo "refusing: $target/$marker says this is a code repository; a wiki profile would switch off its drift, snapshot and code_refs warnings" >&2
+      exit 1
+    fi
+  done
+fi
 
 if [ -e "$bundle" ] && [ "$force" -eq 0 ]; then
   echo "refusing: $bundle already exists (use --force to add only the missing files)" >&2
@@ -63,6 +94,11 @@ fi
   echo "  + created knowledge/$rel"
 done
 
+if [ "$profile" = wiki ]; then
+  printf 'wiki\n' > "$target/.okf-profile"
+  echo "  + wrote   .okf-profile (wiki)"
+fi
+
 echo
 if command -v okf >/dev/null 2>&1; then
   echo "okf $(okf version 2>/dev/null | head -1)"
@@ -76,6 +112,14 @@ else
 fi
 
 echo
+if [ "$profile" = wiki ]; then
+  echo "Next:"
+  echo "  1. Add the categories this knowledge base needs (see knowledge/reference/index.md)."
+  echo "  2. Write the first concepts; the gate FAILS on a bundle with none."
+  echo "  3. Run the gate: okf-drift:okf-runtime in gate mode (pin >= v0.11.0 with okf-pin.sh)"
+  echo "  4. Add a Knowledge base section to CLAUDE.md: see /okf-setup, Profile: wiki."
+  exit 0
+fi
 echo "Next:"
 echo "  1. Follow /okf-setup Step 3: preflight the plugin-only integration helper with"
 echo "     an explicit published pin >= v0.7.0 (no consumer scripts). Instructions:"

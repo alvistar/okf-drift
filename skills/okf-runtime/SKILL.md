@@ -35,13 +35,16 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-recall.sh "<t
 
 The launcher enters the consumer root and selects runtime bytes solely through its
 `.okf-drift-version`, not the installed plugin's version. Minimum compatible pin:
-**v0.7.0**. An older/missing/malformed pin is a blocker, never an implicit upgrade.
+**v0.7.0** (**v0.11.0** for a bundle declared `wiki` in `.okf-profile`). An older/missing/malformed pin is a blocker, never an implicit upgrade.
 `OKF_DRIFT_ROOT` is a visible development-only bypass; use it only when explicitly
 working on the runtime, never as a recovery from verification failure.
 
 Report the command's status and diagnostics. A failing gate is not green; withheld
 recall hits are not weaker facts. Read their bound code instead of quoting them.
-If recall fails, stop: no bare-search fallback. The gate may warn when drift has
+If recall fails, stop: no bare-search fallback. A bundle declared `wiki` in
+`.okf-profile` with no `drift.lock` recalls without the join by design, labelling each hit
+`not drift-tracked (wiki)`; that is not a degraded result, but it is not a freshness claim
+either. The gate may warn when drift has
 not been adopted; report that degraded result rather than claiming drift passed.
 
 The gate warns, and does not fail, for a concept with no tracked target; a consumer

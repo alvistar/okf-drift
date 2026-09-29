@@ -62,6 +62,7 @@
 # Run it from the repository root: code_refs and drift.lock are both rooted there.
 # Needs sh, perl 5.14+ (JSON::PP is core) and okf; drift is optional.
 set -u
+shell_warns=0
 bundle=${1:-knowledge}
 [ -d "$bundle" ] || { echo "no bundle at $bundle" >&2; exit 2; }
 command -v okf >/dev/null 2>&1 || { echo "okf not on PATH" >&2; exit 2; }
@@ -69,7 +70,7 @@ command -v okf >/dev/null 2>&1 || { echo "okf not on PATH" >&2; exit 2; }
 ver=$(okf version 2>/dev/null | head -1)
 case "$ver" in
   *v0.3.0*) ;;
-  *) echo "warn  okf is '$ver'; this gate was measured against v0.3.0 — re-check references/okf-quirks.md" ;;
+  *) shell_warns=$((shell_warns+1)); echo "warn  okf is '$ver'; this gate was measured against v0.3.0 — re-check references/okf-quirks.md" ;;
 esac
 
 json=$(okf validate "$bundle" --strict --drift --stale --json)
@@ -83,6 +84,22 @@ drift_status=0
 drift_json=""
 adoption_error=""
 parent=$(dirname "$bundle")
+
+# The profile says what the bundle describes. `code` (the default, no file) is a software
+# repository: concepts are bound to code, drift is the point, a state snapshot is expected.
+# `wiki` is a bundle that describes no code — a personal or company knowledge base — where
+# drift has nothing to anchor, `code_refs` is meaningless and a project snapshot does not
+# exist. Declared by `.okf-profile` beside the bundle, one word. Anything else fails closed:
+# a misspelt profile silently falling back to `code` would bury a wiki in warnings, and one
+# falling back to `wiki` would switch off the checks a code repository relies on.
+profile=code
+if [ -f "$parent/.okf-profile" ]; then
+  profile=$(tr -d '[:space:]' < "$parent/.okf-profile")
+  case "$profile" in
+    code|wiki) ;;
+    *) echo "okf-check: $parent/.okf-profile says '$profile'; expected 'code' or 'wiki'" >&2; exit 2 ;;
+  esac
+fi
 adopted=0
 [ -f "$parent/.okf-drift-version" ] && [ -f "$parent/drift.lock" ] && adopted=1
 
@@ -104,14 +121,18 @@ if [ -n "$workflow" ]; then
     | sed -n 's/.*--version \(v\{0,1\}[0-9][0-9.]*\).*/\1/p' | head -1)
 fi
 
-if ! command -v drift >/dev/null 2>&1; then
+if [ "$profile" = wiki ] && [ ! -f "$parent/drift.lock" ]; then
+  # A wiki binds no code, so there is no detector to miss. A wiki that did hand-link a
+  # concept has a drift.lock and takes the branches below like any other repository.
+  :
+elif ! command -v drift >/dev/null 2>&1; then
   if [ "$adopted" = 1 ]; then
     adoption_error="this repository adopted drift ($parent/.okf-drift-version and $parent/drift.lock are both present) but \`drift\` is not on PATH — step 6 (content drift) did not run, so a pass here would certify nothing was checked; install the pinned drift"
   else
-    echo "warn  drift not on PATH — step 6 (content drift) did not run; \`code_refs\` can only tell you a path vanished, not that it changed"
+    shell_warns=$((shell_warns+1)); echo "warn  drift not on PATH — step 6 (content drift) did not run; \`code_refs\` can only tell you a path vanished, not that it changed"
   fi
 elif [ ! -f "$parent/drift.lock" ]; then
-  echo "warn  no drift.lock in $parent — step 6 (content drift) did not run; use /okf-setup for the explicit pinned drift bootstrap"
+  shell_warns=$((shell_warns+1)); echo "warn  no drift.lock in $parent — step 6 (content drift) did not run; use /okf-setup for the explicit pinned drift bootstrap"
 else
   if [ -n "$pinned_drift" ]; then
     have_drift=$(drift --version 2>/dev/null | awk 'NR==1{print $NF}')
@@ -138,11 +159,14 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 printf '%s' "$json" > "$tmp/okf.json" || exit 2
 printf '%s' "$drift_json" > "$tmp/drift.json" || exit 2
 
-perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" "$okf_status" "$drift_status" "$adoption_error" <<'PERL'
+perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" "$okf_status" "$drift_status" "$adoption_error" "$profile" "$shell_warns" "$( [ -f "$parent/drift.lock" ] && echo 1 || echo 0 )" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP; use File::Find; use File::Basename;
 binmode STDOUT, ':utf8';
-my ($bundle, $json_file, $drift_file, $parent, $okf_status, $drift_status, $adoption_error) = @ARGV;
+my ($bundle, $json_file, $drift_file, $parent, $okf_status, $drift_status, $adoption_error, $profile, $shell_warns, $has_lock) = @ARGV;
+# A wiki is relieved of the code-only expectations (snapshot, code_refs) always; of drift
+# only while it has no drift.lock — one that bound something is checked like code for it.
+my $wiki = ($profile // 'code') eq 'wiki';
 # Read as raw bytes and decode explicitly: decode_json expects UTF-8 octets, and a
 # ':utf8' read would hand it characters instead.
 sub slurp_raw { my $f=shift; open my $h,'<:raw',$f or die "$f: $!"; local $/; my $c=<$h>; defined $c ? $c : '' }
@@ -150,7 +174,8 @@ my $json       = slurp_raw($json_file);
 my $drift_json = slurp_raw($drift_file);
 my $fail = 0;
 sub bad  { $fail = 1; print "FAIL  @_\n" }
-sub warnl{ print "warn  @_\n" }
+my $warnings = $shell_warns // 0;
+sub warnl{ $warnings++; print "warn  @_\n" }
 # A doc path may hold spaces; an anchor identity always holds a `#`. Single quotes make
 # the printed command copy-pasteable in either case.
 sub shq  { my $s = shift; $s =~ s/'/'\\''/g; "'$s'" }
@@ -161,7 +186,11 @@ my $STATE_ITEM_MAX = 300;
 # expected to carry neither code_refs nor an anchor, and warning about them every run
 # teaches skimming.
 my $EXEMPT = qr{^project/state(?:-evidence)?\.md$};
-my (@no_code_refs, @no_anchor);
+my (@no_code_refs, @no_anchor, @open_questions);
+# An open question written into a concept — a claim the writer could not confirm. Not a
+# template placeholder (those FAIL below): a real bundle carries some, and they must stay
+# visible rather than pass silently. English and Italian spellings.
+my $OPEN_QUESTION = qr/\[(?:TO VERIFY|DA VERIFICARE)\]/;
 
 # `OKF_REQUIRE_TRACKING=architecture/*,decisions/*` — a comma-separated list of shell
 # globs over the concept path RELATIVE to the bundle. `*` and `?` stop at a `/` as they do
@@ -228,6 +257,8 @@ find({ no_chdir=>1, wanted=>sub {
   else                               { push @concepts, $rel }
 }}, $bundle);
 @concepts = sort @concepts; @indexes = sort @indexes;
+# An empty bundle passes every per-concept check vacuously. A fresh scaffold must not.
+bad("no concept in $bundle yet — populate it before a green gate means anything") unless @concepts;
 
 # 3. Frontmatter and body of each concept.
 my %desc;                       # rel => description
@@ -247,7 +278,10 @@ for my $rel (@concepts) {
   else { $desc{$rel} = $f{description} }
   bad("$rel: last_updated: must be an ISO date (got '".($f{last_updated}//'')."')") unless ($f{last_updated}//'') =~ $ISO;
   bad("$rel: stale_after: must be an ISO date") if exists $f{stale_after} && $f{stale_after} !~ $ISO;
-  push @no_code_refs, $rel unless @code_refs or $rel =~ $EXEMPT;
+  push @no_code_refs, $rel unless @code_refs or $rel =~ $EXEMPT or $wiki;
+  # Fence-stripped, so a playbook that shows the marker as an example is not flagged.
+  (my $unfenced = $body) =~ s/^(?:[ \t]*)```.*?^(?:[ \t]*)```[^\n]*$//smg;
+  push @open_questions, $rel if $unfenced =~ $OPEN_QUESTION;
   bad("$rel: HTML comment left in a concept — replace the annotation, search indexes comment text") if $text =~ /<!--/;
   bad("$rel: unfilled placeholder") if $text =~ /\[TO DETERMINE\]|\[TO BE DETERMINED|\[VERIFY AFTER|\[Project Name\]|\{\{[A-Z_0-9]+\}\}/;
   # Two views of the body. `$masked` keeps a fenced block as a single opaque token, so a
@@ -308,10 +342,12 @@ if (-f "$bundle/project/state.md") {
   # project/state-evidence.md. A warning, because a line's length is a judgement.
   my @long = grep { length($_) > $STATE_ITEM_MAX } ($s =~ /^- (.*)$/mg);
   warnl(sprintf("project/state.md: %d item(s) over %d characters — keep the line, move the evidence to project/state-evidence.md", scalar @long, $STATE_ITEM_MAX)) if @long;
-} else { warnl("project/state.md: absent — the session bootstrap has no snapshot to read") }
+} elsif (!$wiki) { warnl("project/state.md: absent — the session bootstrap has no snapshot to read") }
 
 # 6. Content drift: has the code a concept is bound to moved since the concept was written?
-my $drift_note = "step 6 skipped (no drift.lock)";
+my $drift_note = $has_lock ? "step 6 did not run (drift not on PATH)"
+               : $wiki    ? "step 6 not applicable (wiki profile, no drift.lock)"
+               :            "step 6 skipped (no drift.lock)";
 my ($nonfresh, $outside_nonfresh) = (0, 0);
 my $bundle_rel = '';
 if (length $drift_json) {
@@ -411,6 +447,7 @@ if (length $drift_json) {
   }
 }
 grouped("with empty code_refs (okf search --for-path cannot find them)", @no_code_refs);
+grouped("with an open question ([TO VERIFY] / [DA VERIFICARE]) — confirm or remove", @open_questions);
 
 # A repository that adopted drift and then ran the gate without it gets a FAIL, not a
 # green run: the other five steps above are worth reporting first, so this lands here.
@@ -423,7 +460,7 @@ if ($drift_status && !$nonfresh && !$fail) {
 } elsif ($drift_status && !$fail) {
   print "note  drift reports $outside_nonfresh non-fresh doc(s) outside $bundle_rel; not gated here\n";
 }
-print "ok    $bundle: okf gate passed with no warnings, indexes consistent both ways, frontmatter complete, no template residue, $drift_note\n" unless $fail;
+print "ok    $bundle: okf gate passed with ".($warnings ? "$warnings warning(s) above" : "no warnings").", indexes consistent both ways, frontmatter complete, no template residue, $drift_note\n" unless $fail;
 exit $fail;
 PERL
 rc=$?

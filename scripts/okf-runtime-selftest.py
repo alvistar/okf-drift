@@ -307,6 +307,145 @@ class RuntimeTests(unittest.TestCase):
         # Coverage is unknowable without the report, so it is not guessed at.
         self.assertNotIn("no tracked target", result.stdout)
 
+    def wiki(self) -> None:
+        """A wiki bundle: `.okf-profile` says wiki, no drift.lock, no drift binary, no
+        project snapshot, and one reference concept with no code_refs at all."""
+        (self.root / ".okf-profile").write_text("wiki\n")
+        (self.root / "drift.lock").unlink()
+        (self.stub / "drift").unlink()
+        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
+                                            "/usr/sbin", "/sbin"])
+        shutil.rmtree(self.bundle / "project")
+        (self.bundle / "reference").mkdir()
+        (self.bundle / "reference/index.md").write_text(
+            "- [Identity](/reference/identity.md) — Who I am.\n")
+        (self.bundle / "reference/identity.md").write_text(
+            "---\ntype: Reference\ntitle: Identity\ndescription: Who I am.\n"
+            "last_updated: 2026-09-29\nstale_after: 2099-01-01\n---\n# Identity\n\nBody.\n")
+        self.payload("search", [{"concept_id": "reference/identity",
+                                 "description": "Who I am.", "score": 1}])
+
+    def test_wiki_gate_needs_no_drift_snapshot_or_code_refs(self) -> None:
+        self.wiki()
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("warn  ", result.stdout)
+        self.assertIn("passed with no warnings", result.stdout)
+        self.assertIn("step 6 not applicable (wiki profile, no drift.lock)", result.stdout)
+
+    def test_wiki_recall_serves_hits_as_not_drift_tracked(self) -> None:
+        self.wiki()
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 hit(s)", result.stdout)
+        self.assertIn("not drift-tracked (wiki) · no status · review current", result.stdout)
+        self.assertNotIn("targets unchanged", result.stdout)
+
+    def test_wiki_with_a_drift_lock_still_withholds_stale(self) -> None:
+        # A wiki that hand-linked a concept adopted drift for it: the join comes back.
+        (self.root / ".okf-profile").write_text("wiki\n")
+        self.verdict("stale")
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("WITHHELD", result.stdout)
+        self.assertNotIn("not drift-tracked", result.stdout)
+
+    def test_unknown_profile_fails_closed(self) -> None:
+        (self.root / ".okf-profile").write_text("wikki\n")
+        for script in ("okf-check.sh", "okf-recall.sh"):
+            with self.subTest(script=script):
+                result = self.run_script(script)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("expected 'code' or 'wiki'", result.stderr)
+
+    def test_open_question_is_a_warning_and_the_pass_line_counts_it(self) -> None:
+        state = self.bundle / "project/state.md"
+        state.write_text(state.read_text().replace("- Fixture.", "- Fixture [DA VERIFICARE]."))
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("warn  1 concept(s) with an open question", result.stdout)
+        self.assertIn("passed with 1 warning(s) above", result.stdout)
+
+    def test_a_bundle_with_no_concept_fails(self) -> None:
+        self.wiki()
+        shutil.rmtree(self.bundle / "reference")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL  no concept in knowledge yet", result.stdout)
+
+    def test_wiki_gate_with_a_drift_lock_fails_on_stale(self) -> None:
+        (self.root / ".okf-profile").write_text("wiki\n")
+        self.verdict("stale")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("not applicable", result.stdout)
+
+    @unittest.skipIf(os.environ.get("OKF_SELFTEST_PINNED") == "1",
+                     "removes the pin the launcher needs; the unpinned run covers it")
+    def test_wiki_with_a_lock_but_no_drift_does_not_claim_not_applicable(self) -> None:
+        (self.root / ".okf-profile").write_text("wiki\n")
+        (self.root / ".okf-drift-version").unlink(missing_ok=True)
+        (self.stub / "drift").unlink()
+        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
+                                            "/usr/sbin", "/sbin"])
+        result = self.run_script("okf-check.sh")
+        self.assertIn("step 6 did not run (drift not on PATH)", result.stdout)
+        self.assertNotIn("not applicable", result.stdout)
+
+    def test_open_question_inside_a_fence_is_an_example_not_a_question(self) -> None:
+        state = self.bundle / "project/state.md"
+        state.write_text(state.read_text() + "\n## Example\n\n```\n[DA VERIFICARE] sample\n```\n")
+        result = self.run_script("okf-check.sh")
+        self.assertNotIn("open question", result.stdout)
+
+    def test_a_code_bundle_with_no_concept_fails(self) -> None:
+        shutil.rmtree(self.bundle / "project")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL  no concept in knowledge yet", result.stdout)
+
+    def scaffold(self, target: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["sh", str(SCRIPTS / "okf-scaffold.sh"), *args, str(target)],
+                              env=self.env, text=True, capture_output=True)
+
+    def test_scaffold_refusals_write_nothing(self) -> None:
+        cases = {
+            "wiki over a code profile": (("--profile", "wiki"), {".okf-profile": "code\n"}),
+            "code over a wiki profile": ((), {".okf-profile": "wiki\n"}),
+            "wiki into a repo with a drift.lock": (("--profile", "wiki"), {"drift.lock": ""}),
+            "wiki into a repo with a pin": (("--profile", "wiki"), {".okf-drift-version": "v0.7.0\n"}),
+        }
+        for label, (args, files) in cases.items():
+            with self.subTest(label):
+                target = Path(tempfile.mkdtemp(dir=self.root))
+                for name, text in files.items():
+                    (target / name).write_text(text)
+                result = self.scaffold(target, *args)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("refusing", result.stderr)
+                self.assertFalse((target / "knowledge").exists(), label)
+                if ".okf-profile" in files:
+                    self.assertEqual((target / ".okf-profile").read_text(), files[".okf-profile"])
+
+    def test_scaffold_rejects_a_bad_or_missing_profile_value(self) -> None:
+        target = Path(tempfile.mkdtemp(dir=self.root))
+        for args in (("--profile", "wikki"), ("--profile",)):
+            with self.subTest(args=args):
+                result = self.scaffold(target, *args) if args != ("--profile",) else \
+                    subprocess.run(["sh", str(SCRIPTS / "okf-scaffold.sh"), "--profile"],
+                                   env=self.env, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertFalse((target / "knowledge").exists())
+
+    def test_scaffold_wiki_writes_the_profile_and_its_templates(self) -> None:
+        target = Path(tempfile.mkdtemp(dir=self.root))
+        result = self.scaffold(target, "--profile", "wiki", "--name", "W")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((target / ".okf-profile").read_text(), "wiki\n")
+        for rel in ("index.md", "log.md", "reference/index.md", "playbooks/index.md", "decisions/index.md"):
+            self.assertTrue((target / "knowledge" / rel).is_file(), rel)
+        self.assertFalse((target / "knowledge/project").exists())
+
     def workflow(self, name: str, drift_version: str) -> None:
         """The consumer's own gate workflow, as /okf-setup installs it (`.yml`) or as a
         repository whose every other workflow is `.yaml` renames it."""
