@@ -280,15 +280,18 @@ What the profile changes, and nothing else:
   labels every hit `not drift-tracked (wiki)`: nothing measured its freshness, so nothing
   claims it. The lifecycle and review signals still apply.
 - **A wiki that hand-links a concept** (`drift link` on a document or a config it
-  describes) has a `drift.lock` and gets the full code-profile behaviour for it.
+  describes) has a `drift.lock`, and drift is then checked for what it bound — in the gate
+  and in recall — exactly as in a code repository. The snapshot and `code_refs` stay
+  unrequired.
 
 In both profiles the gate FAILS on a bundle with no concept, and warns on an open
 question written into a concept — `[TO VERIFY]` or `[DA VERIFICARE]` — so an unconfirmed
 claim stays visible instead of passing.
 
-Skip Steps 3–3c: there is no CI job, no pin and no drift bootstrap to install. Run the
-gate directly (`sh <plugin>/scripts/okf-check.sh knowledge`) or pin a release at or above
-the one that introduced the profile if you want `okf-runtime`. Give `CLAUDE.md` a short
+Skip Steps 3b–3c: there is no drift bootstrap and no CI job to install. To run the gate
+and recall through `okf-drift:okf-runtime`, pin a release at or above v0.11.0 with
+`okf-pin.sh` (the pin alone; the integration helper also installs the code-profile CI
+workflow and Work Loop, which a wiki does not use). Give `CLAUDE.md` a short
 Knowledge base section instead of the Work Loop: what lives in the bundle and what lives
 elsewhere (tasks, mail), how to search it, and how a change is recorded — concept dated
 with its evidence, a line in `log.md`, the gate.

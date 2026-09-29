@@ -16,8 +16,11 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
   `.okf-profile` (`wiki`) beside the bundle. With no `drift.lock`, the gate reports step 6
   as not applicable instead of warning, and no longer reports a missing `project/state.md`
   or empty `code_refs`; recall runs without the drift join and labels each hit
-  `not drift-tracked (wiki)`. A wiki with a `drift.lock` behaves as a code repository for
-  what it bound. An unknown profile fails closed (exit 2) in both gate and recall.
+  `not drift-tracked (wiki)`. A wiki with a `drift.lock` gets the drift check back for what it
+  bound, in the gate and in recall. An unknown profile fails closed (exit 2) in both gate and recall.
+  The scaffold refuses, before writing anything, to lay down a bundle whose profile
+  disagrees with an existing `.okf-profile`, or a wiki into a repository that shows code
+  signs (`drift.lock`, `.okf-drift-version`, `knowledge/project/state.md`).
   Measured on the reference wiki consumer (26 concepts): the gate went from three
   warnings that did not apply to none.
 - The gate warns on an open question written into a concept, `[TO VERIFY]` or
@@ -30,7 +33,8 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 ### Fixed
 
 - The gate's pass line said "no warnings" even after printing warnings; it now counts
-  them, including the ones printed before the Perl stage.
+  them, including the ones printed before the Perl stage. With a `drift.lock` present and
+  no `drift` on PATH it says "step 6 did not run" instead of "skipped (no drift.lock)".
 
 ## [0.10.0] - 2026-09-27
 

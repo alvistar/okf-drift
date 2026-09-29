@@ -159,11 +159,13 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 printf '%s' "$json" > "$tmp/okf.json" || exit 2
 printf '%s' "$drift_json" > "$tmp/drift.json" || exit 2
 
-perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" "$okf_status" "$drift_status" "$adoption_error" "$profile" "$shell_warns" <<'PERL'
+perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" "$okf_status" "$drift_status" "$adoption_error" "$profile" "$shell_warns" "$( [ -f "$parent/drift.lock" ] && echo 1 || echo 0 )" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP; use File::Find; use File::Basename;
 binmode STDOUT, ':utf8';
-my ($bundle, $json_file, $drift_file, $parent, $okf_status, $drift_status, $adoption_error, $profile, $shell_warns) = @ARGV;
+my ($bundle, $json_file, $drift_file, $parent, $okf_status, $drift_status, $adoption_error, $profile, $shell_warns, $has_lock) = @ARGV;
+# A wiki is relieved of the code-only expectations (snapshot, code_refs) always; of drift
+# only while it has no drift.lock — one that bound something is checked like code for it.
 my $wiki = ($profile // 'code') eq 'wiki';
 # Read as raw bytes and decode explicitly: decode_json expects UTF-8 octets, and a
 # ':utf8' read would hand it characters instead.
@@ -277,7 +279,9 @@ for my $rel (@concepts) {
   bad("$rel: last_updated: must be an ISO date (got '".($f{last_updated}//'')."')") unless ($f{last_updated}//'') =~ $ISO;
   bad("$rel: stale_after: must be an ISO date") if exists $f{stale_after} && $f{stale_after} !~ $ISO;
   push @no_code_refs, $rel unless @code_refs or $rel =~ $EXEMPT or $wiki;
-  push @open_questions, $rel if $body =~ $OPEN_QUESTION;
+  # Fence-stripped, so a playbook that shows the marker as an example is not flagged.
+  (my $unfenced = $body) =~ s/^(?:[ \t]*)```.*?^(?:[ \t]*)```[^\n]*$//smg;
+  push @open_questions, $rel if $unfenced =~ $OPEN_QUESTION;
   bad("$rel: HTML comment left in a concept — replace the annotation, search indexes comment text") if $text =~ /<!--/;
   bad("$rel: unfilled placeholder") if $text =~ /\[TO DETERMINE\]|\[TO BE DETERMINED|\[VERIFY AFTER|\[Project Name\]|\{\{[A-Z_0-9]+\}\}/;
   # Two views of the body. `$masked` keeps a fenced block as a single opaque token, so a
@@ -341,7 +345,9 @@ if (-f "$bundle/project/state.md") {
 } elsif (!$wiki) { warnl("project/state.md: absent — the session bootstrap has no snapshot to read") }
 
 # 6. Content drift: has the code a concept is bound to moved since the concept was written?
-my $drift_note = $wiki ? "step 6 not applicable (wiki profile, no drift.lock)" : "step 6 skipped (no drift.lock)";
+my $drift_note = $has_lock ? "step 6 did not run (drift not on PATH)"
+               : $wiki    ? "step 6 not applicable (wiki profile, no drift.lock)"
+               :            "step 6 skipped (no drift.lock)";
 my ($nonfresh, $outside_nonfresh) = (0, 0);
 my $bundle_rel = '';
 if (length $drift_json) {

@@ -29,7 +29,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --name) name="$2"; shift 2 ;;
     --name=*) name="${1#--name=}"; shift ;;
-    --profile) profile="$2"; shift 2 ;;
+    --profile) [ $# -ge 2 ] || { echo "--profile needs a value (code or wiki)" >&2; exit 2; }; profile="$2"; shift 2 ;;
     --profile=*) profile="${1#--profile=}"; shift ;;
     --force) force=1; shift ;;
     -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
@@ -55,6 +55,24 @@ plus_months() {
 stale3=$(plus_months 3)
 stale6=$(plus_months 6)
 
+# The profile file is read by the gate and recall and switches checks off, so the scaffold
+# never lets it disagree with what is being laid down — refused here, before anything is
+# written, so a refusal leaves nothing half-done behind.
+declared=""
+[ -f "$target/.okf-profile" ] && declared=$(tr -d '[:space:]' < "$target/.okf-profile")
+if [ -n "$declared" ] && [ "$declared" != "$profile" ]; then
+  echo "refusing: $target/.okf-profile declares '$declared', not '$profile'" >&2
+  exit 1
+fi
+if [ "$profile" = wiki ]; then
+  for marker in drift.lock .okf-drift-version knowledge/project/state.md; do
+    if [ -e "$target/$marker" ]; then
+      echo "refusing: $target/$marker says this is a code repository; a wiki profile would switch off its drift, snapshot and code_refs warnings" >&2
+      exit 1
+    fi
+  done
+fi
+
 if [ -e "$bundle" ] && [ "$force" -eq 0 ]; then
   echo "refusing: $bundle already exists (use --force to add only the missing files)" >&2
   exit 1
@@ -77,10 +95,6 @@ fi
 done
 
 if [ "$profile" = wiki ]; then
-  if [ -f "$target/.okf-profile" ] && [ "$(tr -d '[:space:]' < "$target/.okf-profile")" != wiki ]; then
-    echo "refusing: $target/.okf-profile already declares another profile" >&2
-    exit 1
-  fi
   printf 'wiki\n' > "$target/.okf-profile"
   echo "  + wrote   .okf-profile (wiki)"
 fi
@@ -102,7 +116,7 @@ if [ "$profile" = wiki ]; then
   echo "Next:"
   echo "  1. Add the categories this knowledge base needs (see knowledge/reference/index.md)."
   echo "  2. Write the first concepts; the gate FAILS on a bundle with none."
-  echo "  3. Run the gate: sh <plugin>/scripts/okf-check.sh knowledge"
+  echo "  3. Run the gate: okf-drift:okf-runtime in gate mode (pin >= v0.11.0 with okf-pin.sh)"
   echo "  4. Add a Knowledge base section to CLAUDE.md: see /okf-setup, Profile: wiki."
   exit 0
 fi

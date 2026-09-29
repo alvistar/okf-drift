@@ -372,10 +372,11 @@ jobs:
           wiki=$(mktemp -d)
           scripts/okf-scaffold.sh --profile wiki --name "Wiki" "$wiki"
           [ "$(cat "$wiki/.okf-profile")" = wiki ] || { echo "::error::scaffold did not write .okf-profile"; exit 1; }
-          if (cd "$wiki" && "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge); then
-            echo "::error::the gate passed an empty wiki scaffold"
-            exit 1
-          fi
+          empty=$(cd "$wiki" && "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge 2>&1 || true)
+          case "$empty" in
+            *"FAIL  no concept"*) echo "ok — the gate fails an empty wiki scaffold, for the right reason" ;;
+            *) echo "::error::the gate did not fail an empty wiki scaffold on 'no concept': $empty"; exit 1 ;;
+          esac
           cat > "$wiki/knowledge/reference/identity.md" <<'MD'
           ---
           type: Reference

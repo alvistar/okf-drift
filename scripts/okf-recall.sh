@@ -66,7 +66,9 @@ if [ -f .okf-profile ]; then
   esac
 fi
 nodrift=0
-[ "$profile" = wiki ] && [ ! -f drift.lock ] && nodrift=1
+# Both places a lock could sit: the root (where recall runs drift) and beside the bundle
+# (where the gate looks). Either one means something was bound, so the join stays on.
+[ "$profile" = wiki ] && [ ! -f drift.lock ] && [ ! -f "$(dirname "$bundle")/drift.lock" ] && nodrift=1
 [ "$nodrift" = 1 ] || command -v drift >/dev/null 2>&1 || { echo "drift not on PATH — okf-recall needs it to tell a fact from a stale one; install drift or use \`okf search\` knowing it cannot" >&2; exit 2; }
 [ "$nodrift" = 1 ] || [ -f drift.lock ] || { echo "no drift.lock at the repository root — okf-recall will not serve concepts it cannot check; use /okf-setup to bootstrap the pinned drift runtime first" >&2; exit 2; }
 
