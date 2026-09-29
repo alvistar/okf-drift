@@ -41,7 +41,10 @@ working on the runtime, never as a recovery from verification failure.
 
 Report the command's status and diagnostics. A failing gate is not green; withheld
 recall hits are not weaker facts. Read their bound code instead of quoting them.
-If recall fails, stop: no bare-search fallback. The gate may warn when drift has
+If recall fails, stop: no bare-search fallback. A bundle declared `wiki` in
+`.okf-profile` with no `drift.lock` recalls without the join by design, labelling each hit
+`not drift-tracked (wiki)`; that is not a degraded result, but it is not a freshness claim
+either. The gate may warn when drift has
 not been adopted; report that degraded result rather than claiming drift passed.
 
 The gate warns, and does not fail, for a concept with no tracked target; a consumer

@@ -365,3 +365,40 @@ jobs:
             exit 1
           fi
           echo "ok — scaffold validates clean and the gate fails it, as it must until population"
+
+      - name: wiki scaffold validates clean, the gate fails it empty and passes it populated
+        run: |
+          set -eu
+          wiki=$(mktemp -d)
+          scripts/okf-scaffold.sh --profile wiki --name "Wiki" "$wiki"
+          [ "$(cat "$wiki/.okf-profile")" = wiki ] || { echo "::error::scaffold did not write .okf-profile"; exit 1; }
+          if (cd "$wiki" && "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge); then
+            echo "::error::the gate passed an empty wiki scaffold"
+            exit 1
+          fi
+          cat > "$wiki/knowledge/reference/identity.md" <<'MD'
+          ---
+          type: Reference
+          title: Identity
+          description: Who owns this knowledge base.
+          last_updated: 2026-09-29
+          ---
+
+          # Identity
+
+          The owner.
+          MD
+          sed -i 's/^## Index$/## Index\n\n- [Identity](\/reference\/identity.md) — Who owns this knowledge base./' "$wiki/knowledge/reference/index.md"
+          out=$(cd "$wiki" && "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge)
+          echo "$out"
+          case "$out" in
+            *"warn  "*) echo "::error::a populated wiki drew warnings (drift, state or code_refs leaked into the wiki profile)"; exit 1 ;;
+            *"step 6 not applicable (wiki profile"*) echo "ok — wiki gate green with no drift, no snapshot, no code_refs" ;;
+            *) echo "::error::unexpected wiki gate output"; exit 1 ;;
+          esac
+          rec=$(cd "$wiki" && "$GITHUB_WORKSPACE/scripts/okf-recall.sh" "owner" knowledge)
+          echo "$rec"
+          case "$rec" in
+            *"not drift-tracked (wiki)"*) echo "ok — wiki recall through the real okf, without drift" ;;
+            *) echo "::error::wiki recall did not serve the concept"; exit 1 ;;
+          esac

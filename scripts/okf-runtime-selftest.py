@@ -307,6 +307,72 @@ class RuntimeTests(unittest.TestCase):
         # Coverage is unknowable without the report, so it is not guessed at.
         self.assertNotIn("no tracked target", result.stdout)
 
+    def wiki(self) -> None:
+        """A wiki bundle: `.okf-profile` says wiki, no drift.lock, no drift binary, no
+        project snapshot, and one reference concept with no code_refs at all."""
+        (self.root / ".okf-profile").write_text("wiki\n")
+        (self.root / "drift.lock").unlink()
+        (self.stub / "drift").unlink()
+        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
+                                            "/usr/sbin", "/sbin"])
+        shutil.rmtree(self.bundle / "project")
+        (self.bundle / "reference").mkdir()
+        (self.bundle / "reference/index.md").write_text(
+            "- [Identity](/reference/identity.md) — Who I am.\n")
+        (self.bundle / "reference/identity.md").write_text(
+            "---\ntype: Reference\ntitle: Identity\ndescription: Who I am.\n"
+            "last_updated: 2026-09-29\nstale_after: 2099-01-01\n---\n# Identity\n\nBody.\n")
+        self.payload("search", [{"concept_id": "reference/identity",
+                                 "description": "Who I am.", "score": 1}])
+
+    def test_wiki_gate_needs_no_drift_snapshot_or_code_refs(self) -> None:
+        self.wiki()
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("warn  ", result.stdout)
+        self.assertIn("passed with no warnings", result.stdout)
+        self.assertIn("step 6 not applicable (wiki profile, no drift.lock)", result.stdout)
+
+    def test_wiki_recall_serves_hits_as_not_drift_tracked(self) -> None:
+        self.wiki()
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 hit(s)", result.stdout)
+        self.assertIn("not drift-tracked (wiki) · no status · review current", result.stdout)
+        self.assertNotIn("targets unchanged", result.stdout)
+
+    def test_wiki_with_a_drift_lock_still_withholds_stale(self) -> None:
+        # A wiki that hand-linked a concept adopted drift for it: the join comes back.
+        (self.root / ".okf-profile").write_text("wiki\n")
+        self.verdict("stale")
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("WITHHELD", result.stdout)
+        self.assertNotIn("not drift-tracked", result.stdout)
+
+    def test_unknown_profile_fails_closed(self) -> None:
+        (self.root / ".okf-profile").write_text("wikki\n")
+        for script in ("okf-check.sh", "okf-recall.sh"):
+            with self.subTest(script=script):
+                result = self.run_script(script)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("expected 'code' or 'wiki'", result.stderr)
+
+    def test_open_question_is_a_warning_and_the_pass_line_counts_it(self) -> None:
+        state = self.bundle / "project/state.md"
+        state.write_text(state.read_text().replace("- Fixture.", "- Fixture [DA VERIFICARE]."))
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("warn  1 concept(s) with an open question", result.stdout)
+        self.assertIn("passed with 1 warning(s) above", result.stdout)
+
+    def test_a_bundle_with_no_concept_fails(self) -> None:
+        self.wiki()
+        shutil.rmtree(self.bundle / "reference")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL  no concept in knowledge yet", result.stdout)
+
     def workflow(self, name: str, drift_version: str) -> None:
         """The consumer's own gate workflow, as /okf-setup installs it (`.yml`) or as a
         repository whose every other workflow is `.yaml` renames it."""

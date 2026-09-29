@@ -254,6 +254,50 @@ zero-token check (validate, the gate, and `git log --since=<last_updated> --
 by a surgical-edit prompt. A review advances **both** `last_updated` and `stale_after`,
 or the concept stays expired.
 
+## Profile: wiki — a knowledge base that describes no code
+
+Everything above assumes a software repository. A personal or company knowledge base —
+people, things owned, open matters, procedures, decisions — has no code for drift to
+anchor, no `code_refs` to fill and no project snapshot to keep. Scaffold it with:
+
+```bash
+"${PLUGIN_ROOT}/scripts/okf-scaffold.sh" --profile wiki --name "<Name>" .
+```
+
+That lays down `index.md`, `log.md`, `reference/`, `playbooks/` and `decisions/` (the
+last two with non-code formats at the top of their indexes), and writes `.okf-profile`
+containing `wiki` beside the bundle. Add the categories the knowledge base needs — the
+reference consumer uses `contacts/`, `assets/`, `matters/` (one per case, with its state
+dated inside it) — each with an `index.md` and a row in the root index.
+
+What the profile changes, and nothing else:
+
+- **Gate.** With no `drift.lock`, step 6 is *not applicable* rather than skipped with a
+  warning, and neither a missing `project/state.md` nor an empty `code_refs` is reported.
+  Everything else — frontmatter, one-line descriptions, indexes both ways, decisions,
+  links, empty sections, placeholders — is checked exactly as for code.
+- **Recall.** With no `drift.lock`, `okf-recall.sh` runs without the drift join and
+  labels every hit `not drift-tracked (wiki)`: nothing measured its freshness, so nothing
+  claims it. The lifecycle and review signals still apply.
+- **A wiki that hand-links a concept** (`drift link` on a document or a config it
+  describes) has a `drift.lock` and gets the full code-profile behaviour for it.
+
+In both profiles the gate FAILS on a bundle with no concept, and warns on an open
+question written into a concept — `[TO VERIFY]` or `[DA VERIFICARE]` — so an unconfirmed
+claim stays visible instead of passing.
+
+Skip Steps 3–3c: there is no CI job, no pin and no drift bootstrap to install. Run the
+gate directly (`sh <plugin>/scripts/okf-check.sh knowledge`) or pin a release at or above
+the one that introduced the profile if you want `okf-runtime`. Give `CLAUDE.md` a short
+Knowledge base section instead of the Work Loop: what lives in the bundle and what lives
+elsewhere (tasks, mail), how to search it, and how a change is recorded — concept dated
+with its evidence, a line in `log.md`, the gate.
+
+Search: `okf search` is BM25 and misses paraphrases ("home phone" for a concept that says
+"landline"). A local hybrid index — qmd with a multilingual embedding model, the bundle
+as a collection with `index.md` and `log.md` ignored — found three of the four questions
+BM25 missed on the reference consumer; run both, they fail on different questions.
+
 ## Rules the templates encode
 
 - **`type:` is the only field okf requires.** `title`, `description`, `tags`, `status`,

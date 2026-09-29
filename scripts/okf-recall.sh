@@ -31,6 +31,11 @@
 # repository root, or no `drift` on PATH, this exits 2 with one line rather than quietly
 # degrading into a bare `okf search`. Bootstrap the lock with `okf-drift-bootstrap.sh`.
 #
+# The one exception is a bundle declared `wiki` in `.okf-profile` at the repository root
+# and carrying no drift.lock: it describes no code, so there is nothing for drift to
+# check. Recall then runs without the join and says so on every hit ("not drift-tracked")
+# instead of implying a freshness nobody measured. The review signal still applies.
+#
 # Measured on drift v0.10.1 and okf v0.3.0 (2026-09-16):
 #   * `okf search --json` is an ARRAY of {concept_id, title, type, description, score,
 #     tags, code_refs, matched_on, inbound, ...}. There is no `path`; the doc path is
@@ -52,8 +57,18 @@ bundle=${2:-knowledge}
 [ -n "$terms" ] || { echo "usage: okf-recall.sh \"<terms>\" [bundle-dir]" >&2; exit 2; }
 [ -d "$bundle" ] || { echo "no bundle at $bundle (run from the repository root)" >&2; exit 2; }
 command -v okf   >/dev/null 2>&1 || { echo "okf not on PATH" >&2; exit 2; }
-command -v drift >/dev/null 2>&1 || { echo "drift not on PATH — okf-recall needs it to tell a fact from a stale one; install drift or use \`okf search\` knowing it cannot" >&2; exit 2; }
-[ -f drift.lock ] || { echo "no drift.lock at the repository root — okf-recall will not serve concepts it cannot check; use /okf-setup to bootstrap the pinned drift runtime first" >&2; exit 2; }
+profile=code
+if [ -f .okf-profile ]; then
+  profile=$(tr -d '[:space:]' < .okf-profile)
+  case "$profile" in
+    code|wiki) ;;
+    *) echo "okf-recall: .okf-profile says '$profile'; expected 'code' or 'wiki'" >&2; exit 2 ;;
+  esac
+fi
+nodrift=0
+[ "$profile" = wiki ] && [ ! -f drift.lock ] && nodrift=1
+[ "$nodrift" = 1 ] || command -v drift >/dev/null 2>&1 || { echo "drift not on PATH — okf-recall needs it to tell a fact from a stale one; install drift or use \`okf search\` knowing it cannot" >&2; exit 2; }
+[ "$nodrift" = 1 ] || [ -f drift.lock ] || { echo "no drift.lock at the repository root — okf-recall will not serve concepts it cannot check; use /okf-setup to bootstrap the pinned drift runtime first" >&2; exit 2; }
 
 # Keep payloads out of argv (Linux's per-argument limit is 131072 bytes), just as
 # the gate does. Failed searches are not an empty result set; preserve stderr.
@@ -61,14 +76,19 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/okf-recall.XXXXXX") || exit 2
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 2' INT TERM
 okf search "$terms" "$bundle" --json > "$tmp/search.json" || { echo "okf-recall: okf search failed" >&2; exit 2; }
-drift check --format json > "$tmp/drift.json"
-drift_status=$?
+if [ "$nodrift" = 1 ]; then
+  printf '%s' '{"docs":[]}' > "$tmp/drift.json"
+  drift_status=0
+else
+  drift check --format json > "$tmp/drift.json"
+  drift_status=$?
+fi
 
-perl - "$bundle" "$terms" "$tmp/search.json" "$tmp/drift.json" "$drift_status" "$(date +%F)" <<'PERL'
+perl - "$bundle" "$terms" "$tmp/search.json" "$tmp/drift.json" "$drift_status" "$(date +%F)" "$nodrift" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP; use Cwd qw(abs_path); use File::Spec;
 binmode STDOUT, ':utf8';
-my ($bundle, $terms, $search_file, $check_file, $drift_status, $today) = @ARGV;
+my ($bundle, $terms, $search_file, $check_file, $drift_status, $today, $nodrift) = @ARGV;
 sub unusable { print STDERR "okf-recall: @_\n"; exit 2 }
 sub slurp_raw { my $f=shift; open my $h,'<:raw',$f or unusable("$f: $!"); local $/; my $c=<$h>; defined $c ? $c : '' }
 my $hits = eval { decode_json(slurp_raw($search_file)) };
@@ -122,7 +142,8 @@ sub signals {
   my $n = scalar @{ $d->{anchors} || [] };
   # A `fresh` doc's anchors are all fresh (drift reports a doc as the worst of its
   # anchors), so a count is the whole of what was observed.
-  my $tracking = $n ? sprintf("%d target%s unchanged", $n, $n == 1 ? '' : 's')
+  my $tracking = $d->{_nodrift} ? 'not drift-tracked (wiki)'
+               : $n ? sprintf("%d target%s unchanged", $n, $n == 1 ? '' : 's')
                     : 'no tracked target';
   my $status = length($fm->{status} // '') ? $fm->{status} : 'no status';
   my $sa = $fm->{stale_after} // '';
@@ -138,7 +159,7 @@ for my $h (@$hits) {
     unless ref $h eq 'HASH' && defined $h->{concept_id} && !ref $h->{concept_id} && length $h->{concept_id};
   my $id   = $h->{concept_id};
   my $path = "$bundle/$id.md";
-  my $d    = $doc{$path};
+  my $d    = $nodrift ? { result => 'fresh', anchors => [], _nodrift => 1 } : $doc{$path};
   # Unbound concepts still receive an explicit fresh verdict from drift. Missing
   # or unknown verdicts indicate an incomplete report, not permission to quote.
   unusable("no valid drift verdict for $path; withholding all search results")
@@ -174,7 +195,15 @@ for my $e (@fresh) {
   print head_line($h), "   ", signals($d, $fm), "\n";
   print wrapped($h->{description}, '      '), "\n\n";
 }
-if (@fresh) {
+if (@fresh && $nodrift) {
+  print <<'NOTE';
+"not drift-tracked" means this wiki bundle binds no code, so nothing checked these
+concepts against anything: they are as current as their last_updated. "review expired"
+means the writer's own review date has passed. A deprecated concept is history.
+
+NOTE
+}
+elsif (@fresh) {
   print <<'NOTE';
 "targets unchanged" means the code under the anchors did not move. It does not mean the
 prose is right, and it says nothing about claims the anchors do not cover. "no tracked

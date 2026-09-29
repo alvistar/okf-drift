@@ -5,7 +5,8 @@ description: |
   Recall from an OKF knowledge bundle without serving a stale fact as a fact:
   `okf search --json` joined with `drift check --format json`, so a concept whose bound
   code changed since it was written is withheld from the answer and reported with the
-  commit to blame. Drift is a hard dependency — no lock, no recall.
+  commit to blame. Drift is a hard dependency — no lock, no recall — except in a bundle
+  declared `wiki` (`.okf-profile`), which binds no code and recalls without the join.
 
   MANUAL TRIGGER ONLY: invoke only when the user types /okf-read.
 

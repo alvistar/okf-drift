@@ -46,6 +46,14 @@ changed hex signature — so it is always paired with a dated line in `knowledge
 naming what was checked against what. Without that line the plugin degrades into a tool that
 silences its own alarm.
 
+## Profiles
+
+`code` (the default) is everything above. `wiki` is for a knowledge base that describes no
+code — personal admin, a small company's facts and procedures: `okf-scaffold.sh --profile
+wiki` writes `.okf-profile`, and the gate and recall then stop asking for drift, a project
+snapshot and `code_refs`, while every structural check stays. See `/okf-setup`, *Profile:
+wiki*.
+
 ## Install
 
 From the marketplace, if you have `alvistar/alvistar-skills` added:
