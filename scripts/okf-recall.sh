@@ -18,11 +18,14 @@
 #              none. It is an observation about the anchors, never about the prose, and it
 #              says nothing about claims no anchor covers.
 #   lifecycle  okf `status` from the concept's own frontmatter (`stable`/`deprecated`/
-#              `draft`), or `no status`. Measured on okf v0.3.0: `okf search --json` does
+#              `draft`), or `no status`. Measured on okf v0.6.0: `okf search --json` does
 #              NOT emit `status` even when the frontmatter carries it, so this is read from
 #              the file — the same read that already yields `last_updated`.
-#   review     `stale_after` vs today: `review current`, `review expired <date>`, or
-#              `no review date`.
+#   review     `stale_after` vs today: `review current`, `review due <date>` within the next
+#              OKF_REVIEW_WINDOW_DAYS days (default 30, the gate's window), `review expired
+#              <date>`, `review date invalid (<date>)` or `no review date`. Today is the
+#              UTC date, as okf's is. A date equal to today is expired: okf --stale
+#              fails a concept on its stale_after day, not the day after.
 #
 # A stale or broken doc is marked STALE in place of the tracking signal, regardless of
 # the other two. It used to be WITHHELD in a separate block. Measured over the reference
@@ -41,10 +44,15 @@
 # check. Recall then runs without the join and says so on every hit ("not drift-tracked")
 # instead of implying a freshness nobody measured. The review signal still applies.
 #
-# Measured on drift v0.10.1 and okf v0.3.0 (2026-09-16):
+# Measured on drift v0.10.1 (2026-09-16) and okf v0.6.0 (2026-10-08):
 #   * `okf search --json` is an ARRAY of {concept_id, title, type, description, score,
-#     tags, code_refs, matched_on, inbound, ...}. There is no `path`; the doc path is
-#     `<bundle>/<concept_id>.md`.
+#     tags, matched_on, inbound, scope, origin, priority, ...}. There is no `path`; the doc
+#     path is `<bundle>/<concept_id>.md`.
+#   * since okf v0.5.0 search defaults to `--scope all`: concepts under ~/.okf (or
+#     OKF_USER_DIR), /etc/okf and .okf/vendor/ join the results with ids like
+#     `user:notes/x`, which have no file in the bundle and no drift verdict — measured, one
+#     such hit made recall refuse everything. Recall searches `--scope project` only (and,
+#     on an okf older than v0.5.0, which has neither the flag nor the other scopes, plainly).
 #   * `drift check --format json` covers EVERY .md in the repository, not only the bundle,
 #     so the join is on the path, not on position. A doc with no anchors is `fresh`,
 #     including a concept whose `code_refs` are all non-code paths.
@@ -88,7 +96,12 @@ fi
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/okf-recall.XXXXXX") || exit 2
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 2' INT TERM
-okf search "$terms" "$bundle" --json > "$tmp/search.json" || { echo "okf-recall: okf search failed" >&2; exit 2; }
+# --scope arrived in okf v0.5.0; v0.3.0 rejects the flag ("flag provided but not defined")
+# and has no other scope to leak in. Ask the binary rather than parse its version.
+scope=''
+okf search --help 2>&1 | grep -q -- '-scope' && scope='--scope project'
+# shellcheck disable=SC2086
+okf search "$terms" "$bundle" $scope --json > "$tmp/search.json" || { echo "okf-recall: okf search failed" >&2; exit 2; }
 if [ "$nodrift" != 0 ]; then
   printf '%s' '{"docs":[]}' > "$tmp/drift.json"
   drift_status=0
@@ -97,12 +110,21 @@ else
   drift_status=$?
 fi
 
-perl - "$bundle" "$terms" "$tmp/search.json" "$tmp/drift.json" "$drift_status" "$(date +%F)" "$nodrift" "$nodrift_why" <<'PERL'
+perl - "$bundle" "$terms" "$tmp/search.json" "$tmp/drift.json" "$drift_status" "$(date -u +%F)" "$nodrift" "$nodrift_why" <<'PERL'
 use strict; use warnings; use utf8;
-use JSON::PP; use Cwd qw(abs_path); use File::Spec;
+use JSON::PP; use Cwd qw(abs_path); use File::Spec; use Time::Local qw(timegm);
 binmode STDOUT, ':utf8';
 my ($bundle, $terms, $search_file, $check_file, $drift_status, $today, $nodrift, $nodrift_why) = @ARGV;
 sub unusable { print STDERR "okf-recall: @_\n"; exit 2 }
+my $REVIEW_WINDOW = length($ENV{OKF_REVIEW_WINDOW_DAYS} // '') ? $ENV{OKF_REVIEW_WINDOW_DAYS} : 30;
+unusable("OKF_REVIEW_WINDOW_DAYS='$REVIEW_WINDOW' is not a whole number of days") unless $REVIEW_WINDOW =~ /^\d+$/;
+# Days since the epoch for an ISO date; undef for anything else, an impossible date included.
+sub day_number {
+  my ($y, $m, $d) = ($_[0] // '') =~ /^(\d{4})-(\d{2})-(\d{2})$/ or return undef;
+  return undef if $y < 1000;   # Time::Local reads a smaller year as an offset from 1900
+  my $t = eval { timegm(0, 0, 0, $d, $m - 1, $y) };
+  return defined $t ? int($t / 86400) : undef;
+}
 sub slurp_raw { my $f=shift; open my $h,'<:raw',$f or unusable("$f: $!"); local $/; my $c=<$h>; defined $c ? $c : '' }
 my $hits = eval { decode_json(slurp_raw($search_file)) };
 unusable("okf search produced no valid JSON array") unless ref $hits eq 'ARRAY';
@@ -163,9 +185,12 @@ sub signals {
                     : 'no tracked target';
   my $status = length($fm->{status} // '') ? $fm->{status} : 'no status';
   my $sa = $fm->{stale_after} // '';
-  my $review = $sa !~ /^\d{4}-\d{2}-\d{2}$/ ? 'no review date'
-             : $sa ge $today                  ? 'review current'
-             :                                  "review expired $sa";
+  my $days = day_number($sa);
+  my $review = !length $sa                              ? 'no review date'
+             : !defined $days                           ? "review date invalid ($sa)"
+             : $days <= day_number($today)                ? "review expired $sa"
+             : $days <= day_number($today) + $REVIEW_WINDOW ? "review due $sa"
+             :                                              'review current';
   return "$tracking · $status · $review";
 }
 

@@ -25,8 +25,9 @@ SHIMS = {
     "6767117dcfb9e1bc5096f102af3edac1f5ac246bdbc9097084dad1d4a43ece79",
 }
 WORKFLOWS = {
-    "84c2669a3da9249431771f8a861074161ce7edca73430c534eee546c87d16260",
-    "c9cfd3865f4886360e6c3b0259c4a6906f9d616606fcc16016a0e63c9da333a3",
+    "84c2669a3da9249431771f8a861074161ce7edca73430c534eee546c87d16260",  # v0.5.0-v0.5.1
+    "c9cfd3865f4886360e6c3b0259c4a6906f9d616606fcc16016a0e63c9da333a3",  # v0.6.0-v0.6.2
+    "bb19190ef4d0f91ad149f33a1c75aa56f3595312b9bd060512c3e42f663195f0",  # v0.7.0-v0.12.0 (okf v0.3.0)
 }
 # Accepted official template digests; the current template text is compared separately.
 # Each entry names the releases whose template body digests to it, measured from the

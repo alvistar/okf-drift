@@ -107,7 +107,7 @@ if command -v okf >/dev/null 2>&1; then
     exit 1
   }
 else
-  echo "okf is not on PATH — install it (go install github.com/okf-memory/okf-agent-memory/cmd/okf@latest)" >&2
+  echo "okf is not on PATH — install it (go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0, Go 1.26+)" >&2
   echo "and run: okf validate knowledge --strict --drift" >&2
 fi
 

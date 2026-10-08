@@ -3,10 +3,12 @@
 #
 #   okf-check.sh [bundle-dir]        (default: knowledge)      exit 0 = clean
 #
-# Measured on okf v0.3.0: `okf validate --strict --drift --stale` exits non-zero for a
-# missing `type`, a broken link, an orphan (a concept with no links in OR out) and an
-# expired `stale_after` — and for nothing else. A dead `code_refs` path is a WARNING that
-# leaves the exit code at 0 even under --strict. Indexes are never read. So this script:
+# Measured on okf v0.6.0: `okf validate --strict --drift --stale` exits non-zero for a
+# missing `type`, a broken link, an orphan (a concept with no links in OR out), a status
+# outside draft|stable|deprecated, a bare-string `sources` item and a `stale_after` that is
+# today or earlier — and for nothing else. A dead `code_refs` path and a concept missing
+# from its parent index are WARNINGS that leave the exit code at 0 even under --strict;
+# index descriptions are never compared. So this script:
 #
 #   1. runs okf's gate and treats its warning list as fatal;
 #   2. checks every index row resolves to a concept, is unique, and carries the concept's
@@ -18,7 +20,9 @@
 #   4. fails on leftover template material: HTML comments (search indexes them), the
 #      population placeholders, and a section with no content;
 #   5. checks the reserved files: root okf_version, log.md, project/state.md's three lists,
-#      and warns on a state item long enough to be evidence;
+#      and warns on a state item long enough to be evidence — and, over every concept, on
+#      a `stale_after` that falls within the next OKF_REVIEW_WINDOW_DAYS days (default
+#      30): the day it arrives, step 1 fails it, so the review is better done before;
 #   6. runs `drift check --format json` from the bundle's parent and fails on any doc in
 #      the bundle that is not `fresh` — an anchor whose code changed after the concept was
 #      last believed (with the commit to blame) or a dead markdown link. A non-zero drift
@@ -70,8 +74,18 @@ command -v okf >/dev/null 2>&1 || { echo "okf not on PATH" >&2; exit 2; }
 
 ver=$(okf version 2>/dev/null | head -1)
 case "$ver" in
-  *v0.3.0*) ;;
-  *) shell_warns=$((shell_warns+1)); echo "warn  okf is '$ver'; this gate was measured against v0.3.0 — re-check references/okf-quirks.md" ;;
+  *v0.6.0*) ;;
+  *) shell_warns=$((shell_warns+1)); echo "warn  okf is '$ver'; this gate was measured against v0.6.0 — re-check references/okf-quirks.md" ;;
+esac
+
+# okf v0.6.0 refuses a bundle root that resolves outside the directory holding it — a
+# `knowledge -> /elsewhere` symlink — with no JSON, which step 1 would only report as "no
+# JSON". Name the cause here instead. (v0.3.0 loaded the same link as an EMPTY bundle.)
+real_bundle=$(CDPATH= cd -P -- "$bundle" 2>/dev/null && pwd) || { echo "okf-check: cannot resolve $bundle" >&2; exit 2; }
+real_parent=$(CDPATH= cd -P -- "$(dirname "$bundle")" 2>/dev/null && pwd) || { echo "okf-check: cannot resolve the parent of $bundle" >&2; exit 2; }
+case "$real_bundle/" in
+  "${real_parent%/}"/*) ;;
+  *) echo "FAIL  $bundle resolves to $real_bundle, outside $real_parent — okf v0.6.0 refuses a bundle root that leaves its parent directory; move the bundle into the repository instead of linking it"; exit 1 ;;
 esac
 
 json=$(okf validate "$bundle" --strict --drift --stale --json)
@@ -162,7 +176,7 @@ printf '%s' "$drift_json" > "$tmp/drift.json" || exit 2
 
 perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" "$okf_status" "$drift_status" "$adoption_error" "$profile" "$shell_warns" "$( [ -f "$parent/drift.lock" ] && echo 1 || echo 0 )" <<'PERL'
 use strict; use warnings; use utf8;
-use JSON::PP; use File::Find; use File::Basename;
+use JSON::PP; use File::Find; use File::Basename; use Time::Local qw(timegm);
 binmode STDOUT, ':utf8';
 my ($bundle, $json_file, $drift_file, $parent, $okf_status, $drift_status, $adoption_error, $profile, $shell_warns, $has_lock) = @ARGV;
 # A wiki is relieved of the code-only expectations (snapshot, code_refs) always; of drift
@@ -187,7 +201,16 @@ my $STATE_ITEM_MAX = 300;
 # expected to carry neither code_refs nor an anchor, and warning about them every run
 # teaches skimming.
 my $EXEMPT = qr{^project/state(?:-evidence)?\.md$};
-my (@no_code_refs, @no_anchor, @open_questions);
+my (@no_code_refs, @no_anchor, @open_questions, @review_due);
+# Review notice. okf --stale fails a concept ON its stale_after date (measured on v0.6.0:
+# `stale_after 2026-10-08 <= 2026-10-08`), so the useful moment to hear about it is before.
+# Scaffolds stamp every concept with the same +3 months, so without notice a bundle's whole
+# review lands as one red gate on one day.
+my $REVIEW_WINDOW = length($ENV{OKF_REVIEW_WINDOW_DAYS} // '') ? $ENV{OKF_REVIEW_WINDOW_DAYS} : 30;   # set-but-empty (a CI var) = default
+if ($REVIEW_WINDOW !~ /^\d+$/) { print "FAIL  OKF_REVIEW_WINDOW_DAYS='$REVIEW_WINDOW' is not a whole number of days\n"; exit 2 }
+# okf decides staleness on the UTC date (measured on v0.6.0 under TZ=Pacific/Kiritimati), so
+# the window counts from the same day; local time would disagree with the gate each evening.
+my $today_days = do { my @t = gmtime; int(timegm(0, 0, 0, $t[3], $t[4], $t[5] + 1900) / 86400) };
 # An open question written into a concept — a claim the writer could not confirm. Not a
 # template placeholder (those FAIL below): a real bundle carries some, and they must stay
 # visible rather than pass silently. English and Italian spellings.
@@ -288,6 +311,16 @@ for my $rel (@concepts) {
   else { $desc{$rel} = $f{description} }
   bad("$rel: last_updated: must be an ISO date (got '".($f{last_updated}//'')."')") unless ($f{last_updated}//'') =~ $ISO;
   bad("$rel: stale_after: must be an ISO date") if exists $f{stale_after} && $f{stale_after} !~ $ISO;
+  if (($f{stale_after} // '') =~ /^(\d{4})-(\d{2})-(\d{2})$/) {
+    # okf compares these dates as text, so an impossible one never expires: name it here.
+    # Years below 1000 are refused because Time::Local reads them as offsets from 1900.
+    my $t = $1 >= 1000 ? eval { timegm(0, 0, 0, $3, $2 - 1, $1) } : undef;
+    if (!defined $t) { bad("$rel: stale_after: $f{stale_after} is not a real date") }
+    else {
+      my $days = int($t / 86400) - $today_days;
+      push @review_due, "$rel ($f{stale_after})" if $days > 0 && $days <= $REVIEW_WINDOW;
+    }
+  }
   push @no_code_refs, $rel unless @code_refs or $rel =~ $EXEMPT or $wiki;
   # Fence-stripped, so a playbook that shows the marker as an example is not flagged.
   (my $unfenced = $body) =~ s/^(?:[ \t]*)```.*?^(?:[ \t]*)```[^\n]*$//smg;
@@ -459,6 +492,7 @@ if (length $drift_json) {
 }
 grouped("with empty code_refs (okf search --for-path cannot find them)", @no_code_refs);
 grouped("with an open question ([TO VERIFY] / [DA VERIFICARE]) — confirm or remove", @open_questions);
+grouped("due for review within $REVIEW_WINDOW days (stale_after; the gate fails on the day) — review now, then move the date", @review_due);
 
 # Said once, not per anchor: a reformat or an import sort flags every concept bound to the
 # files it touched, and the sweep settles those without anyone reading them.

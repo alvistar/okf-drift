@@ -6,6 +6,7 @@ real shell and Perl execute the scripts under test. No network or shared cache.
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import os
@@ -41,7 +42,7 @@ class RuntimeTests(unittest.TestCase):
         self.stub = self.root / "bin"
         self.stub.mkdir()
         for name, text in {
-            "okf": '#!/bin/sh\ncase "$1" in\nversion) echo "okf v0.3.0";;\nvalidate) cat "$FIXTURE/validate.json"; exit "${VALIDATE_EXIT:-0}";;\nsearch) cat "$FIXTURE/search.json"; exit "${SEARCH_EXIT:-0}";;\nesac\n',
+            "okf": '#!/bin/sh\ncase "$1" in\nversion) echo "okf v0.6.0";;\nvalidate) cat "$FIXTURE/validate.json"; exit "${VALIDATE_EXIT:-0}";;\nsearch) cat "$FIXTURE/search.json"; exit "${SEARCH_EXIT:-0}";;\nesac\n',
             "drift": '#!/bin/sh\ncase "$1" in\n--version) echo "drift ${DRIFT_VERSION:-v0.10.1}"; exit 0;;\nesac\ncat "$FIXTURE/drift.json"\nexit "${DRIFT_EXIT:-0}"\n',
         }.items():
             path = self.stub / name
@@ -160,6 +161,107 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("src/lib.rs#a  [changed_after_baseline]", result.stdout)
         self.assertNotIn("WITHHELD", result.stdout)
         self.assertNotIn('"targets unchanged" means', result.stdout)
+
+    def days_from_today(self, days: int) -> str:
+        # UTC, like okf and the scripts: a local date would disagree for part of every day.
+        today = datetime.datetime.now(datetime.timezone.utc).date()
+        return (today + datetime.timedelta(days=days)).isoformat()
+
+    def test_recall_reads_review_due_and_today_as_expired(self) -> None:
+        """okf --stale fails a concept ON its stale_after day, so recall must not call that
+        day current; the days before it, within the window, are `due`."""
+        for days, label in ((0, "review expired"), (10, "review due"), (40, "review current")):
+            with self.subTest(days=days):
+                date = self.days_from_today(days)
+                self.concept("architecture/core", status="stable", stale_after=date)
+                self.two_hits([self.anchor("a")])
+                result = self.run_script("okf-recall.sh")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                expected = label if label == "review current" else f"{label} {date}"
+                self.assertIn(f"no tracked target · stable · {expected}\n", result.stdout)
+
+    def test_recall_names_an_invalid_review_date(self) -> None:
+        # Value: protects=an impossible stale_after is named, not hidden as "no review date"; fails_when=day_number errors fall back silently; why_new=only valid dates were tested; seam=none
+        for date in ("2026-13-01", "0999-01-01"):
+            with self.subTest(date=date):
+                self.concept("architecture/core", status="stable", stale_after=date)
+                self.two_hits([self.anchor("a")])
+                result = self.run_script("okf-recall.sh")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f"review date invalid ({date})", result.stdout)
+
+    def test_gate_fails_an_impossible_review_date_and_reads_an_empty_window_as_default(self) -> None:
+        # Value: protects=okf never expires 2026-13-01, so the gate must; empty CI var keeps 30; fails_when=the timegm fallback or // default returns; why_new=new in this review; seam=none
+        state = self.bundle / "project/state.md"
+        base = state.read_text()
+        state.write_text(base.replace("last_updated: 2026-09-16", "last_updated: 2026-09-16\nstale_after: 2026-13-01"))
+        bad = self.run_script("okf-check.sh")
+        self.assertEqual(bad.returncode, 1, bad.stdout + bad.stderr)
+        self.assertIn("stale_after: 2026-13-01 is not a real date", bad.stdout)
+        state.write_text(base.replace("last_updated: 2026-09-16", f"last_updated: 2026-09-16\nstale_after: {self.days_from_today(10)}"))
+        self.env["OKF_REVIEW_WINDOW_DAYS"] = ""
+        due = self.run_script("okf-check.sh")
+        self.assertEqual(due.returncode, 0, due.stdout + due.stderr)
+        self.assertIn("due for review within 30 days", due.stdout)
+
+    def test_recall_searches_the_project_scope_only(self) -> None:
+        """okf v0.5.0+ searches ~/.okf, /etc/okf and vendor bundles by default; their ids
+        have no file in the bundle and no drift verdict."""
+        log = self.root / "okf-args.log"
+        okf = self.stub / "okf"
+        plain = okf.read_text()
+        # A v0.5.0+ binary lists -scope in `search --help`; v0.3.0 rejects the flag outright.
+        for help_text, scoped in (("  -scope string", True), ("  -json", False)):
+            with self.subTest(scoped=scoped):
+                log.write_text("")
+                okf.write_text(plain.replace(
+                    'search) cat',
+                    f'search) echo "$*" >> "{log}"; [ "$2" = --help ] && {{ echo "{help_text}"; exit 0; }}; cat'))
+                result = self.run_script("okf-recall.sh")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                searched = [l for l in log.read_text().splitlines() if "--help" not in l]
+                self.assertEqual(len(searched), 1, log.read_text())
+                self.assertEqual("--scope project" in searched[0], scoped, searched[0])
+
+    def test_gate_warns_on_a_review_due_within_the_window(self) -> None:
+        state = self.bundle / "project/state.md"
+        base = state.read_text()
+        for days, window, warned in ((10, None, True), (40, None, False), (40, "60", True), (0, None, False)):
+            with self.subTest(days=days, window=window):
+                date = self.days_from_today(days)
+                state.write_text(base.replace("code_refs: []\n", f"code_refs: []\nstale_after: {date}\n"))
+                if window: self.env["OKF_REVIEW_WINDOW_DAYS"] = window
+                else: self.env.pop("OKF_REVIEW_WINDOW_DAYS", None)
+                result = self.run_script("okf-check.sh")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                line = f"warn  1 concept(s) due for review within {window or 30} days"
+                (self.assertIn if warned else self.assertNotIn)(line, result.stdout)
+                if warned:
+                    self.assertIn(f"project/state.md ({date})", result.stdout)
+        self.env["OKF_REVIEW_WINDOW_DAYS"] = "a month"
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertNotIn("okf gate passed", result.stdout)
+
+    def test_gate_names_a_bundle_symlinked_outside_its_parent(self) -> None:
+        """okf v0.6.0 refuses such a root with no JSON; v0.3.0 loaded it as an empty bundle.
+        The gate fails before calling okf, with the cause named."""
+        outside = Path(tempfile.mkdtemp(prefix="okf-outside-"))
+        self.addCleanup(shutil.rmtree, outside, True)
+        shutil.move(str(self.bundle), outside / "knowledge")
+        self.bundle.symlink_to(outside / "knowledge", target_is_directory=True)
+        for spelling in ("knowledge", "knowledge/"):
+            with self.subTest(bundle=spelling):
+                result = self.run_script("okf-check.sh", spelling)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("outside", result.stdout)
+                self.assertIn("refuses a bundle root that leaves its parent directory", result.stdout)
+
+    def test_gate_accepts_a_bundle_symlinked_inside_its_parent(self) -> None:
+        shutil.move(str(self.bundle), self.root / "kb-real")
+        self.bundle.symlink_to("kb-real", target_is_directory=True)
+        result = self.run_script("okf-check.sh")
+        self.assertNotIn("leaves its parent directory", result.stdout)
 
     def gate_bundle(self) -> None:
         """Four concepts that separate the two diagnostics. Coverage comes from drift's
@@ -453,9 +555,9 @@ class RuntimeTests(unittest.TestCase):
         path = self.root / ".github/workflows" / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            "      - name: okf v0.3.0 and drift, pinned\n"
+            "      - name: okf v0.6.0 and drift, pinned\n"
             "        run: |\n"
-            "          go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.3.0\n"
+            "          go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0\n"
             f"          curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version {drift_version}\n"
         )
 
@@ -802,7 +904,7 @@ class BootstrapTests(unittest.TestCase):
         (self.stub / "okf").write_text(
             '#!/bin/sh\n'
             'case "$1" in\n'
-            'version) echo "okf v0.3.0" ;;\n'
+            'version) echo "okf v0.6.0" ;;\n'
             'validate) cat "$OKF_VALIDATE_JSON" ;;\n'
             '*) exit 2 ;;\n'
             'esac\n'
