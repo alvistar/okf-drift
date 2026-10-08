@@ -133,7 +133,7 @@ rule); a state section far longer than a snapshot.
 okf validates **every** markdown link in a concept as a concept link. A relative link
 to a repo document outside `knowledge/` — `[x](../../docs/incidents/foo.md)` — is a
 broken link under `--strict`, and mex scaffolds are full of them (repo B: 19).
-Measured on okf v0.3.0: a relative `.md` link and a root-relative `/docs/x.md` are
+Measured on okf v0.3.0 and again on v0.6.0: a relative `.md` link and a root-relative `/docs/x.md` are
 broken; an **angle-bracket destination** `[text](<../../docs/foo.md>)` is not counted
 at all, and neither is a non-`.md` target, an `https://` URL, or a reference-style
 link. The angle form is still a link everywhere Markdown is rendered, so the migrator

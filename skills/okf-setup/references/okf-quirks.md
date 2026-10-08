@@ -1,9 +1,15 @@
-# okf v0.3.0 — what was measured, not what the docs say
+# okf v0.6.0 — what was measured, not what the docs say
 
-Every claim here was verified by running the binary (`okf version v0.3.0 (OKF v0.2
-specification)`, installed with `go install`) on 2026-09-16, either on a scratch bundle
-made by the plugin's `okf-scaffold.sh` or during the 27-document migration of a real repo.
-Re-measure after upgrading; correct this file when a number disagrees.
+Every claim here was first verified by running okf v0.3.0 on 2026-09-16, either on a
+scratch bundle made by the plugin's `okf-scaffold.sh` or during the 27-document migration
+of a real repo, and re-measured on `okf version v0.6.0 (OKF v0.2 specification)` on
+2026-10-08: the same probes run against both binaries side by side, plus the gate over three
+real bundles (one code, two wiki), which passed unchanged. Where v0.6.0 behaves
+differently the text says so; everything else held. Re-measure after upgrading; correct this
+file when a number disagrees.
+
+v0.6.0 is built with Go 1.26: `go install …/cmd/okf@v0.6.0` needs Go 1.26 or newer (an
+older `go` switches toolchain itself when `GOTOOLCHAIN` allows it).
 
 ## What `okf validate` gates, and what it only mentions
 
@@ -14,22 +20,44 @@ Exit code is 1 for:
 | a concept without `type:` | none (an error) |
 | a `## Related` / body link to a concept that does not exist | `--strict` |
 | an **orphan** — a concept with no links in *and* no links out | `--strict` |
-| a concept whose `stale_after` is in the past | `--stale` |
+| a `status` outside `draft\|stable\|deprecated` (a `gate_findings` entry) | `--strict` |
+| a bare-string `sources` item (a `gate_findings` entry) | `--strict` |
+| a concept whose `stale_after` is **today or earlier** | `--stale` |
+
+The stale test is `<=`: `concept is stale (stale_after 2026-10-08 <= 2026-10-08)` on the
+day itself (measured on v0.3.0 and v0.6.0). The gate warns about a `stale_after` within the
+next 30 days so the review can happen before that day, not on it.
 
 Exit code stays **0**, with a line in `warnings`, for:
 
 - a `code_refs` path that does not exist in the repo (`--drift`). Even with `--strict`.
+- **(new in v0.4.1)** a concept not listed in its parent `index.md`:
+  `a.md: concept is not listed in parent index index.md` (`--drift`). v0.3.0 said nothing.
+  The gate already failed this itself; under v0.6.0 the same concept is reported twice,
+  once as okf's warning and once as the gate's own `not listed in` line.
+- a `log.md` heading that is not a bare ISO date (see Reserved names).
 
 Exit code stays 0 with **no output at all** for:
 
-- a concept listed in no `index.md` (root or category) — indexes are navigation, nothing checks them
 - an `index.md` row whose description differs from the concept's `description:`
 - a concept with no `description:`
 - an unfilled placeholder (`[TO DETERMINE]`, `{{DATE}}`, …)
 
-`--drift`'s help text says "check for drift between index.md and concept descriptions".
-Measured: it does not. It checks `code_refs` paths. The pinned gate (`okf-runtime`) covers the
-rest and turns the warning list into a failure.
+`--drift`'s help text says "check descriptions and code_refs for drift between index.md and
+concepts". Measured on v0.6.0: it checks `code_refs` paths and that each concept is listed in
+its parent index, never the descriptions. The pinned gate (`okf-runtime`) covers the rest and
+turns the warning list into a failure.
+
+## A bundle root that is a symlink
+
+**Changed in v0.6.0.** A `knowledge` that is a symlink to a directory outside the one
+holding it is refused: `Error loading bundle: bundle root "knowledge" resolves outside its
+parent directory`, no JSON, with or without a trailing slash. v0.3.0 loaded the same link
+as an **empty** bundle (`concept_count: 0`, `gate_passed: true`) without the slash, and the
+outside directory unchecked with it. The gate checks the resolved path itself before
+calling okf and fails with the cause named. A symlink that stays inside the parent
+directory (`knowledge -> kb-real`) loads in full on v0.6.0; v0.3.0 loaded it as empty too
+(`concept_count: 0` against 2) — the walk did not follow a symlinked root (okf issue #45).
 
 ## Orphans
 
@@ -56,13 +84,14 @@ repo B scaffold).
 
 ## `okf create` — prefer writing the file
 
-- `okf create --help` **creates a concept named `--help.md`** at the bundle root and adds
-  it to `index.md`. There is no help. The flags are `-desc`, `-body`, `-actor`, `-json`.
-- `--type` and `--title` do not exist in 0.3.0, although the `SKILL.md` that
-  `okf bootstrap` writes documents both. A created concept gets `type: Fact` and a title
-  equal to the last id segment. You then edit the file anyway.
+- On v0.3.0 `okf create --help` **created a concept named `--help.md`** and added it to
+  `index.md`. v0.6.0 prints help and writes nothing.
+- v0.6.0 has `--type` (default `Fact`), `--title` (default: the last id segment),
+  `--desc`, `--body`, `--status` (default `stable`), `--tags`, `--actor`, `--no-log`,
+  `--no-index`, `--json`. v0.3.0 had only `-desc`, `-body`, `-actor`, `-json`.
 - It writes `generated: { by: agent/cli, at: "<iso>" }`, which is provenance the
-  templates do not carry. Add it if you want it; nothing validates it in 0.3.0.
+  templates do not carry, and no `last_updated`, which the gate requires. Nothing in okf
+  validates `generated`.
 
 So the skill writes files from templates and runs `validate`. `okf relate` is fine for
 adding a link, `okf update` for a description — but check the file afterwards.
@@ -72,7 +101,7 @@ adding a link, `okf update` for a description — but check the file afterwards.
 `index.md` and `log.md` are reserved at every level: not concepts, not counted, not
 validated for frontmatter, not searched. **`log.md` is not entirely unvalidated, though:
 every `## ` heading in it must be a bare ISO date.** Measured on okf v0.3.0 during the
-repo B migration: `## 2026-09-16 — migration from .mex/` is a `warnings` entry,
+repo B migration, and again on v0.6.0: `## 2026-09-16 — migration from .mex/` is a `warnings` entry,
 `log.md: log heading '…' is not ISO 8601 YYYY-MM-DD` — exit 0 from `okf validate`, but
 fatal under `okf-check.sh`, which treats warnings as failures. Put the title on the line
 below the heading. A `README.md` inside the bundle **is** a
@@ -85,7 +114,7 @@ ever find them by search, so `CLAUDE.md` says to read the index.
 
 Two different parsers read the frontmatter, and they disagree.
 
-- **okf's own parser** (v0.3.0) reads a `description:` line whole, unquoted `#` included
+- **okf's own parser** (v0.3.0, unchanged in v0.6.0) reads a `description:` line whole, unquoted `#` included
   — measured: `… (issue #48); the rest` comes back intact from `okf search --json`. But
   it stops at the end of the line: a value **folded over two lines** (what PyYAML's
   dumper does to any long string) is truncated at the fold, silently, in search results
@@ -101,7 +130,7 @@ description for exactly this reason.
 
 ## Fields
 
-Recognised by 0.3.0: `type` (required), `title`, `description`, `tags`, `status`,
+Recognised by 0.3.0 and 0.6.0: `type` (required), `title`, `description`, `tags`, `status`,
 `stale_after`, `sources`, `code_refs`. **`last_updated` and `date` are not** — they are
 carried through and ignored, which is why the gate checks their format.
 
@@ -131,16 +160,28 @@ repo-relative from the bundle's parent; a wrong prefix returns nothing rather th
 near miss (`core/src/cbor.rs` found nothing; the real path was
 `core/crates/core/src/cbor.rs`).
 
+## Search scopes (new in v0.5.0)
+
+`okf search` now searches four layers by default (`--scope all`): the project bundle, then
+`.okf/vendor/` (bundles fetched by `okf pull`), then `~/.okf` (or `OKF_USER_DIR`), then
+`/etc/okf` (or `OKF_SYSTEM_DIR`). Results rank by layer first, so a query the bundle
+answers well fills the list with project hits and a user-layer note shows up only when the
+bundle has little to say — measured: `qwertyzzz` matched only a note in `OKF_USER_DIR` and
+came back as `user:notes/q`, scope `user`. Those ids have no file in the bundle and no
+drift verdict, so recall passes `--scope project`. Each hit now carries `scope`, `origin`
+and `priority` as well.
+
 ## `okf bootstrap` and `okf agents`
 
 `okf init <dir>` writes exactly two files: `index.md` (with `okf_version: "0.2"`) and
 `log.md`. `okf bootstrap <dir>` adds an `AGENTS.md` in Agent-Action-Grammar style (RFC
 2119 `MUST`/`NEVER` rules, "diagrams => ASSERT(mermaid)"), a `Makefile`, and
 `.agents/skills/okf-memory/` with six guide files. None of that writes a concept. This
-skill does not use bootstrap: its `AGENTS.md` house style is not the project's, and the
-`.agents/skills` copy documents `--type`/`--title` flags the binary does not have.
-`okf agents lint` checks an `AGENTS.md` against five AAG rules and a 400-token budget;
-useful only if you adopt that style.
+skill does not use bootstrap: its `AGENTS.md` house style is not the project's. (Under
+v0.3.0 the `.agents/skills` copy also documented `--type`/`--title` flags the binary did not
+have; v0.6.0 has them.) `okf agents lint` checks an `AGENTS.md` against five AAG rules and a
+400-token budget on the managed block — v0.6.0 also prints the whole file's tokens; useful
+only if you adopt that style.
 
 # drift v0.10.1 — the same treatment
 
