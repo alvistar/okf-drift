@@ -29,8 +29,8 @@ absolute consumer root. These are explicit shell variables, not assumed environm
 layout whose value is the section prompts inside each concept — what belongs there and
 what does not — and a gate that fails until they are replaced by facts.
 
-Everything in `references/okf-quirks.md` was measured on okf v0.3.0 on 2026-09-16, and
-the design was reviewed adversarially by a second model the same day (the findings that
+Everything in `references/okf-quirks.md` was measured on okf v0.3.0 on 2026-09-16 and
+re-measured on okf v0.6.0 on 2026-10-08, and the design was reviewed adversarially by a second model on 2026-09-16 (the findings that
 survived are in the templates and the gate). Re-read the quirks after an upgrade before
 trusting a green validation.
 
@@ -84,15 +84,17 @@ read the repo** — hand them over only when the user wants to run them elsewher
 ## Step 0 — okf present, and which one
 
 ```bash
-okf version          # expect: okf version v0.3.0 (OKF v0.2 specification)
+okf version          # expect: okf version v0.6.0 (OKF v0.2 specification)
 drift --version      # expect: drift v0.10.1  (Step 3b; not needed before it)
 ```
 
-Absent: `go install github.com/okf-memory/okf-agent-memory/cmd/okf@latest` and make sure
+Absent: `go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0` (Go 1.26+) and make sure
 `$(go env GOPATH)/bin` is on PATH. Another version: the gate prints a warning; re-run the
 probes in `references/okf-quirks.md` before believing either the tool or this skill.
 
-**Never run `okf create --help`** — it creates a concept called `--help.md`.
+**Do not create concepts with `okf create`** — the skill writes them from templates (see
+`references/okf-quirks.md`). On okf v0.3.0, `okf create --help` even created a concept called
+`--help.md`; v0.6.0 prints help.
 
 ## Step 1 — Is there a bundle already?
 
@@ -171,7 +173,10 @@ every concept has a row in its category index; one-line descriptions, ISO
 a concept (search indexes comment text), no placeholder, no empty section; root
 `okf_version`, `log.md`, and `state.md`'s three lists (a state item past 300 characters
 is a warning). Empty `code_refs` is a warning:
-coverage is a judgement.
+coverage is a judgement. A `stale_after` within the next 30 days
+(`OKF_REVIEW_WINDOW_DAYS`) is a warning, because okf fails the concept on that day; an
+impossible one (`2026-13-01`) is a failure. A bundle root that resolves outside its parent
+directory (a `knowledge -> /elsewhere` symlink) fails before okf runs.
 
 Step 6 of the gate is the drift join — see Step 3b. Until there is a `drift.lock` it
 `warn`s and skips, so the gate keeps working in a repo that has not adopted drift. (A

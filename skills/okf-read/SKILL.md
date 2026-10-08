@@ -79,7 +79,7 @@ INDEPENDENT signals, and none of them is a statement about the prose:
 |---|---|---|
 | `N target(s) unchanged` / `STALE: …` / `BROKEN LINK: …` / `no tracked target` / `not drift-tracked (wiki)` / `drift not run` | an observation about the **anchors**: drift re-fingerprinted N declarations and none moved; or at least one moved since the concept was last believed; or (BROKEN LINK) none moved but a markdown link in it points at nothing; or the concept has no anchor and nothing checked it; or (a `wiki` bundle with no `drift.lock`, or no drift available) drift did not run at all | a statement that the concept is true, or that it covers what you are about to do — a claim no anchor touches is invisible to it, and a concept with a live anchor can still be false |
 | `stable` / `deprecated` / `draft` / `no status` | the author's own `status:` | a freshness signal. A **deprecated** concept is history: find its `Superseded by` link and read the successor instead |
-| `review current` / `review expired <date>` / `no review date` | `stale_after` against today — when a human said they would re-read it | a check that anyone did |
+| `review current` / `review due <date>` / `review expired <date>` / `review date invalid (<date>)` / `no review date` | `stale_after` against today — when a human said they would re-read it. `due` = within the next 30 days (`OKF_REVIEW_WINDOW_DAYS`); the day itself is already `expired`, as it is for the gate; dates are UTC, as okf's are | a check that anyone did |
 
 The three disagree routinely, and that is the point: a concept can be `11 targets
 unchanged · deprecated · review expired`.
@@ -142,7 +142,7 @@ gets the join back. An unknown profile value exits 2. See `/okf-setup`, *Profile
 
 ## Measured facts the join rests on
 
-drift v0.10.1, okf v0.3.0, measured 2026-09-16. Re-measure after either upgrade; the full
+drift v0.10.1 measured 2026-09-16, okf v0.6.0 measured 2026-10-08. Re-measure after either upgrade; the full
 drift section is in `../okf-setup/references/okf-quirks.md`.
 
 - `drift check --format json` emits `schema_version: "drift.check.v1"`, documented in the
@@ -161,8 +161,11 @@ drift section is in `../okf-setup/references/okf-quirks.md`.
 - Per-doc `result` is `fresh` | `stale` | `broken`. A stale anchor carries `reason.code`
   (`changed_after_baseline`) and `blame {author, commit, date, subject}`.
 - `okf search --json` is an **array** of `{concept_id, title, type, description, score,
-  tags, code_refs, matched_on, inbound, …}`. There is no `path` field — the doc path is
-  `<bundle>/<concept_id>.md`, and that is what the join is keyed on.
+  tags, matched_on, inbound, scope, origin, priority, …}`. There is no `path` field — the
+  doc path is `<bundle>/<concept_id>.md`, and that is what the join is keyed on.
+- Since okf v0.5.0 search defaults to every scope: `~/.okf`, `/etc/okf` and `.okf/vendor/`
+  join the results as `user:…`/`@…` ids that have no file in the bundle and no drift
+  verdict. Recall passes `--scope project`, so only the bundle is searched.
 - The bundle's own root-relative links (`/project/stack.md`) are not counted as drift
   links at all, so okf's link style never surfaces here as broken.
 - `drift link <doc> <target>` writes **only `drift.lock`** (TOML `[[bindings]]` with

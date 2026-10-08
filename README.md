@@ -11,8 +11,8 @@ wrong. [`drift`](https://drift.fp.dev) closes that with a content signature per
 (concept, path) pair. This plugin is the layout, the plumbing that joins the two tools, and
 the gate for everything `okf validate` was measured not to check.
 
-Every claim in these skills was measured against a running binary — okf v0.3.0, drift
-v0.10.1, mex 0.8.2, on 2026-09-16 — not read from documentation. Where a measurement
+Every claim in these skills was measured against a running binary — drift v0.10.1 and
+mex 0.8.2 on 2026-09-16, okf v0.6.0 on 2026-10-08 — not read from documentation. Where a measurement
 contradicted the docs, the measurement is what is written down, and
 `skills/okf-setup/references/okf-quirks.md` says which. Re-measure after an upgrade before
 trusting a green validation.
@@ -75,7 +75,7 @@ Runtime dependencies, installed separately and pinned by the CI template to the 
 everything here was measured against:
 
 ```sh
-go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.3.0   # okf v0.3.0
+go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0   # okf v0.6.0, needs Go 1.26+
 curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version v0.10.1
 ```
 
@@ -118,6 +118,13 @@ binding. On a repository that has adopted drift (`.okf-drift-version` and
 pin in `.github/workflows/knowledge.yml` — or in that same file renamed `.yaml`,
 as a repository whose other workflows carry that extension does — fails the gate:
 a green gate must mean the detector ran.
+
+okf fails a concept on its `stale_after` day, so the gate warns about every concept due
+within the next 30 days (`OKF_REVIEW_WINDOW_DAYS`; a value that is not a whole number
+exits 2), and recall labels it `review due <date>`. Both judge the date in UTC, as okf
+does. An impossible `stale_after` (`2026-13-01`) fails the gate, and a bundle root that
+resolves outside its parent directory (a `knowledge -> /elsewhere` symlink) fails it
+before okf runs.
 
 ### Compatibility and the lockfile
 

@@ -7,6 +7,55 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [0.13.0] - 2026-10-08
+
+### Changed
+
+- **okf pinned to v0.6.0** (was v0.3.0) in the CI template, the plugin's own CI, the
+  README and `/okf-setup`. okf v0.6.0 needs Go 1.26, so both workflows set
+  `go-version: '1.26'`. The gate's "measured against" warning now names v0.6.0, so a
+  consumer still installing okf v0.3.0 gets one warning, not a failure.
+  `/okf-setup` (`okf-integrate.py`) replaces a `knowledge.yml` written by plugin v0.5.0
+  through v0.12.0 in place. The v0.7.0–v0.12.0 digest was missing from its accepted list
+  and is now added. A customized workflow still has to be merged by hand.
+- **Behaviour change for consumers, from okf itself (v0.4.1):** `okf validate --drift`
+  now warns about a concept that is missing from its parent `index.md`, and the gate
+  treats okf warnings as failures. The gate already failed such a concept on its own, so
+  a bundle that passed before still passes. Under v0.6.0 the same concept is reported
+  twice instead of once.
+- `references/okf-quirks.md` re-measured on v0.6.0 against v0.3.0 side by side. What
+  changed is marked in place: the unindexed-concept warning, `okf create --help`
+  (prints help instead of creating `--help.md`), `okf create`'s new flags, the search
+  scopes, and the symlinked bundle root. The rest held.
+
+### Added
+
+- The gate warns on every concept whose `stale_after` falls within the next 30 days
+  (`OKF_REVIEW_WINDOW_DAYS`; a value that is not a whole number exits 2). okf fails a
+  concept on its `stale_after` day, and the scaffold stamps every concept with the same
+  +3 months, so without notice a whole bundle turns red on one day. Measured with a
+  90-day window on the reference wiki consumer: 27 concepts due in December.
+- Recall labels such a concept `review due <date>`.
+- The gate fails, before calling okf and with the cause named, on a bundle root that
+  resolves outside its parent directory (a `knowledge -> /elsewhere` symlink). okf v0.6.0
+  refuses one without printing JSON, and v0.3.0 loaded it as an empty bundle.
+
+### Fixed
+
+- Recall searches `--scope project` only. Since okf v0.5.0, `okf search` also searches
+  `~/.okf`, `/etc/okf` and `.okf/vendor/`. A hit from one of those has no file in the
+  bundle and no drift verdict. Measured: one `user:` hit made recall refuse every
+  result and exit 2. The flag is passed only when `okf search --help` lists it, so a
+  machine still on okf v0.3.0, which rejects it, keeps a working recall.
+- Review dates are judged on the UTC date in both gate and recall, as okf judges them
+  (measured: okf v0.6.0 passed a concept due on the local date east of UTC). An
+  impossible `stale_after` (`2026-13-01`, which okf compares as text and never expires,
+  or a year below 1000) FAILS the gate and reads `review date invalid` in recall. A
+  set-but-empty `OKF_REVIEW_WINDOW_DAYS`, as an unset CI variable gives, means the
+  default 30. The symlinked-root check ignores an exported `CDPATH`.
+- Recall called a concept `review current` on its `stale_after` day. okf (v0.3.0 and
+  v0.6.0) and the gate already treat that day as expired, and recall now does too.
+
 ## [0.12.0] - 2026-10-08
 
 Measured on the reference consumers' Claude sessions (about 150, 2,264 gate runs): 55% of
