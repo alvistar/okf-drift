@@ -2,7 +2,7 @@
 name: okf-runtime
 description: |
   Run the pinned OKF gate for a repository's Verify/Grow loop, or recall knowledge
-  with the mandatory drift join during Context. Model-invocable, read-only with
+  with the drift join during Context. Model-invocable, read-only with
   respect to the consumer integration, bundle and bindings. Use when project
   instructions request the OKF gate or freshness-checked knowledge recall.
 ---
@@ -39,12 +39,13 @@ The launcher enters the consumer root and selects runtime bytes solely through i
 `OKF_DRIFT_ROOT` is a visible development-only bypass; use it only when explicitly
 working on the runtime, never as a recovery from verification failure.
 
-Report the command's status and diagnostics. A failing gate is not green; withheld
-recall hits are not weaker facts. Read their bound code instead of quoting them.
-If recall fails, stop: no bare-search fallback. A bundle declared `wiki` in
-`.okf-profile` with no `drift.lock` recalls without the join by design, labelling each hit
-`not drift-tracked (wiki)`; that is not a degraded result, but it is not a freshness claim
-either. The gate may warn when drift has
+Report the command's status and diagnostics. A failing gate is not green. A recall hit
+marked STALE is a lead, not a fact: read its bound code before relying on it. A recall
+that warns `drift did not run` searched without the join; report that, and treat its hits
+as unchecked. If recall exits 2, stop: no bare-search fallback. A bundle declared `wiki`
+in `.okf-profile` with no `drift.lock` recalls without the join by design, labelling each
+hit `not drift-tracked (wiki)`; that is not a degraded result, but it is not a freshness
+claim either. The gate may warn when drift has
 not been adopted; report that degraded result rather than claiming drift passed.
 
 The gate warns, and does not fail, for a concept with no tracked target; a consumer
@@ -77,7 +78,8 @@ path.
 ## Scope and unavailable plugin
 
 This skill only runs gate/recall. It never pins, installs/converts integration,
-scaffolds, edits knowledge, bootstraps drift or re-stamps bindings. The four
+scaffolds, edits knowledge, bootstraps drift or re-stamps bindings — `okf-restamp.sh`,
+`okf-tidy.sh` and the bootstrap belong to `/okf-write`. The four
 existing setup/migrate/read/write skills retain their manual triggers.
 
 If this skill or its launcher is unavailable, report the missing plugin explicitly.

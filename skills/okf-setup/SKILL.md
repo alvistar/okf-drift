@@ -192,7 +192,8 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstr
 ```
 
 It reads every `code_refs:` entry in the bundle and runs one `drift link` for each **code**
-path. Non-code paths take no *automatic* binding; a hand `drift link` on one is a
+path; a shell script is reported as high-churn and left unbound. Non-code paths take no
+*automatic* binding; a hand `drift link` on one is a
 deliberate content anchor and stays valid. It is idempotent by
 skipping what `drift.lock` already holds — it has to be, because
 `drift link` **refuses** a binding the lock already carries (exit 1, "refused: target
@@ -204,8 +205,10 @@ is a narrower `code_ref`.
 Run it **after** Step 4 on a repo being populated — there is nothing to bind before the
 concepts have `code_refs`. On a bundle that is already populated, run it now to bind its
 code paths; non-code paths take no *automatic* binding; when a claim's truth lives in one
-— a workflow trigger, a Kconfig value, a fixture's shape — hand-link it and accept that a
-reformat will alarm, or restate the claim as a dated observation. Either way the last line
+— a Kconfig value, a fixture's shape — hand-link it and accept that a reformat will alarm,
+or restate the claim as a dated observation. A high-churn file — a CI workflow, `VERSION`,
+a manifest, a build script — is never bound; its claims are dated observations
+(`/okf-write` Step 2). Either way the last line
 must be `drift check: pass`: a signature is taken from current content, so
 a binding written a second ago cannot be stale. If one is, the lock was not written by
 that run.

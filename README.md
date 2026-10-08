@@ -23,8 +23,8 @@ trusting a green validation.
 |---|---|
 | `/okf-setup` | Lays the bundle down in a repo that has none: a fixed layout that validates `--strict` from the first commit, the population and resync prompts, the `CLAUDE.md` sections, the gate, the drift bootstrap, and the CI job. |
 | `/okf-migrate` | Builds the same bundle from an existing [mex](https://github.com/mex-memory/mex) scaffold, resolving every `grounds_to` and inline `mex://` anchor to a path **while the graph still exists**. |
-| `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot and its evidence; binds every new **code** `code_refs` path; non-code paths take no *automatic* binding, so a claim whose truth lives in one is hand-linked or restated as a dated observation; re-stamps a reviewed binding — never silently. |
-| `/okf-read` | Recalls from it: `okf search` joined with `drift check`, withholding any concept whose bound code moved after it was written, with the commit to blame. |
+| `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot and its evidence; binds every new **code** `code_refs` path and never a high-churn file (scripts, CI, `VERSION`); settles drift with a mechanical format-only sweep, then re-stamps what was read — never silently; keeps index rows and `last_updated` with `okf-tidy.sh`. |
+| `/okf-read` | Recalls from it: `okf search` joined with `drift check`, marking STALE any concept whose bound code moved after it was written, with the commit to blame. |
 
 All four are **manual trigger only** — they run when you type the slash command.
 The fifth, `okf-runtime`, is model-invocable for the Work Loop: pinned gate and
@@ -44,7 +44,10 @@ never re-stamp one silently. `drift link … --doc-is-still-accurate` is a claim
 human-readable statement survived a code change, and it leaves no trace anywhere except a
 changed hex signature — so it is always paired with a dated line in `knowledge/log.md`
 naming what was checked against what. Without that line the plugin degrades into a tool that
-silences its own alarm.
+silences its own alarm. `okf-restamp.sh` writes that line, and its `--format-only` sweep
+re-stamps, without anyone reading, only anchors whose file — in a language drift hashes
+raw, such as C or Swift — changed by indentation or trailing whitespace alone,
+measured against the version the binding was signed on.
 
 ## Profiles
 
@@ -106,7 +109,7 @@ Updating the installed plugin does **not** update the project's pinned runtime.
 The gate reports a concept with **no tracked target** — no drift anchor at all, so
 nothing checks it — as a warning, separately from a concept with empty `code_refs`,
 which is the different complaint that `okf search --for-path` can never return it.
-Set `OKF_REQUIRE_TRACKING=<glob>[,<glob>...]` to make coverage FATAL for a subset:
+Each such list prints at most 8 names and a count; `OKF_VERBOSE=1` lists them all. Set `OKF_REQUIRE_TRACKING=<glob>[,<glob>...]` to make coverage FATAL for a subset:
 shell globs over the concept path relative to the bundle (`architecture/*`, with `*`
 stopping at a `/` and `**` crossing one). Unset — the default — leaves it a warning,
 because making it fatal everywhere would fail every bundle that has not finished
@@ -224,8 +227,10 @@ apply can leave a partial integration (rerun after correcting it, review the dif
 .claude-plugin/plugin.json          the plugin manifest; its version tracks VERSION
 scripts/okf-scaffold.sh             the fixed bundle, laid down and validated
 scripts/okf-check.sh                the gate, six steps
-scripts/okf-recall.sh               search joined with drift; withholds what it cannot vouch for
-scripts/okf-drift-bootstrap.sh      one drift link per code `code_refs` entry; a hand binding on a non-code path is kept
+scripts/okf-recall.sh               search joined with drift; marks STALE what moved under it
+scripts/okf-drift-bootstrap.sh      one drift link per code `code_refs` entry (not shell scripts); a hand binding on a non-code path is kept
+scripts/okf-restamp.sh              re-stamp a reviewed anchor with its log line; --format-only settles formatting-only drift
+scripts/okf-tidy.sh                 index rows and last_updated, the bookkeeping that needs no judgement
 scripts/okf-migrate.py              inventory / resolve / convert, for a mex scaffold
 scripts/okf-shim.sh                 sole root-aware, content-pinned launcher (plugin/CI/legacy)
 scripts/okf-integrate.py            conservative plugin-only integration install/conversion

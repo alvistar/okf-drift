@@ -6,9 +6,9 @@
 # `okf search` ranks concepts by BM25 and knows nothing about whether they are still true.
 # `drift check` knows which docs are bound to code that has changed since they were last
 # believed, and who to blame, and knows nothing about relevance. This joins them on
-# `<bundle>/<concept_id>.md` and splits the result in two: the hits that are still
-# grounded, and a WITHHELD block for the ones that are not — with the commit that moved
-# the ground under them, so the agent reads the code instead of the prose.
+# `<bundle>/<concept_id>.md` and prints every hit in rank order, a hit whose bound code
+# moved after it was written marked STALE in place, with the anchor and the commit that
+# moved it, so the agent reads the code before it quotes the prose.
 #
 # NO WORD IN THE OUTPUT MAY READ AS "VERIFIED". Each surviving hit carries three
 # INDEPENDENT signals, all read from what already exists — nothing new in the frontmatter:
@@ -24,12 +24,17 @@
 #   review     `stale_after` vs today: `review current`, `review expired <date>`, or
 #              `no review date`.
 #
-# A stale or broken doc is WITHHELD regardless of the other two — the refusal wins.
+# A stale or broken doc is marked STALE in place of the tracking signal, regardless of
+# the other two. It used to be WITHHELD in a separate block. Measured over the reference
+# consumers' sessions: of ~84 recalls, 5 withheld anything, and in each the concept was
+# still worth reading beside the code; the CI gate keeps `main` fresh, so a stale hit
+# appears only mid-branch, where the agent is usually the one who moved the code.
 #
-# Drift is a HARD DEPENDENCY here, by design. A recall that cannot tell a fact from a
-# stale one is the thing this plugin exists to replace, so with no `drift.lock` at the
-# repository root, or no `drift` on PATH, this exits 2 with one line rather than quietly
-# degrading into a bare `okf search`. Bootstrap the lock with `okf-drift-bootstrap.sh`.
+# Without drift — no `drift` on PATH, or no `drift.lock` at the repository root — recall
+# still searches, says so in one line at the top, and labels every hit `drift not run`.
+# It used to exit 2, which turned a missing binary into no recall at all. A drift that
+# RAN and failed (exit > 1, no JSON, an incomplete report) is still exit 2: that is a
+# broken detector, not an absent one.
 #
 # The one exception is a bundle declared `wiki` in `.okf-profile` at the repository root
 # and carrying no drift.lock: it describes no code, so there is nothing for drift to
@@ -69,8 +74,14 @@ nodrift=0
 # Both places a lock could sit: the root (where recall runs drift) and beside the bundle
 # (where the gate looks). Either one means something was bound, so the join stays on.
 [ "$profile" = wiki ] && [ ! -f drift.lock ] && [ ! -f "$(dirname "$bundle")/drift.lock" ] && nodrift=1
-[ "$nodrift" = 1 ] || command -v drift >/dev/null 2>&1 || { echo "drift not on PATH — okf-recall needs it to tell a fact from a stale one; install drift or use \`okf search\` knowing it cannot" >&2; exit 2; }
-[ "$nodrift" = 1 ] || [ -f drift.lock ] || { echo "no drift.lock at the repository root — okf-recall will not serve concepts it cannot check; use /okf-setup to bootstrap the pinned drift runtime first" >&2; exit 2; }
+nodrift_why=''
+if [ "$nodrift" = 0 ]; then
+  if ! command -v drift >/dev/null 2>&1; then
+    nodrift=2; nodrift_why='drift is not on PATH'
+  elif [ ! -f drift.lock ]; then
+    nodrift=2; nodrift_why='there is no drift.lock at the repository root'
+  fi
+fi
 
 # Keep payloads out of argv (Linux's per-argument limit is 131072 bytes), just as
 # the gate does. Failed searches are not an empty result set; preserve stderr.
@@ -78,7 +89,7 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/okf-recall.XXXXXX") || exit 2
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 2' INT TERM
 okf search "$terms" "$bundle" --json > "$tmp/search.json" || { echo "okf-recall: okf search failed" >&2; exit 2; }
-if [ "$nodrift" = 1 ]; then
+if [ "$nodrift" != 0 ]; then
   printf '%s' '{"docs":[]}' > "$tmp/drift.json"
   drift_status=0
 else
@@ -86,11 +97,11 @@ else
   drift_status=$?
 fi
 
-perl - "$bundle" "$terms" "$tmp/search.json" "$tmp/drift.json" "$drift_status" "$(date +%F)" "$nodrift" <<'PERL'
+perl - "$bundle" "$terms" "$tmp/search.json" "$tmp/drift.json" "$drift_status" "$(date +%F)" "$nodrift" "$nodrift_why" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP; use Cwd qw(abs_path); use File::Spec;
 binmode STDOUT, ':utf8';
-my ($bundle, $terms, $search_file, $check_file, $drift_status, $today, $nodrift) = @ARGV;
+my ($bundle, $terms, $search_file, $check_file, $drift_status, $today, $nodrift, $nodrift_why) = @ARGV;
 sub unusable { print STDERR "okf-recall: @_\n"; exit 2 }
 sub slurp_raw { my $f=shift; open my $h,'<:raw',$f or unusable("$f: $!"); local $/; my $c=<$h>; defined $c ? $c : '' }
 my $hits = eval { decode_json(slurp_raw($search_file)) };
@@ -144,7 +155,10 @@ sub signals {
   my $n = scalar @{ $d->{anchors} || [] };
   # A `fresh` doc's anchors are all fresh (drift reports a doc as the worst of its
   # anchors), so a count is the whole of what was observed.
-  my $tracking = $d->{_nodrift} ? 'not drift-tracked (wiki)'
+  my $tracking = $d->{_nodrift} ? ($nodrift == 2 ? 'drift not run' : 'not drift-tracked (wiki)')
+               : $d->{result} eq 'broken' && !(grep { ($_->{result} // '') ne 'fresh' } @{ $d->{anchors} || [] })
+                 ? 'BROKEN LINK: it points at a file that does not exist'
+               : $d->{result} ne 'fresh' ? 'STALE: code moved after it was written'
                : $n ? sprintf("%d target%s unchanged", $n, $n == 1 ? '' : 's')
                     : 'no tracked target';
   my $status = length($fm->{status} // '') ? $fm->{status} : 'no status';
@@ -155,7 +169,7 @@ sub signals {
   return "$tracking · $status · $review";
 }
 
-my (@fresh, @held);
+my @rows;
 for my $h (@$hits) {
   unusable("okf search returned a hit without a concept_id")
     unless ref $h eq 'HASH' && defined $h->{concept_id} && !ref $h->{concept_id} && length $h->{concept_id};
@@ -164,10 +178,9 @@ for my $h (@$hits) {
   my $d    = $nodrift ? { result => 'fresh', anchors => [], _nodrift => 1 } : $doc{$path};
   # Unbound concepts still receive an explicit fresh verdict from drift. Missing
   # or unknown verdicts indicate an incomplete report, not permission to quote.
-  unusable("no valid drift verdict for $path; withholding all search results")
+  unusable("no valid drift verdict for $path; refusing all search results")
     unless $d && ($d->{result} // '') =~ /^(fresh|stale|broken)$/;
-  if ($d->{result} ne 'fresh') { push @held, [$h, $d] }
-  else                        { push @fresh, [$h, $d] }
+  push @rows, [$h, $d];
 }
 
 sub head_line {
@@ -185,65 +198,67 @@ sub wrapped {
   return join("\n", map { "$indent$_" } @out);
 }
 
+if ($nodrift == 2) {
+  print "warn  drift did not run ($nodrift_why): nothing below was checked against the code\n\n";
+}
 if (!@$hits) {
   print "no concept in $bundle matches \"$terms\"\n";
   exit 0;
 }
 
-printf "%d hit(s) for \"%s\" in %s\n\n", scalar @fresh, $terms, $bundle;
-for my $e (@fresh) {
+my $stale = grep { $_->[1]{result} ne 'fresh' } @rows;
+printf "%d hit(s) for \"%s\" in %s%s\n\n", scalar @rows, $terms, $bundle,
+  $stale ? " — $stale STALE" : '';
+for my $e (@rows) {
   my ($h, $d) = @$e;
-  my $fm = frontmatter("$bundle/" . $h->{concept_id} . ".md");
+  my $path = "$bundle/" . $h->{concept_id} . ".md";
+  my $fm = frontmatter($path);
   print head_line($h), "   ", signals($d, $fm), "\n";
-  print wrapped($h->{description}, '      '), "\n\n";
+  print wrapped($h->{description}, '      '), "\n";
+  if ($d->{result} ne 'fresh') {
+    printf "      last_updated %s; the code under it moved since:\n", last_updated($fm);
+    for my $a (@{ $d->{anchors} || [] }) {
+      next if ($a->{result} // '') eq 'fresh';
+      my $b = $a->{blame} || {};
+      my $c = substr($b->{commit} // '', 0, 8);
+      my $date = ($b->{date} // ''); $date =~ s/T.*//;
+      # `identity` is the canonical handle `drift link` takes (`path#symbol` for a symbol
+      # anchor); `path` alone would name a DIFFERENT, whole-file binding.
+      my $target = $a->{identity} // $a->{path} // '?';
+      printf "        %s  [%s]\n", $target, $a->{reason}{code} // ($a->{result} // '?');
+      # drift blames with `git log -1 -- <file>`: the last commit to TOUCH the file, which
+      # is not necessarily the one that moved the ground. Label it as what it is.
+      printf "          last commit touching this file (not necessarily the cause): %s %s %s (%s)\n",
+        $c || '-', $date || '-', $b->{subject} // '(uncommitted change — nothing to blame yet)', $b->{author} // '-';
+    }
+    for my $l (@{ $d->{links} || [] }) {
+      next if ($l->{result} // '') ne 'broken';
+      printf "        broken link at line %s: %s\n", $l->{line} // '?', $l->{target} // '?';
+    }
+  }
+  print "\n";
 }
-if (@fresh && $nodrift) {
+my $fresh = @rows - $stale;
+if ($fresh && $nodrift == 1) {
   print <<'NOTE';
 "not drift-tracked" means this wiki bundle binds no code, so nothing checked these
 concepts against anything: they are as current as their last_updated. "review expired"
 means the writer's own review date has passed. A deprecated concept is history.
-
 NOTE
 }
-elsif (@fresh) {
+elsif ($fresh) {
   print <<'NOTE';
 "targets unchanged" means the code under the anchors did not move. It does not mean the
 prose is right, and it says nothing about claims the anchors do not cover. "no tracked
 target" means nothing was checked. A deprecated concept is history: read its successor.
-
 NOTE
 }
-else { print "  (none — every match is withheld below)\n\n" }
-
-exit 0 unless @held;
-
-printf "WITHHELD — %d concept(s) matched, but the code under them moved after they were written.\n", scalar @held;
-print  "Do not quote these as facts. Read the code they point at, or fix the concept with\n";
-print  "/okf-write, which re-stamps the binding and logs that it did.\n\n";
-for my $e (@held) {
-  my ($h, $d) = @$e;
-  my $path = "$bundle/" . $h->{concept_id} . ".md";
-  print head_line($h), "   last_updated ", last_updated(frontmatter($path)), "\n";
-  print wrapped($h->{description}, '      '), "\n";
-  for my $a (@{ $d->{anchors} || [] }) {
-    next if ($a->{result} // '') eq 'fresh';
-    my $b = $a->{blame} || {};
-    my $c = substr($b->{commit} // '', 0, 8);
-    my $date = ($b->{date} // ''); $date =~ s/T.*//;
-    # `identity` is the canonical handle `drift link` takes (`path#symbol` for a symbol
-    # anchor); `path` alone would name a DIFFERENT, whole-file binding.
-    my $target = $a->{identity} // $a->{path} // '?';
-    printf "      %s  [%s]\n", $target, $a->{reason}{code} // ($a->{result} // '?');
-    # drift blames with `git log -1 -- <file>`: the last commit to TOUCH the file, which
-    # is not necessarily the one that moved the ground. Label it as what it is.
-    printf "          last commit touching this file (not necessarily the cause): %s %s %s (%s)\n",
-      $c || '-', $date || '-', $b->{subject} // '(uncommitted change — nothing to blame yet)', $b->{author} // '-';
-  }
-  for my $l (@{ $d->{links} || [] }) {
-    next if ($l->{result} // '') ne 'broken';
-    printf "      broken link at line %s: %s\n", $l->{line} // '?', $l->{target} // '?';
-  }
-  print "\n";
+if ($stale) {
+  print <<'NOTE';
+STALE means the code a concept is bound to changed after the concept was last believed.
+Read that code before you rely on the concept; quote it only for what the code confirms.
+If it still holds, re-stamp it (/okf-write); if it does not, fix it there.
+NOTE
 }
 exit 0;
 PERL

@@ -36,6 +36,7 @@ SECTIONS = {
     "Knowledge Bundle": {
         "0c641e5e55c92165a85e76920416b1676906c7c24db4cf33c4a5d044f3d6b485",  # v0.4.0-v0.6.2
         "372e7ee23c7fe542a3808c6724fd590df150a9d4c77037739a8da4303edefe8d",  # v0.7.0-v0.8.2
+        "16fa3ecb217b7c0ef288c9f3f143ea4dd3addf15541e119756122fda7823ffc5",  # v0.9.0-v0.11.0
     },
     "Work Loop": {
         "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.4.0-v0.6.2
@@ -43,6 +44,7 @@ SECTIONS = {
         "dfacead5b7d2f4ad91889329fb157a59a13bf3edc1aedd2d5c492b027279f09f",  # v0.8.0-v0.8.2
         "e9a9556dff30fe8af69b550524116927e9a3e6424405ce6e89107e6c78300171",  # v0.9.0-v0.9.1
         "460a6d6b3a957bdd92917b1d350fe5ac5921ef36393af99e3adae9044e01d3e3",  # v0.9.2
+        "00ddca47f3cf18f6aeafa01529d2cfaf4c52320770f92ade354bebf0fedf688f",  # v0.10.0-v0.11.0
     },
 }
 LEGACY = [f"scripts/{name}.sh" for name in ("okf-check", "okf-recall", "okf-shim")]

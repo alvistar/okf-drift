@@ -29,9 +29,10 @@
 #      `code_refs` entries; non-code paths take no *automatic* binding, but a hand
 #      `drift link` on one is a deliberate content anchor and stays valid. A concept
 #      reviewed against a change is re-stamped with
-#      `drift link '<doc>' '<anchor identity>' --doc-is-still-accurate` and a line in
-#      log.md — the IDENTITY (`path#symbol` for a symbol anchor), never the bare path,
-#      which would create a second, whole-file binding and leave the stale one stale.
+#      `okf-restamp.sh '<doc>' '<anchor identity>' '<what you read>'`, which runs
+#      `drift link … --doc-is-still-accurate` and writes the log.md line — the IDENTITY
+#      (`path#symbol` for a symbol anchor), never the bare path, which would create a
+#      second, whole-file binding and leave the stale one stale.
 #
 # TWO SEPARATE DIAGNOSTICS, because they are two different questions and one of them used
 # to answer for both:
@@ -207,11 +208,19 @@ sub glob_re {
 }
 my @require_re = map { [ $_, glob_re($_) ] } @require_tracking;
 # One `warn` line per diagnostic, not one per concept: 29 identical lines are read as
-# noise, and the two questions they used to conflate have different answers.
+# noise, and the two questions they used to conflate have different answers. The list is
+# capped too: the same names reprinted on every run were ~500 lines across the reference
+# consumers' sessions, read and ignored each time. OKF_VERBOSE=1 prints them all.
+my $GROUP_MAX = 8;
 sub grouped {
   my ($label, @members) = @_;
   return unless @members;
   my $head = sprintf("%d concept(s) %s: ", scalar @members, $label);
+  my $more = 0;
+  if (!$ENV{OKF_VERBOSE} && @members > $GROUP_MAX) {
+    $more = @members - $GROUP_MAX;
+    @members = (sort @members)[0 .. $GROUP_MAX - 1];
+  }
   my $indent = '        ';
   my @lines; my $line = ''; my $prefix = length("warn  ") + length($head);
   for my $m (sort @members) {
@@ -222,6 +231,7 @@ sub grouped {
     else { $line .= $piece }
   }
   push @lines, $line if length $line;
+  push @lines, "… and $more more (OKF_VERBOSE=1 lists them)" if $more;
   warnl($head . shift @lines);
   print "$indent$_\n" for @lines;
 }
@@ -348,7 +358,7 @@ if (-f "$bundle/project/state.md") {
 my $drift_note = $has_lock ? "step 6 did not run (drift not on PATH)"
                : $wiki    ? "step 6 not applicable (wiki profile, no drift.lock)"
                :            "step 6 skipped (no drift.lock)";
-my ($nonfresh, $outside_nonfresh) = (0, 0);
+my ($nonfresh, $outside_nonfresh, $restampable) = (0, 0, 0);
 my $bundle_rel = '';
 if (length $drift_json) {
   my $dc = eval { decode_json($drift_json) };
@@ -400,7 +410,8 @@ if (length $drift_json) {
            # drift blames with `git log -1 -- <file>`: the last commit to TOUCH the file,
            # not necessarily the one that moved the ground under the concept.
            ."        last commit touching this file (not necessarily the cause): $c ".($date || '-')." ".($b->{subject} // '(uncommitted change — nothing to blame yet)')." (".($b->{author} // '-').")\n"
-           ."        review the concept against the code, then: drift link ".shq($p)." ".shq($target)." --doc-is-still-accurate  + a dated line in $bundle/log.md");
+           ."        read the concept against the code; if it holds: okf-restamp.sh ".shq($p)." ".shq($target)." '<what you read>'  (/okf-write step 3)");
+        $restampable++ if ($a->{reason}{code} // '') eq 'changed_after_baseline';
       }
       for my $l (@{ $d->{links} || [] }) {
         next unless ($l->{result} // '') eq 'broken';
@@ -448,6 +459,11 @@ if (length $drift_json) {
 }
 grouped("with empty code_refs (okf search --for-path cannot find them)", @no_code_refs);
 grouped("with an open question ([TO VERIFY] / [DA VERIFICARE]) — confirm or remove", @open_questions);
+
+# Said once, not per anchor: a reformat or an import sort flags every concept bound to the
+# files it touched, and the sweep settles those without anyone reading them.
+print "note  $restampable anchor(s) drifted: run `okf-restamp.sh --format-only` first — it re-stamps, with one log line, those whose file (C, Swift and other raw-hashed languages) changed only in indentation, and lists the rest\n"
+  if $restampable > 1;
 
 # A repository that adopted drift and then ran the gate without it gets a FAIL, not a
 # green run: the other five steps above are worth reporting first, so this lands here.
