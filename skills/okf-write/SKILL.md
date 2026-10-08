@@ -4,10 +4,10 @@ disable-model-invocation: true
 description: |
   Record into an OKF knowledge bundle — the Grow step: write the decision, the playbook
   or the surgical concept edit, refresh project/state.md, bind every new **code** `code_refs`
-  path with `drift link`; non-code paths take no *automatic* binding, and a claim whose
-  truth lives in one is hand-linked or restated as a dated observation; re-stamp
-  a concept you reviewed against a code change (never silently — a dated line in log.md
-  goes with it), bump the dates, pass the gate.
+  path (the bootstrap does it; high-churn files — scripts, CI, VERSION — are never bound);
+  settle drift with the format-only sweep, then re-stamp what you read with
+  okf-restamp.sh (never silently — it writes the log line); okf-tidy.sh keeps index rows
+  and last_updated; pass the gate.
 
   MANUAL TRIGGER ONLY: invoke only when the user types /okf-write.
 
@@ -25,7 +25,7 @@ absolute base directory supplied by the host, and `REPO_ROOT` to the consumer ro
 **Every path in this document is relative to the target repository root.** Run
 everything from there: `code_refs` and `drift.lock` are both rooted there.
 
-This is the write half of a two-part bargain. `/okf-read` withholds a concept whose
+This is the write half of a two-part bargain. `/okf-read` marks a concept STALE when its
 bound code has moved — so a concept becomes trustworthy again only when somebody reviews
 it and says so. This skill is where that happens, and the rule that makes it worth
 anything is:
@@ -36,7 +36,18 @@ anything is:
 survived a code change. It leaves no trace in the concept, in git, or in `drift.lock`
 beyond a changed hex signature. So every re-stamp is paired with a dated line in
 `knowledge/log.md` naming what was checked against what. Without that line the plugin
-degrades into a tool that silences its own alarm.
+degrades into a tool that silences its own alarm. `okf-restamp.sh` writes that line;
+you supply what you read.
+
+**Run the plugin's write helpers through the pinned launcher**, like the gate:
+
+```sh
+sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" <script> <args>
+```
+
+Below, `okf-tidy.sh …`, `okf-restamp.sh …` and `okf-drift-bootstrap.sh …` mean exactly
+that. A pin older than the release that ships a helper has no digest for it and the
+launcher refuses it; upgrade the pin with `/okf-setup`, never run the plugin's copy.
 
 ## Step 0 — What actually changed?
 
@@ -80,8 +91,9 @@ concept governs it.
   back, and the old one loses its `stale_after`.
 - A decision **must link to a concept outside `decisions/`** — an island of decisions
   that only cite each other passes `okf validate --strict` and tells a reader nothing.
-- Add the row to `knowledge/decisions/index.md` carrying the `description:` **verbatim**.
-  The gate compares them both ways, because `okf` itself reads no index.
+- The row in `knowledge/decisions/index.md` carries the `description:` **verbatim**; the
+  gate compares them both ways, because `okf` itself reads no index. Do not copy it by
+  hand: Step 4's `okf-tidy.sh` adds the row and keeps it in step with the frontmatter.
 
 ### A playbook
 
@@ -116,15 +128,38 @@ snapshot and an evidence file, the same items came to 7.7 KB, the longest 201.
 
 ## Step 2 — Bind the new ground
 
-Every **code** `code_refs` entry you added needs a drift binding; non-code paths take no
-*automatic* binding; when a claim's truth lives in one — a workflow trigger, a Kconfig
-value, a fixture's shape — hand-link it and accept that a reformat will alarm, or restate
-the claim as a dated observation. Keep `code_refs` entries as file paths — never put `#Symbol`
-there. A symbol anchor belongs in `drift.lock`, added with `drift link <doc> <path#Symbol>`:
+Every **code** `code_refs` entry you added needs a drift binding, and the bootstrap makes
+it — run it after writing, it skips what the lock already holds:
 
 ```sh
-drift link knowledge/<category>/<slug>.md <repo-relative-path>
+okf-drift-bootstrap.sh knowledge
 ```
+
+Keep `code_refs` entries as file paths — never put `#Symbol` there. A symbol anchor belongs
+in `drift.lock`, added by hand with `drift link <doc> <path#Symbol>` (next section).
+
+### Do not bind high-churn files
+
+A binding is an alarm, and an alarm on a file that changes every week for reasons the
+concept does not care about teaches the reader to re-stamp without reading. Measured on
+the reference consumer: three build/run scripts and the CI/version files held 11% of the
+bindings and took 23% of all re-stamps (`build.sh` alone 113), almost never with a claim
+moving.
+
+**Never bind:** build, run, deploy and test-runner scripts; CI workflows; `VERSION`,
+changelogs, lockfiles and package manifests; generated files. The bootstrap already leaves
+shell scripts and every non-code path unbound — do not hand-link them either.
+
+**Instead:** list the file in `code_refs` (so `okf search --for-path` still finds the
+concept), give the concept a `stale_after`, and write the claim so it survives the churn:
+name where the fact lives ("the steps `build.sh` runs") rather than restating it ("the
+nine steps of the build"). A claim whose truth genuinely lives in such a file — a CI
+trigger, a pinned version — is written as a dated observation ("on 2026-09-28,
+`model.yml` ran on `spec/**`"), which is honest about its age without an alarm.
+
+The exception is a script whose **logic** the concept describes — a release gate, a
+migration — and that changes rarely. Hand-link that one, symbol-narrow where drift parses
+the language.
 
 ### Where the anchor goes
 
@@ -149,20 +184,14 @@ boundary you state in the log line.
    counts members does not run it. Either the claim is removed (OPA removed the glossary
    term count on 2026-09-18, and `CLAUDE.md` says why), or it is written as a dated
    measurement, or the check that proves it runs in a lane the concept names.
-4. **An unsupported language is a whole file.** C, Swift, shell, `.mjs`/`.cjs`: bind the
-   narrowest file, and a formatter alarm is still reviewed against the diff, never
-   acknowledged on sight.
+4. **An unsupported language is a whole file.** C, Swift, `.mjs`/`.cjs`: bind the
+   narrowest file. drift hashes those raw, so a formatter alarms on them; Step 3's
+   format-only sweep settles that, and anything it leaves is read against the diff.
 
 A bare `#name` binds the **first** declaration of that name in the file, silently. Before
 binding a common name (`vend`, `new`, `check`), confirm it is unique in the file; if it is
 not and the intended one is not the first, keep the whole file. The log line names the
 declaration chosen and the boundary where you stopped following the claim.
-
-For a whole bundle at once (idempotent — it skips what the lock already holds):
-
-```sh
-sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstrap.sh knowledge
-```
 
 Measured on drift v0.10.1, and each of these will bite otherwise:
 
@@ -183,36 +212,74 @@ concept, so okf, the indexes and the rest of the gate are unaffected by it.
 
 ## Step 3 — Re-stamp what you reviewed, and log that you did
 
-When a concept was flagged — by `/okf-read`'s WITHHELD block or by the gate's step 6 —
-and you have **read the changed code and confirmed the prose still holds**:
+When the gate's step 6 (or `/okf-read`'s STALE mark) flags anchors, settle them in this
+order.
+
+**1. The format-only sweep, first, when more than one anchor drifted:**
 
 ```sh
-drift link knowledge/<category>/<slug>.md <path> --doc-is-still-accurate
+okf-restamp.sh --format-only knowledge
 ```
 
-Editing the concept does **not** clear the flag. Measured: only that flag re-stamps the
-signature. So a re-stamp is always a deliberate act, and it is always paired with a line
-in `knowledge/log.md`:
+For each stale anchor it finds the version of the file the binding was signed against and
+compares it with the working tree. It re-stamps, with ONE log line for the whole sweep,
+only a file in a language drift hashes raw — C, C++, Objective-C, Swift, Kotlin, C#,
+Dart — whose lines, blank ones included, are unchanged but for indentation and trailing
+whitespace. Everything else it lists as `needs reading` and leaves stale.
+
+It is deliberately narrow. In Rust, Python, TS/JS, Go, Zig and Java drift already ignores
+formatting, so what it flags there changed a token, and no rule short of a parser can tell
+a harmless token change from a real one: an earlier draft that normalised whitespace,
+trailing commas and import order re-stamped `(x,)` → `(x)`, `x-- - y` → `x - --y` and a
+swapped `from a import x`, among 23 such cases an independent review built. A `cargo fmt`
+is therefore read, not swept; the sweep pays off on a `clang-format` or Swift reindent.
+
+**2. Each anchor left: read it, then either fix the concept or re-stamp it.**
+
+Read the changed code against the concept's claims. If a claim is wrong, fix it (Step 1's
+surgical edit) and log the edit in prose as usual. Editing does **not** clear the flag —
+measured, only `--doc-is-still-accurate` re-stamps the signature — so an edited concept
+is re-stamped too.
+
+If the prose still holds:
+
+```sh
+okf-restamp.sh knowledge/<category>/<slug>.md '<anchor identity>' '<what you read against what>'
+```
+
+`<anchor identity>` is exactly what the gate printed (`path#symbol` for a symbol anchor).
+The script refuses an anchor that is not stale, an identity drift does not hold, and a
+note too short to say anything. It runs `drift link … --doc-is-still-accurate` and adds
+one line under today's heading in `log.md`:
 
 ```
-- 2026-09-16 — reviewed `architecture/protocol-core` against
-  `core/crates/core/src/cbor.rs` (commit 4f2a11c, "tighten the length guard"):
-  the §5 encoding claims are unchanged; the bound-length paragraph was wrong and is
-  rewritten. Re-stamped.
+* STILL ACCURATE, re-stamped `architecture/protocol-core.md` <- `core/src/cbor.rs#validate_item`
+  (last commit on the file: 4f2a11cb "tighten the length guard"): read the length guard
+  against §5's bound; unchanged
 ```
 
-Name the concept, the path, the commit that moved it, what you checked, and what you
-changed — or that nothing needed changing. **If you did not actually read the code, do
-not re-stamp.** Leave it flagged and say so; a withheld concept is a working alarm, and
-an unearned re-stamp is worse than no drift at all.
+The note says what you read and what it was checked against — one clause, not a
+paragraph. Prose belongs to what changed in the bundle, not to what did not. **If you did
+not actually read the code, do not re-stamp.** Leave it flagged and say so; a stale
+concept is a working alarm, and an unearned re-stamp is worse than no drift at all.
 
-## Step 4 — Dates
+## Step 4 — Bookkeeping: rows and dates
 
-- `last_updated`: bump on every concept you touched. ISO — the gate checks the format
-  because okf carries the field without validating it.
+```sh
+okf-tidy.sh knowledge
+```
+
+It sets `last_updated` to today on every concept that differs from `HEAD` (modified, added
+or untracked), rewrites every index row whose description is not its concept's
+`description:` verbatim, and adds the missing row for a new concept to its category's
+`index.md`. It prints each change and is idempotent; run it once, after writing.
+
+What it leaves to you:
+
 - `stale_after`: bump **only when you actually reviewed the concept** against reality,
   not when you edited a line in it. Advancing one without the other leaves the concept
   permanently expired or permanently trusted; both are wrong.
+- A new row lands after the last one; move it if the index is ordered by meaning.
 
 ## Step 5 — Gate, then report
 
@@ -226,9 +293,9 @@ is the only acceptable result before a push. Step 6 warns rather than fails when
 is no `drift.lock` — on a repo that has not adopted drift that warning is the whole
 story; on one that has, it means something is wrong with the lock.
 
-Report to the user: what was recorded and where; every code-path `drift link` run and every
-re-stamp with the log line that accompanies it; the dates bumped; the gate's last line;
-and anything you chose **not** to record, with why.
+Report to the user: what was recorded and where; the bootstrap's new bindings; the
+format-only sweep's count and every reviewed re-stamp; what `okf-tidy.sh` changed; the
+gate's last line; and anything you chose **not** to record, with why.
 
 Nothing here publishes and nothing here takes a version bump — the bundle is not a
 released artifact. If the repository's `VERSION` governs something else, leave it alone.

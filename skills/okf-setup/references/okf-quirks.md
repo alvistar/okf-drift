@@ -182,7 +182,8 @@ bound `guard` stayed fresh only in Rust. In a Rust + Python + C + Swift family t
 backend and the model harness can be anchored at symbol level; the C firmware and the
 Swift app only at file level, with
 every `clang-format`/`swift-format` pass reading as drift. Bind narrow files there, and
-expect to re-stamp after a formatter run.
+expect to re-stamp after a formatter run; `okf-restamp.sh --format-only` settles a pass
+that changed only indentation or trailing whitespace.
 
 `#Symbol` belongs in `drift.lock`, via `drift link`; `code_refs` must contain the file path
 only. `okf validate --drift` treats `path#Symbol` as a non-existent path, and the bootstrap
@@ -192,11 +193,12 @@ fails it before calling `drift link`.
 
 `okf-drift-bootstrap.sh` keeps every `code_refs` path for `okf`'s existence check, but
 automatically gives `drift` bindings only to this fixed extension list. Symbol-capable
-files are `go java py rs ts tsx zig`; file-level code is `js mjs cjs jsx sh bash zsh c h
-cc cpp hpp m swift kt kts rb php sql lua`. A trailing `#Symbol` is stripped before the
-extension test. A path with no extension (`VERSION`, `Makefile`) or a data/document
-extension (`json`, `yaml`, `toml`, `md`, `txt`, `lock`, …) is reported `not-code` and is
-not linked. If a concept describes the content of such a data file, use a hand
+files are `go java py rs ts tsx zig`; file-level code is `js mjs cjs jsx c h cc cpp hpp m
+swift kt kts rb php sql lua`. A trailing `#Symbol` is stripped before the extension test.
+A path with no extension (`VERSION`, `Makefile`) or a data/document extension (`json`,
+`yaml`, `toml`, `md`, `txt`, `lock`, …) is reported `not-code` and is not linked. So is a
+shell script (`sh bash zsh`), reported `not-code … (high-churn script: hand-link only if
+the concept describes its logic)`. If a concept describes the content of such a data file, use a hand
 `drift link` as the escape hatch; an existing non-code binding is a deliberate content
 anchor, reported `held-non-code … (deliberate content anchor — kept)` and never removed
 by the bootstrap. Removing one is a deliberate act of your own: `drift unlink <doc>
@@ -255,7 +257,7 @@ The third row is why `code_refs` wants to be narrow. drift signs **file content*
 directory has nothing to sign. `okf-drift-bootstrap.sh` expands a directory `code_ref`
 into `git ls-files -- <dir>` and skips anything wider than `OKF_DRIFT_MAX_DIR_FILES`
 (default 20), because a hundred anchors under one concept makes that concept permanently
-stale and the WITHHELD block permanently full. Narrow the `code_ref` instead of raising
+stale and its recall hits permanently marked STALE. Narrow the `code_ref` instead of raising
 the cap.
 
 ## `drift check`
@@ -326,7 +328,8 @@ it — none of it. The only thing that re-stamps the signature is
 re-grounding to be a deliberate claim rather than a side effect of touching a file. It is
 also why `/okf-write` pairs every re-stamp with a dated line in `knowledge/log.md`: the
 lock records *that* a signature changed and never *why*, so the audit trail has to be
-written by hand or it does not exist.
+written beside it or it does not exist. `okf-restamp.sh` writes that line; the reader
+supplies what was read.
 
 ## Miscellany
 
