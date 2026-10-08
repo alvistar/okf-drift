@@ -7,6 +7,66 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [0.12.0] - 2026-10-08
+
+Measured on the reference consumers' Claude sessions (about 150, 2,264 gate runs): 55% of
+drift flags ended in a re-stamp with nothing changed, a third of one consumer's `log.md`
+was re-stamp prose, and three scripts plus the CI and version files took 23% of all
+re-stamps. This release moves the mechanical part out of the model.
+
+### Added
+
+- `okf-restamp.sh <doc> <anchor> "<what you read>"`: re-stamps one anchor the gate
+  flagged and writes its line under today's heading in `log.md`. It refuses an anchor
+  that is not stale, an identity drift does not hold, and a note too short to say what
+  was read.
+- `okf-restamp.sh --format-only`: for every stale anchor, finds the version of the file
+  the binding was signed against (its signature recomputed by `drift link` in a scratch
+  repository). It re-stamps, with one log line for the sweep, only when the file is in a
+  language drift hashes raw (C, C++, Objective-C, Swift, Kotlin, C#, Dart) and its lines,
+  blank ones included, changed only in indentation or trailing whitespace. Files with
+  backslash continuations or multi-line, raw or verbatim strings are refused. The log
+  line is written before the links, and a failed link is taken back out of it. The rest it lists as needing
+  reading. It never settles a language drift parses (Rust, Python, TS/JS, Go, Zig, Java):
+  drift already ignores formatting there, so what it flags is a token change. A wider
+  first draft (whitespace inside lines, trailing commas, import order) re-stamped 23
+  meaning changes an independent review built against real drift, such as `(x,)` →
+  `(x)` and `x-- - y` → `x - --y`. A second review added C# `@$"` strings, Scala
+  indentation and a blank line before a block. All are kept as selftests that must stay
+  unsettled.
+  `--compare <path> <old> <new>` prints the verdict for two versions of a file.
+- `okf-tidy.sh`: sets `last_updated` on every concept that differs from `HEAD`, rewrites
+  index rows whose description is not the concept's, and adds a new concept's missing
+  row. `stale_after` stays the writer's call.
+- `/okf-write` Step 2: high-churn files (build/run scripts, CI workflows, `VERSION`,
+  manifests) are never bound. They are listed in `code_refs` with a `stale_after`, and a
+  claim whose truth lives in one is written as a dated observation.
+
+### Changed
+
+- **Recall marks a drifted concept STALE in place** instead of withholding it in a
+  separate block. Of about 84 recalls in those sessions, 5 withheld anything, and the
+  concept was worth reading beside the code each time. A doc whose only fault is a dead
+  link is labelled `BROKEN LINK`, not STALE.
+- **Recall without drift searches and says so.** With no `drift` on PATH or no
+  `drift.lock`, it prints a warning first and labels every hit `drift not run`, where it
+  used to exit 2. A drift that ran and failed is still exit 2.
+- The bootstrap no longer binds shell scripts. It reports them as high-churn, to be
+  hand-linked only when a concept describes their logic. Existing bindings are untouched.
+- The gate prints `okf-restamp.sh '<doc>' '<anchor>' '<what you read>'` as the repair. When
+  more than one anchor drifted, it says once to run the format-only sweep first.
+- The gate's coverage and discoverability lists show 8 names and a count;
+  `OKF_VERBOSE=1` lists them all.
+- `/okf-write`, `/okf-read`, `okf-runtime` and the `CLAUDE.md` sections describe the
+  helpers. `okf-integrate.py` accepts the v0.9.0–v0.11.0 `Knowledge Bundle` and
+  v0.10.0–v0.11.0 `Work Loop` bodies, so consumers carrying them upgrade in place.
+
+### Notes
+
+- The helpers run through the pinned launcher, so a consumer gets them only after
+  re-pinning to the release that ships them. An older pin has no digest for them, and the
+  launcher refuses to run them.
+
 ## [0.11.0] - 2026-09-29
 
 ### Added
