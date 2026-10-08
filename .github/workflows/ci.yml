@@ -89,8 +89,10 @@ jobs:
       # REAL parsers still emit what those stubs pretend. This drives one scratch repo
       # through the whole loop with the pinned okf and the pinned drift: the three recall
       # signals, a deprecated concept with an expired review date, a moved SYMBOL anchor
-      # withheld, the gate's printed re-stamp command EXECUTED, and the lock holding one
-      # binding afterwards — the binding it already had, not a second whole-file one.
+      # marked STALE, the gate's printed re-stamp command EXECUTED (okf-restamp.sh, with its
+      # log line), the lock holding one binding afterwards — the binding it already had, not
+      # a second whole-file one — and the format-only sweep settling a reindented C file
+      # while leaving a Rust trailing comma (a token change) and a real C change for reading.
       - name: recall's three signals and the gate's repair, through the real tools
         run: |
           set -eu
@@ -238,31 +240,33 @@ jobs:
             || fail "the discoverability warning is missing or names the wrong concepts"
           if has 'project/state.md' "$gate"; then fail "the state snapshot is exempt from both lists"; fi
 
-          say "move the anchored symbol: recall must WITHHOLD"
+          say "move the anchored symbol: recall must mark it STALE"
           perl -pi -e 's/    x \+ 1/    x + 2/' src/lib.rs
           out=$(sh "$W/scripts/okf-recall.sh" "admission ceiling" knowledge)
           printf '%s\n' "$out"
-          has 'WITHHELD' "$out" || fail "a moved anchor did not withhold the concept"
+          has 'STALE: code moved after it was written' "$out" || fail "a moved anchor was not marked STALE"
           has 'src/lib.rs#admit_reusable  [changed_after_baseline]' "$out" \
-            || fail "the withheld block did not name the anchor identity"
+            || fail "the stale hit did not name the anchor identity"
           has 'last commit touching this file (not necessarily the cause):' "$out" \
             || fail "blame is not labelled as the last commit touching the file"
 
           say "the gate fails and prints a re-stamp command naming the exact binding"
           gate=$(sh "$W/scripts/okf-check.sh" knowledge) && fail "the gate passed over a moved anchor"
           printf '%s\n' "$gate"
-          has "drift link 'knowledge/architecture/core.md' 'src/lib.rs#admit_reusable' --doc-is-still-accurate" "$gate" \
+          has "okf-restamp.sh 'knowledge/architecture/core.md' 'src/lib.rs#admit_reusable' '<what you read>'" "$gate" \
             || fail "the printed re-stamp command does not name the symbol identity"
-          if has "drift link 'knowledge/architecture/core.md' 'src/lib.rs' " "$gate"; then
+          if has "okf-restamp.sh 'knowledge/architecture/core.md' 'src/lib.rs' " "$gate"; then
             fail "the gate printed a whole-file repair for a symbol anchor"
           fi
           has 'drifted from src/lib.rs#admit_reusable' "$gate" || fail "the drifted-from line lost the identity"
 
-          say "execute exactly what it printed"
-          cmd=$(printf '%s\n' "$gate" | sed -n "s/^ *review the concept against the code, then: \(drift link .*--doc-is-still-accurate\).*/\1/p" | head -1)
+          say "execute exactly what it printed, with a note"
+          cmd=$(printf '%s\n' "$gate" | sed -n "s/^ *read the concept against the code; if it holds: okf-restamp.sh \(.*\) '<what you read>'.*/\1/p" | head -1)
           [ -n "$cmd" ] || fail "could not extract the printed command"
-          echo "+ $cmd"
-          eval "$cmd"
+          echo "+ okf-restamp.sh $cmd 'read admit_reusable: the ceiling check still holds'"
+          eval "sh '$W/scripts/okf-restamp.sh' $cmd 'read admit_reusable: the ceiling check still holds'"
+          grep -qF '* STILL ACCURATE, re-stamped `architecture/core.md` <- `src/lib.rs#admit_reusable`' knowledge/log.md \
+            || { cat knowledge/log.md; fail "the re-stamp wrote no log line"; }
 
           say "the gate is green again, and the lock holds exactly one binding for that doc"
           gate=$(sh "$W/scripts/okf-check.sh" knowledge) || { printf '%s\n' "$gate"; fail "the printed command did not restore a green gate"; }
@@ -278,6 +282,30 @@ jobs:
           fi
           OKF_REQUIRE_TRACKING='architecture/*' sh "$W/scripts/okf-check.sh" knowledge >/dev/null \
             || fail "OKF_REQUIRE_TRACKING fired on a glob that matches only a tracked concept"
+
+          say "the sweep settles a reindented C file, and leaves token changes for reading"
+          printf 'int ceiling(void) {\n\treturn 8;\n}\n' > src/ceiling.c
+          drift link knowledge/architecture/core.md src/ceiling.c
+          git add -A && git commit -qm "re-stamped; a C file bound"
+          printf 'int ceiling(void) {\n    return 8;  \n}\n' > src/ceiling.c
+          perl -pi -e 's/admit_reusable\(x: u32\)/admit_reusable(x: u32,)/' src/lib.rs
+          git commit -qam "clang-format and rustfmt"
+          sh "$W/scripts/okf-check.sh" knowledge >/dev/null && fail "drift did not flag the two changes"
+          out=$(sh "$W/scripts/okf-restamp.sh" --format-only knowledge)
+          printf '%s\n' "$out"
+          has '1 re-stamped as format-only' "$out" || fail "the sweep did not settle a reindent"
+          has 're-stamped  knowledge/architecture/core.md <- src/ceiling.c' "$out" || fail "the wrong anchor was settled"
+          has 'needs reading  knowledge/architecture/core.md <- src/lib.rs#admit_reusable (a language the sweep never settles)' "$out" \
+            || fail "a Rust token change was settled without reading"
+          grep -qF '* FORMAT-ONLY, re-stamped mechanically' knowledge/log.md || fail "the sweep wrote no log line"
+          git add -A && git commit -qm "swept"
+          perl -pi -e 's/return 8;/return 9;/' src/ceiling.c
+          git commit -qam "a real change"
+          out=$(sh "$W/scripts/okf-restamp.sh" --format-only knowledge)
+          printf '%s\n' "$out"
+          has '0 re-stamped as format-only' "$out" || fail "the sweep re-stamped a real change"
+          has 'needs reading  knowledge/architecture/core.md <- src/ceiling.c' "$out" \
+            || fail "the sweep did not list the real change for reading"
 
           echo
           echo "ok — real okf and real drift agree with the stubbed selftests"

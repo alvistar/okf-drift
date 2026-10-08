@@ -6,7 +6,11 @@
 # `okf` owns existence for every path a concept governs (`code_refs:`); `drift` owns
 # content change for code paths (`drift.lock`). The fixed code-extension list below keeps
 # data files out of content drift, while a hand `drift link` remains the escape hatch for
-# a data file whose content the concept describes. Such a binding is DELIBERATE: a non-code
+# a data file whose content the concept describes. Shell scripts are left out too, as
+# HIGH-CHURN: on the reference consumer three build/run scripts held 11% of the bindings
+# and took 23% of all re-stamps (`build.sh` alone 113), almost never with a claim moving.
+# A concept lists such a file in `code_refs` for discoverability and carries a
+# `stale_after`; it is hand-linked only when its prose describes the script's logic. Such a binding is DELIBERATE: a non-code
 # target already in the lock is reported `held-non-code` and kept, never undone here. To
 # remove one, run `drift unlink <doc> <target>` yourself, on purpose. This writes one `drift link
 # <bundle>/<concept>.md <path>` per code entry into the repo-root `drift.lock` that
@@ -87,7 +91,7 @@ linked=0; skipped=0; not_code=0; failed=0; concepts=0; lastdoc=
 
 is_code_target() {   # is_code_target <path[#Symbol]>
   case "${1%%#*}" in
-    *.go|*.java|*.py|*.rs|*.ts|*.tsx|*.zig|*.js|*.mjs|*.cjs|*.jsx|*.sh|*.bash|*.zsh|*.c|*.h|*.cc|*.cpp|*.hpp|*.m|*.swift|*.kt|*.kts|*.rb|*.php|*.sql|*.lua)
+    *.go|*.java|*.py|*.rs|*.ts|*.tsx|*.zig|*.js|*.mjs|*.cjs|*.jsx|*.c|*.h|*.cc|*.cpp|*.hpp|*.m|*.swift|*.kt|*.kts|*.rb|*.php|*.sql|*.lua)
       return 0 ;;
     *)  return 1 ;;
   esac
@@ -106,7 +110,10 @@ link_one() {   # link_one <doc> <target>
     if grep -qxF "$1$TAB$2" "$tmp.have"; then
       echo "held-non-code $1 -> $2 (deliberate content anchor — kept)"
     else
-      echo "not-code $1 -> $2"
+      case "$2" in
+        *.sh|*.bash|*.zsh) echo "not-code $1 -> $2 (high-churn script: hand-link only if the concept describes its logic)" ;;
+        *) echo "not-code $1 -> $2" ;;
+      esac
     fi
     return 0
   fi
