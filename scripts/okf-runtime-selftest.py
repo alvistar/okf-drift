@@ -1622,6 +1622,24 @@ class LogEntryTests(unittest.TestCase):
         self.assertRegex(str(entry.relative_to(plain)), ENTRY_RE)
         self.assertEqual(entry.read_text(), f"## {TODAY}\n* Created\n")
 
+    def test_an_explicit_slug_without_git_reuses_its_entry(self) -> None:
+        plain = Path(self.tmp.name) / "plain"
+        (plain / "knowledge").mkdir(parents=True)
+        for line in ("* one", "* two"):
+            result = subprocess.run(["sh", str(SCRIPTS / "okf-log.sh"), "add", "--slug", "x",
+                                     "knowledge", line], cwd=plain, env=self.env,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        [entry] = list((plain / "knowledge").glob("log/*/log.md"))
+        self.assertEqual(entry.read_text(), f"## {TODAY}\n* two\n* one\n")
+
+    def test_todays_heading_as_the_last_line_without_a_newline(self) -> None:
+        self.add("* one")
+        [entry] = self.entries()
+        (self.root / entry).write_text(f"## {TODAY}")
+        self.add("* two")
+        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* two\n")
+
     def unsplit(self, history: bytes) -> None:
         (self.bundle / "log.md").write_bytes(history)
 

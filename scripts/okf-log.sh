@@ -151,7 +151,7 @@ if (defined $opt{entry}) {
   }
   my $in_git = (git('rev-parse', '--is-inside-work-tree') // '') eq 'true';
   my $base = $opt{base} // 'origin/HEAD';
-  my ($mb, $why_not);
+  my ($mb, $why_not, $shallow);
   if (!$in_git) {
     refuse('not a git repository: pass --slug <slug> (or --entry <path>) to name the entry') unless defined $slug;
     $why_not = 'not a git repository';
@@ -164,7 +164,7 @@ if (defined $opt{entry}) {
     if (!defined $base_sha) {
       $why_not = "base ref $base not found";
     } elsif ((git('rev-parse', '--is-shallow-repository') // '') eq 'true') {
-      $why_not = 'the history is shallow';
+      ($why_not, $shallow) = ('the history is shallow', 1);
     } else {
       $mb = git('merge-base', 'HEAD', $base_sha);
       $why_not = "no merge-base between HEAD and $base" unless defined $mb && length $mb;
@@ -181,7 +181,7 @@ if (defined $opt{entry}) {
       if (defined $why_not) {
         refuse("$why_not: the entry this branch added cannot be found. Fetch the full history "
              . "(git fetch --unshallow), or pass --base <ref>, --slug <slug> or --entry <path>")
-          if $why_not =~ /shallow/;
+          if $shallow;
         refuse("$why_not: pass --base <ref> (default origin/HEAD; `git remote set-head origin -a` sets it), "
              . "or --slug <slug> or --entry <path>");
       }
@@ -208,7 +208,7 @@ if (defined $opt{entry}) {
   } else {
     print STDERR "okf-log: $why_not; using the working tree's entries named '$slug'\n";
     for my $p (sort glob("\Q$bundle\E/log/*/log.md")) {
-      push @cand, $p if $p =~ m{/log/$NAME/log\.md\z} && $3 eq $slug;
+      push @cand, $p if $p =~ m{/log/$NAME/log\.md\z} && $2 eq $slug;
     }
   }
   if (@cand > 1) {
@@ -249,7 +249,7 @@ while ($t =~ /^## ([^\n]*)$/mg) {
 }
 if    ($t !~ /\S/)     { $t = "## $today\n$line\n" }
 elsif (!defined $at)   { $t =~ s/\n*\z/\n\n## $today\n$line\n/ }
-elsif ($is_today)      { my $eol = index($t, "\n", $at); $eol = length $t if $eol < 0; substr($t, $eol + 1, 0) = "$line\n" }
+elsif ($is_today)      { my $eol = index($t, "\n", $at); if ($eol < 0) { $t .= "\n$line\n" } else { substr($t, $eol + 1, 0) = "$line\n" } }
 else                   { substr($t, $at, 0) = "## $today\n$line\n\n" }
 write_raw($entry, $t);
 print "logged in $entry under $today\n";
