@@ -10,6 +10,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -18,6 +19,46 @@ import tempfile
 import unittest
 
 SCRIPTS = Path(__file__).resolve().parent
+
+GIT_ID = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+          "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+TODAY = datetime.date.today().isoformat()
+ENTRY_RE = r"knowledge/log/(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)-([0-9a-f]{4})/log\.md"
+# The frozen log's marker, as the spec defines it: the split date and the sha256 of every
+# byte above the marker line, line endings normalized to LF.
+MARKER_RE = r"<!-- okf-log frozen (\d{4}-\d{2}-\d{2}) sha256:([0-9a-f]{64}) -->"
+
+
+def frozen_parts(data: bytes) -> tuple[bytes, str, str]:
+    """(the bytes above the marker line, its date, its hash) of a frozen log."""
+    lines = data.splitlines(keepends=True)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    match = re.fullmatch(MARKER_RE, lines[-1].decode().rstrip("\r\n")) if lines else None
+    assert match, f"the last non-blank line is not a marker: {data[-200:]!r}"
+    return b"".join(lines[:-1]), match.group(1), match.group(2)
+
+
+def pin_scripts(root: Path, names: tuple[str, ...], *, fill_cache: bool = True) -> Path:
+    """A v0.7.0 lockfile in `root` pinning the working-tree bytes of `names`; the cache
+    holds those bytes when `fill_cache`. Returns the XDG cache home."""
+    cache = root / "cache/okf-drift/v0.7.0"
+    cache.mkdir(parents=True, exist_ok=True)
+    lines = ["v0.7.0"]
+    for name in names:
+        data = (SCRIPTS / name).read_bytes()
+        if fill_cache:
+            (cache / name).write_bytes(data)
+        lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
+    (root / ".okf-drift-version").write_text("\n".join(lines) + "\n")
+    return root / "cache"
+
+
+def split_log(root: Path, bundle: str = "knowledge") -> None:
+    """Freeze `root/bundle/log.md`, as /okf-migrate does: fixture preparation, so the
+    working-tree okf-log.sh runs directly in either selftest mode."""
+    subprocess.run(["sh", str(SCRIPTS / "okf-log.sh"), "split", bundle], cwd=root, check=True,
+                   capture_output=True)
 
 
 class RuntimeTests(unittest.TestCase):
@@ -29,6 +70,7 @@ class RuntimeTests(unittest.TestCase):
         (self.bundle / "project").mkdir(parents=True)
         (self.bundle / "index.md").write_text('---\nokf_version: "0.2"\n---\n')
         (self.bundle / "log.md").write_text("# Log\n")
+        split_log(self.root)
         (self.bundle / "project/index.md").write_text(
             "- [State](/project/state.md) — Fixture state.\n"
         )
@@ -511,6 +553,99 @@ class RuntimeTests(unittest.TestCase):
         return subprocess.run(["sh", str(SCRIPTS / "okf-scaffold.sh"), *args, str(target)],
                               env=self.env, text=True, capture_output=True)
 
+    def freeze(self, history: bytes) -> bytes:
+        (self.bundle / "log.md").write_bytes(history)
+        split_log(self.root)
+        return (self.bundle / "log.md").read_bytes()
+
+    def assert_gate_fails(self, *needles: str) -> str:
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for needle in needles:
+            self.assertIn(needle, result.stdout)
+        return result.stdout
+
+    def assert_gate_passes(self) -> None:
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_conflicted_drift_lock_fails_naming_okf_lock_merge(self) -> None:
+        (self.root / "drift.lock").write_text(
+            'version = 1\n\n<<<<<<< HEAD\n[[bindings]]\ndoc = "a"\n=======\n'
+            '[[bindings]]\ndoc = "b"\n>>>>>>> main\n')
+        out = self.assert_gate_fails("drift.lock", "conflict", "okf-lock-merge.py")
+        self.assertNotIn("okf gate passed", out)
+
+    def test_a_conflicted_drift_lock_names_okf_lock_merge_even_without_drift(self) -> None:
+        (self.root / "drift.lock").write_text(
+            'version = 1\n\n<<<<<<< HEAD\n[[bindings]]\ndoc = "a"\n=======\n'
+            '[[bindings]]\ndoc = "b"\n>>>>>>> main\n')
+        (self.stub / "drift").unlink()
+        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
+                                            "/usr/sbin", "/sbin"])
+        self.assert_gate_fails("drift.lock", "conflict", "okf-lock-merge.py")
+
+    def test_an_unmigrated_bundle_fails_naming_okf_migrate_in_both_profiles(self) -> None:
+        for profile in ("code", "wiki"):
+            with self.subTest(profile=profile):
+                if profile == "wiki":
+                    self.wiki()
+                (self.bundle / "log.md").write_text("# Log\n")
+                self.assert_gate_fails("log.md", "/okf-migrate")
+
+    def test_a_change_to_the_frozen_history_fails_naming_the_log_entry(self) -> None:
+        history = f"# Log\n\n## {TODAY}\n* split today\n\n## 2026-01-01\n* older\n".encode()
+        frozen = self.freeze(history)
+        self.assert_gate_passes()
+        cases = {
+            "a line under the split-day heading": frozen.replace(b"* split today\n", b"* split today\n* new\n"),
+            "a line under an old heading": frozen.replace(b"* older\n", b"* older\n* new\n"),
+        }
+        for label, data in cases.items():
+            with self.subTest(label):
+                (self.bundle / "log.md").write_bytes(data)
+                self.assert_gate_fails("log.md", "frozen", "knowledge/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md",
+                                       "okf-log.sh add")
+
+    def test_text_below_the_marker_fails_and_a_trailing_newline_passes(self) -> None:
+        frozen = self.freeze(b"# Log\n\n## 2026-01-01\n* older\n")
+        (self.bundle / "log.md").write_bytes(frozen + b"\n\n")
+        self.assert_gate_passes()
+        (self.bundle / "log.md").write_bytes(frozen + b"\n## 2026-10-12\n* new\n")
+        self.assert_gate_fails("below the marker", "knowledge/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md")
+
+    def test_a_crlf_checkout_of_unchanged_history_passes(self) -> None:
+        frozen = self.freeze(b"# Log\n\n## 2026-01-01\n* older\n")
+        (self.bundle / "log.md").write_bytes(frozen.replace(b"\n", b"\r\n"))
+        self.assert_gate_passes()
+
+    def test_refreeze_turns_the_gate_green_again(self) -> None:
+        frozen = self.freeze(b"# Log\n\n## 2026-01-01\n* a typo\n")
+        (self.bundle / "log.md").write_bytes(frozen.replace(b"a typo", b"the fix"))
+        self.assert_gate_fails("frozen")
+        subprocess.run(["sh", str(SCRIPTS / "okf-log.sh"), "split", "--refreeze", "knowledge"],
+                       cwd=self.root, check=True, capture_output=True)
+        self.assert_gate_passes()
+
+    def entry(self, text: str) -> None:
+        path = self.bundle / "log/2026-10-12-fix-abcd/log.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def test_a_log_entry_with_iso_headings_passes(self) -> None:
+        self.entry("<!-- okf-log branch: alice/fix -->\n"
+                   "## 2026-10-12\n* two\n\n```\n## not a heading\n```\n\n## 2026-10-11\n* one\n")
+        self.assert_gate_passes()
+
+    def test_a_log_entry_heading_that_is_not_a_bare_iso_date_fails_in_both_profiles(self) -> None:
+        for profile in ("code", "wiki"):
+            if profile == "wiki":
+                self.wiki()
+            for heading in ("## 2026-10-12 — the fix", "## Today", "## 2026-1-2"):
+                with self.subTest(profile=profile, heading=heading):
+                    self.entry(f"{heading}\n* x\n")
+                    self.assert_gate_fails("knowledge/log/2026-10-12-fix-abcd/log.md", heading)
+
     def test_scaffold_refusals_write_nothing(self) -> None:
         cases = {
             "wiki over a code profile": (("--profile", "wiki"), {".okf-profile": "code\n"}),
@@ -548,6 +683,41 @@ class RuntimeTests(unittest.TestCase):
         for rel in ("index.md", "log.md", "reference/index.md", "playbooks/index.md", "decisions/index.md"):
             self.assertTrue((target / "knowledge" / rel).is_file(), rel)
         self.assertFalse((target / "knowledge/project").exists())
+
+    def setup_entries(self, target: Path) -> list[Path]:
+        return sorted((target / "knowledge/log").glob("*/log.md"))
+
+    def test_scaffold_starts_split_with_the_created_line_in_the_setup_entry(self) -> None:
+        """Outside any git repository, both profiles lay down a frozen root log.md and
+        put the "Created" line in the first log entry, not under a dated heading."""
+        for profile in ("code", "wiki"):
+            with self.subTest(profile=profile):
+                target = Path(tempfile.mkdtemp(dir=self.root))
+                result = self.scaffold(target, "--profile", profile, "--name", "S")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("fatal", result.stderr)
+                above, date, _ = frozen_parts((target / "knowledge/log.md").read_bytes())
+                self.assertEqual(date, TODAY)
+                self.assertNotRegex(above.decode(), r"(?m)^## ")
+                self.assertNotIn("Created", above.decode())
+                entries = self.setup_entries(target)
+                self.assertEqual(len(entries), 1, entries)
+                self.assertRegex(str(entries[0].relative_to(target)),
+                                 rf"\Aknowledge/log/{TODAY}-setup-[0-9a-f]{{4}}/log\.md\Z")
+                text = entries[0].read_text()
+                self.assertTrue(text.startswith(f"## {TODAY}\n"), text)
+                self.assertEqual(text.count("**Created**"), 1, text)
+
+    def test_a_forced_scaffold_rerun_adds_no_second_created_line(self) -> None:
+        for profile in ("code", "wiki"):
+            with self.subTest(profile=profile):
+                target = Path(tempfile.mkdtemp(dir=self.root))
+                self.assertEqual(self.scaffold(target, "--profile", profile).returncode, 0)
+                before = {p: p.read_bytes() for p in (target / "knowledge").rglob("*.md")}
+                result = self.scaffold(target, "--profile", profile, "--force")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                after = {p: p.read_bytes() for p in (target / "knowledge").rglob("*.md")}
+                self.assertEqual(after, before)
 
     def workflow(self, name: str, drift_version: str) -> None:
         """The consumer's own gate workflow, as /okf-setup installs it (`.yml`) or as a
@@ -869,6 +1039,7 @@ class BootstrapTests(unittest.TestCase):
             "- [Fixture](/concept.md) — Fixture concept.\n"
         )
         (bundle / "log.md").write_text("# Log\n")
+        split_log(self.root)
         (bundle / "concept.md").write_text(
             "---\n"
             "type: Reference\n"
@@ -915,6 +1086,7 @@ class BootstrapTests(unittest.TestCase):
             'case "${1:-}" in\n'
             'link)\n'
             '  shift\n'
+            '  if [ -n "${DRIFT_LINK_FAIL:-}" ]; then echo "link refused by the stub" >&2; exit 1; fi\n'
             '  printf "%s\\n" "$*" >> "$DRIFT_LINK_LOG"\n'
             '  if [ ! -f "$DRIFT_LOCK" ]; then printf "version = 1\\n" > "$DRIFT_LOCK"; fi\n'
             '  {\n'
@@ -949,19 +1121,14 @@ class BootstrapTests(unittest.TestCase):
             DRIFT_LOCK=str(self.root / "drift.lock"),
             PATH=str(self.stub) + os.pathsep + os.environ["PATH"],
             TMPDIR=str(self.root),
+            **GIT_ID,
         )
         self.env.pop("OKF_DRIFT_ROOT", None)
+        self.env.pop("OKF_DRIFT_SHIM", None)
         if os.environ.get("OKF_SELFTEST_PINNED") == "1":
-            cache = self.root / "cache/okf-drift/v0.7.0"
-            cache.mkdir(parents=True)
-            self.env["XDG_CACHE_HOME"] = str(self.root / "cache")
-            lines = ["v0.7.0"]
-            for name in ("okf-check.sh", "okf-recall.sh", "okf-drift-bootstrap.sh",
-                         "okf-restamp.sh", "okf-tidy.sh"):
-                data = (SCRIPTS / name).read_bytes()
-                (cache / name).write_bytes(data)
-                lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
-            (self.root / ".okf-drift-version").write_text("\n".join(lines) + "\n")
+            self.env["XDG_CACHE_HOME"] = str(pin_scripts(self.root, (
+                "okf-check.sh", "okf-recall.sh", "okf-drift-bootstrap.sh",
+                "okf-restamp.sh", "okf-tidy.sh", "okf-log.sh")))
         subprocess.run(["git", "add", "."], cwd=self.root, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -1050,16 +1217,67 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("not-code knowledge/concept.md -> scripts/build.sh (high-churn script: "
                       "hand-link only if the concept describes its logic)", result.stdout)
 
-    def stale_anchor(self) -> None:
+    HISTORY = "# Log\n\n## 2026-01-01\n* older entry\n"
+    STILL = ("* STILL ACCURATE, re-stamped `concept.md` <- `src/lib.rs#fixture` (last commit on the file: "
+             '01234567 "tighten it"): ')
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=self.root, env=self.env, check=True, capture_output=True)
+
+    def stale_anchor(self, branch: str = "alice/restamp") -> None:
+        """A stale symbol anchor, committed on `main` (= origin/HEAD), on a work branch."""
         self.drift_check_json.write_text(json.dumps({"docs": [{
             "path": "knowledge/concept.md", "result": "stale", "links": [],
             "anchors": [{"identity": "src/lib.rs#fixture", "path": "src/lib.rs", "result": "stale",
                          "reason": {"code": "changed_after_baseline", "message": "m"},
                          "blame": {"commit": "0123456789abcdef", "subject": "tighten it"}}],
         }]}))
-        (self.root / "knowledge/log.md").write_text("# Log\n\n## 2026-01-01\n* older entry\n")
+        (self.root / "knowledge/log.md").write_text(self.HISTORY)
+        split_log(self.root)
+        self.frozen = (self.root / "knowledge/log.md").read_text()
         (self.root / "drift.lock").write_text('version = 1\n\n[[bindings]]\ndoc = "knowledge/concept.md"\n'
                                               'target = "src/lib.rs#fixture"\nsig = "fixture"\n')
+        self.git("add", ".")
+        self.git("commit", "-qm", "base")
+        self.git("branch", "-M", "main")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+        self.git("checkout", "-qb", branch)
+
+    def entries(self) -> dict[str, str]:
+        return {str(p.relative_to(self.root)): p.read_text()
+                for p in sorted((self.root / "knowledge").glob("log/*/log.md"))}
+
+    def restamp(self, note: str, *opts: str) -> subprocess.CompletedProcess[str]:
+        return self.run_script("okf-restamp.sh", *opts, "knowledge/concept.md", "src/lib.rs#fixture", note)
+
+    def assert_nothing_logged(self) -> None:
+        self.assertEqual(self.entries(), {})
+        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
+
+    def test_restamp_refuses_an_unmigrated_bundle_and_names_okf_migrate(self) -> None:
+        self.stale_anchor()
+        (self.root / "knowledge/log.md").write_text(self.HISTORY)
+        self.frozen = self.HISTORY
+        result = self.restamp("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("/okf-migrate", result.stderr)
+        self.assert_nothing_logged()
+        self.assertFalse(self.link_log.exists() and self.link_log.read_text().strip())
+        sweep = self.run_script("okf-restamp.sh", "--format-only")
+        self.assertEqual(sweep.returncode, 1, sweep.stdout + sweep.stderr)
+        self.assertIn("/okf-migrate", sweep.stderr)
+        self.assert_nothing_logged()
+
+    def test_restamp_agrees_with_okf_log_on_a_bundle_with_no_root_log(self) -> None:
+        """okf-log.sh alone judges whether the bundle can take a log entry."""
+        self.stale_anchor()
+        (self.root / "knowledge/log.md").unlink()
+        result = self.restamp("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.entries()), 1)
+        sweep = self.run_script("okf-restamp.sh", "--format-only")
+        self.assertEqual(sweep.returncode, 0, sweep.stdout + sweep.stderr)
 
     def test_restamp_refuses_an_empty_note_and_an_unknown_binding(self) -> None:
         self.stale_anchor()
@@ -1071,35 +1289,118 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(unknown.returncode, 1, unknown.stdout + unknown.stderr)
         self.assertIn("path#symbol for a symbol anchor", unknown.stderr)
         self.assertEqual(self.link_log.read_text(), "")
-        self.assertNotIn("re-stamped", (self.root / "knowledge/log.md").read_text())
+        self.assert_nothing_logged()
 
-    def test_restamp_links_and_writes_one_line_under_today(self) -> None:
+    def test_restamp_links_and_writes_its_line_into_the_branch_entry(self) -> None:
         self.stale_anchor()
-        result = self.run_script("okf-restamp.sh", "knowledge/concept.md", "src/lib.rs#fixture",
-                                 "read fixture(): the guard the concept names is unchanged")
+        result = self.restamp("read fixture(): the guard the concept names is unchanged")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.link_log.read_text().splitlines(),
                          ["knowledge/concept.md src/lib.rs#fixture --doc-is-still-accurate"])
-        log = (self.root / "knowledge/log.md").read_text()
-        today = subprocess.run(["date", "+%F"], text=True, capture_output=True).stdout.strip()
-        self.assertTrue(log.startswith(f"# Log\n\n## {today}\n* STILL ACCURATE, re-stamped "
-                                       "`concept.md` <- `src/lib.rs#fixture` (last commit on the file: "
-                                       '01234567 "tighten it"): read fixture(): the guard'), log)
-        self.assertIn("\n\n## 2026-01-01\n* older entry\n", log)
+        [(entry, text)] = self.entries().items()
+        self.assertEqual(re.fullmatch(ENTRY_RE, entry).groups()[:2], (TODAY, "restamp"))
+        tag = "<!-- okf-log branch: alice/restamp -->\n"
+        self.assertEqual(text, f"{tag}## {TODAY}\n{self.STILL}read fixture(): the guard the concept names is unchanged\n")
+        self.assertIn(entry, result.stdout)
+        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
+        again = self.restamp("read fixture() a second time: still the same guard")
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertEqual(self.entries(), {entry: f"{tag}## {TODAY}\n{self.STILL}read fixture() a second time: "
+                                                 f"still the same guard\n{self.STILL}read fixture(): the guard "
+                                                 "the concept names is unchanged\n"})
+        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
 
     def test_restamp_of_a_fresh_anchor_changes_nothing(self) -> None:
-        # Value: protects=no link and no log line for a fresh anchor; fails_when=the fresh branch falls through to drift link; why_new=only stale anchors were tested; seam=none
+        # Value: protects=no link and no line in the log entry for a fresh anchor; fails_when=the fresh branch falls through to drift link; why_new=only stale anchors were tested; seam=none
         self.stale_anchor()
         data = json.loads(self.drift_check_json.read_text())
         data["docs"][0]["result"] = "fresh"
         data["docs"][0]["anchors"][0]["result"] = "fresh"
         self.drift_check_json.write_text(json.dumps(data))
-        result = self.run_script("okf-restamp.sh", "knowledge/concept.md", "src/lib.rs#fixture",
-                                 "read fixture(): nothing moved at all")
+        result = self.restamp("read fixture(): nothing moved at all")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("is fresh; nothing to re-stamp, nothing logged", result.stdout)
         self.assertEqual(self.link_log.read_text(), "")
-        self.assertNotIn("re-stamped", (self.root / "knowledge/log.md").read_text())
+        self.assert_nothing_logged()
+
+    def test_restamp_passes_entry_and_slug_through(self) -> None:
+        self.stale_anchor()
+        chosen = self.root / "knowledge/log/2026-01-02-other-abcd/log.md"
+        chosen.parent.mkdir(parents=True)
+        chosen.write_text("## 2026-01-02\n* x\n")
+        result = self.restamp("read fixture(): the guard still holds",
+                              "--entry", str(chosen.relative_to(self.root)))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(chosen.read_text(), f"## {TODAY}\n{self.STILL}read fixture(): the guard still holds\n\n"
+                                             "## 2026-01-02\n* x\n")
+        self.assertEqual(list(self.entries()), ["knowledge/log/2026-01-02-other-abcd/log.md"])
+        self.git("checkout", "-q", "--detach")
+        slugged = self.restamp("read fixture(): the guard holds on a detached head", "--slug", "hotfix")
+        self.assertEqual(slugged.returncode, 0, slugged.stdout + slugged.stderr)
+        [new] = [e for e in self.entries() if "-other-" not in e]
+        self.assertEqual(re.fullmatch(ENTRY_RE, new).group(2), "hotfix")
+
+    def test_restamp_on_a_detached_head_without_slug_refuses_and_writes_nothing(self) -> None:
+        self.stale_anchor()
+        self.git("checkout", "-q", "--detach")
+        result = self.restamp("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("detached", result.stderr)
+        self.assertIn("--slug", result.stderr)
+        self.assertEqual(self.link_log.read_text(), "")
+        self.assert_nothing_logged()
+
+    def test_a_failed_link_restores_the_entry_or_removes_the_new_folder(self) -> None:
+        self.stale_anchor()
+        self.env["DRIFT_LINK_FAIL"] = "1"
+        first = self.restamp("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(first.returncode, 1, first.stdout + first.stderr)
+        self.assertIn("drift link failed", first.stderr)
+        self.assertEqual([p.name for p in (self.root / "knowledge").glob("log/*")], [])
+        self.assert_nothing_logged()
+        del self.env["DRIFT_LINK_FAIL"]
+        ok = self.restamp("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        before = {p: (self.root / p).read_bytes() for p in self.entries()}
+        self.assertEqual(len(before), 1)
+        self.env["DRIFT_LINK_FAIL"] = "1"
+        failed = self.restamp("read fixture() again: still unchanged, but the link fails")
+        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+        self.assertEqual({p: (self.root / p).read_bytes() for p in self.entries()}, before)
+
+    def test_restamp_through_the_launcher_fetches_and_verifies_okf_log(self) -> None:
+        """An empty cache: the pinned launcher fetches okf-restamp.sh and, for its log
+        line, okf-log.sh, each checked against the pin; a damaged cached okf-log.sh fails."""
+        self.stale_anchor()
+        cache = Path(self.tmp.name) / "empty-cache"
+        pin_root = Path(tempfile.mkdtemp(prefix="pin-", dir=self.tmp.name))
+        pin_scripts(pin_root, ("okf-restamp.sh", "okf-log.sh"), fill_cache=False)
+        shutil.copy(pin_root / ".okf-drift-version", self.root / ".okf-drift-version")
+        (self.stub / "curl").write_text(
+            '#!/bin/sh\n'
+            'out=; url=\n'
+            'while [ "$#" -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -*) shift;; *) url=$1; shift;; esac; done\n'
+            f'cp "{SCRIPTS}/$(basename "$url")" "$out"\n'
+        )
+        (self.stub / "curl").chmod(0o755)
+        env = dict(self.env, XDG_CACHE_HOME=str(cache))
+        shim = ["sh", str(SCRIPTS / "okf-shim.sh"), "--repo-root", str(self.root), "okf-restamp.sh",
+                "knowledge/concept.md", "src/lib.rs#fixture"]
+
+        def run(note: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(shim + [note], cwd=self.root, env=env, text=True, capture_output=True)
+
+        result = run("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        cached = cache / "okf-drift/v0.7.0/okf-log.sh"
+        self.assertEqual(cached.read_bytes(), (SCRIPTS / "okf-log.sh").read_bytes())
+        [(entry, before)] = self.entries().items()
+        cached.write_bytes(cached.read_bytes() + b"# damaged\n")
+        damaged = run("read fixture() again: the cached writer is damaged")
+        self.assertNotEqual(damaged.returncode, 0, damaged.stdout + damaged.stderr)
+        self.assertIn("is damaged", damaged.stderr)
+        self.assertEqual(self.entries(), {entry: before})
+        self.assertEqual(len(self.link_log.read_text().splitlines()), 1)
 
     def test_tidy_handles_spaces_and_non_ascii_names(self) -> None:
         # Value: protects=dates and rows for café.md, no repeated row for a spaced name; fails_when=git status quoting or byte paths return; why_new=fixture names were ASCII; seam=none
@@ -1141,6 +1442,316 @@ class BootstrapTests(unittest.TestCase):
         gate = self.run_script("okf-check.sh", "knowledge")
         self.assertNotIn("carries a description", gate.stdout)
         self.assertNotIn("not listed in", gate.stdout)
+
+
+ALICE = "<!-- okf-log branch: alice/fix -->\n"   # the comment a discovered entry records
+
+
+class LogEntryTests(unittest.TestCase):
+    """`okf-log.sh add`: the one writer of a branch's log entry, driven through its CLI in
+    a throwaway repository whose `origin/HEAD` is `main`."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="okf-log-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "repo"
+        self.bundle = self.root / "knowledge"
+        self.bundle.mkdir(parents=True)
+        self.history = "# Log\n\n## 2026-01-01\n* history before the split\n"
+        (self.bundle / "log.md").write_text(self.history)
+        (self.bundle / "index.md").write_text('---\nokf_version: "0.2"\n---\n')
+        self.env = dict(os.environ, **GIT_ID, TMPDIR=str(Path(self.tmp.name)))
+        self.env.pop("OKF_DRIFT_ROOT", None)
+        self.env.pop("OKF_DRIFT_SHIM", None)
+        if os.environ.get("OKF_SELFTEST_PINNED") == "1":
+            self.env["XDG_CACHE_HOME"] = str(pin_scripts(self.root, ("okf-log.sh",)))
+            (self.root / ".gitignore").write_text("cache/\n")
+        split = self.log("split", "knowledge")
+        self.assertEqual(split.returncode, 0, split.stdout + split.stderr)
+        self.history = (self.bundle / "log.md").read_text()
+        self.git("init", "-q", "-b", "main")
+        self.git("add", ".")
+        self.git("commit", "-qm", "base")
+        self.publish()
+        self.git("checkout", "-qb", "alice/fix")
+
+    def git(self, *args: str) -> str:
+        return subprocess.run(["git", *args], cwd=self.root, env=self.env, check=True,
+                              text=True, capture_output=True).stdout
+
+    def publish(self) -> None:
+        """Make the current commit what `origin/HEAD` points at."""
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+    def log(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+        cwd = cwd or self.root
+        if os.environ.get("OKF_SELFTEST_PINNED") == "1":
+            command = ["sh", str(SCRIPTS / "okf-shim.sh"), "--repo-root", str(cwd), "okf-log.sh"]
+        else:
+            command = ["sh", str(SCRIPTS / "okf-log.sh")]
+        return subprocess.run(command + list(args), cwd=cwd, env=self.env, text=True, capture_output=True)
+
+    def entries(self) -> list[str]:
+        return sorted(str(p.relative_to(self.root)) for p in self.bundle.glob("log/*/log.md"))
+
+    def add(self, line: str, *opts: str) -> str:
+        result = self.log("add", *opts, "knowledge", line)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout + result.stderr
+
+    def assert_refused(self, result: subprocess.CompletedProcess[str], *needles: str) -> None:
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for needle in needles:
+            self.assertIn(needle, result.stderr)
+        self.assertEqual(self.entries(), [])
+        self.assertEqual((self.bundle / "log.md").read_text(), self.history)
+
+    def test_first_write_creates_the_branch_entry_and_names_the_base(self) -> None:
+        out = self.add("* one")
+        [entry] = self.entries()
+        date, slug, _ = re.fullmatch(ENTRY_RE, entry).groups()
+        self.assertEqual((date, slug), (TODAY, "fix"))
+        self.assertEqual((self.root / entry).read_text(), f"{ALICE}## {TODAY}\n* one\n")
+        self.assertIn("origin/HEAD", out)
+        self.assertIn(entry, out)
+        self.assertEqual((self.bundle / "log.md").read_text(), self.history)
+
+    def test_a_second_write_reuses_the_untracked_entry_newest_first(self) -> None:
+        self.add("* one")
+        self.add("* two")
+        [entry] = self.entries()
+        self.assertEqual((self.root / entry).read_text(), f"{ALICE}## {TODAY}\n* two\n* one\n")
+
+    def test_a_staged_entry_is_reused(self) -> None:
+        self.add("* one")
+        self.git("add", ".")
+        self.add("* two")
+        [entry] = self.entries()
+        self.assertEqual((self.root / entry).read_text(), f"{ALICE}## {TODAY}\n* two\n* one\n")
+
+    def test_a_committed_entry_from_an_earlier_day_is_reused_under_a_new_heading(self) -> None:
+        self.add("* one")
+        [entry] = self.entries()
+        old = self.bundle / "log/2026-01-02-fix-abcd/log.md"
+        (self.root / entry).parent.rename(old.parent)
+        old.write_text("## 2026-01-02\n* one\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "entry")
+        self.add("* later")
+        self.assertEqual(self.entries(), ["knowledge/log/2026-01-02-fix-abcd/log.md"])
+        self.assertEqual(old.read_text(), f"## {TODAY}\n* later\n\n## 2026-01-02\n* one\n")
+
+    def test_a_stacked_branch_does_not_reuse_its_parents_entry(self) -> None:
+        self.git("checkout", "-qb", "feat/parser")
+        self.add("* parent")
+        self.git("add", ".")
+        self.git("commit", "-qm", "parent entry")
+        self.git("checkout", "-qb", "feat/parser-tests")
+        self.add("* child")
+        slugs = sorted(re.fullmatch(ENTRY_RE, e).group(2) for e in self.entries())
+        self.assertEqual(slugs, ["parser", "parser-tests"])
+
+    def test_a_stacked_branch_with_the_same_slug_gets_its_own_entry(self) -> None:
+        self.add("* alice")
+        self.git("add", ".")
+        self.git("commit", "-qm", "alice entry")
+        [alice] = self.entries()
+        self.git("checkout", "-qb", "bob/fix")
+        self.add("* bob one")
+        self.add("* bob two")
+        [bob] = [e for e in self.entries() if e != alice]
+        self.assertEqual((self.root / alice).read_text(),
+                         f"<!-- okf-log branch: alice/fix -->\n## {TODAY}\n* alice\n")
+        self.assertEqual((self.root / bob).read_text(),
+                         f"<!-- okf-log branch: bob/fix -->\n## {TODAY}\n* bob two\n* bob one\n")
+
+    def test_an_entry_without_a_branch_comment_is_matched_by_slug(self) -> None:
+        self.add("* one", "--slug", "fix")
+        [entry] = self.entries()
+        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* one\n")
+        self.add("* two")
+        self.assertEqual(self.entries(), [entry])
+        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* two\n* one\n")
+
+    def test_an_entry_already_on_the_base_is_not_reused(self) -> None:
+        self.add("* merged earlier")
+        self.git("add", ".")
+        self.git("commit", "-qm", "entry")
+        self.publish()
+        self.add("* new work")
+        self.assertEqual(len(self.entries()), 2)
+
+    def test_two_branches_with_the_same_last_segment_get_two_folders(self) -> None:
+        self.add("* alice")
+        self.git("add", ".")
+        self.git("commit", "-qm", "alice entry")
+        self.git("checkout", "-q", "main")
+        self.git("checkout", "-qb", "bob/fix")
+        self.add("* bob")
+        self.git("add", ".")
+        self.git("commit", "-qm", "bob entry")
+        self.git("checkout", "-q", "alice/fix")
+        self.git("merge", "-q", "--no-edit", "bob/fix")
+        entries = self.entries()
+        self.assertEqual(len(entries), 2, entries)
+        for e in entries:
+            self.assertEqual(re.fullmatch(ENTRY_RE, e).groups()[:2], (TODAY, "fix"))
+
+    def test_more_than_one_candidate_refuses_and_asks_for_entry(self) -> None:
+        for suffix in ("aaaa", "bbbb"):
+            path = self.bundle / f"log/2026-01-02-fix-{suffix}/log.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("## 2026-01-02\n* x\n")
+        result = self.log("add", "knowledge", "* three")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("--entry", result.stderr)
+        self.assertNotIn("three", "".join(p.read_text() for p in self.bundle.glob("log/*/log.md")))
+
+    def test_entry_wins_and_skips_headings_inside_fences_and_comments(self) -> None:
+        self.add("* mine")
+        other = self.bundle / "log/2026-01-02-other-abcd/log.md"
+        other.parent.mkdir(parents=True)
+        head = "Intro.\n\n```\n## 2026-01-03\n```\n<!--\n## 2026-01-04\n-->\n\n"
+        other.write_text(head + "## 2026-01-02\n* x\n")
+        self.add("* chosen", "--entry", "knowledge/log/2026-01-02-other-abcd/log.md")
+        self.assertEqual(other.read_text(), head + f"## {TODAY}\n* chosen\n\n## 2026-01-02\n* x\n")
+        mine = [e for e in self.entries() if "-other-" not in e]
+        self.assertEqual((self.root / mine[0]).read_text(), f"{ALICE}## {TODAY}\n* mine\n")
+
+    def test_entry_outside_the_bundles_log_is_refused(self) -> None:
+        self.assert_refused(self.log("add", "--entry", "knowledge/log.md", "knowledge", "* x"), "--entry")
+
+    def test_detached_head_refuses_without_slug_and_writes_with_one(self) -> None:
+        self.git("checkout", "-q", "--detach")
+        self.assert_refused(self.log("add", "knowledge", "* x"), "detached", "--slug")
+        self.add("* x", "--slug", "Hot Fix")
+        [entry] = self.entries()
+        self.assertEqual(re.fullmatch(ENTRY_RE, entry).group(2), "hot-fix")
+
+    def test_the_default_branch_refuses_without_slug(self) -> None:
+        self.git("checkout", "-q", "main")
+        self.assert_refused(self.log("add", "knowledge", "* x"), "main", "--slug")
+
+    def test_a_missing_base_ref_refuses(self) -> None:
+        self.assert_refused(self.log("add", "--base", "origin/nope", "knowledge", "* x"), "origin/nope")
+        self.git("symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+        self.assert_refused(self.log("add", "knowledge", "* x"), "origin/HEAD", "--base")
+
+    def test_the_base_flag_is_used_and_printed(self) -> None:
+        self.git("branch", "trunk", "main")
+        out = self.add("* x", "--base", "trunk")
+        self.assertIn("trunk", out)
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_a_shallow_clone_refuses(self) -> None:
+        self.git("commit", "-q", "--allow-empty", "-m", "second")
+        self.git("commit", "-q", "--allow-empty", "-m", "third")
+        shallow = Path(self.tmp.name) / "shallow"
+        subprocess.run(["git", "clone", "-q", "--depth", "1", "--no-single-branch",
+                        f"file://{self.root}", str(shallow)], env=self.env, check=True)
+        for args in (["remote", "set-head", "origin", "main"], ["checkout", "-qb", "carol/work"]):
+            subprocess.run(["git", *args], cwd=shallow, env=self.env, check=True, capture_output=True)
+        result = self.log("add", "knowledge", "* x", cwd=shallow)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("shallow", result.stderr)
+        self.assertEqual(list((shallow / "knowledge").glob("log/*/log.md")), [])
+
+    def test_an_explicit_slug_needs_no_git_history(self) -> None:
+        plain = Path(self.tmp.name) / "plain"
+        (plain / "knowledge").mkdir(parents=True)
+        result = subprocess.run(["sh", str(SCRIPTS / "okf-log.sh"), "add", "--slug", "setup",
+                                 "knowledge", "* Created"], cwd=plain, env=self.env,
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        [entry] = list((plain / "knowledge").glob("log/*/log.md"))
+        self.assertRegex(str(entry.relative_to(plain)), ENTRY_RE)
+        self.assertEqual(entry.read_text(), f"## {TODAY}\n* Created\n")
+
+    def test_an_explicit_slug_without_git_reuses_its_entry(self) -> None:
+        plain = Path(self.tmp.name) / "plain"
+        (plain / "knowledge").mkdir(parents=True)
+        for line in ("* one", "* two"):
+            result = subprocess.run(["sh", str(SCRIPTS / "okf-log.sh"), "add", "--slug", "x",
+                                     "knowledge", line], cwd=plain, env=self.env,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        [entry] = list((plain / "knowledge").glob("log/*/log.md"))
+        self.assertEqual(entry.read_text(), f"## {TODAY}\n* two\n* one\n")
+
+    def test_todays_heading_as_the_last_line_without_a_newline(self) -> None:
+        self.add("* one")
+        [entry] = self.entries()
+        (self.root / entry).write_text(f"## {TODAY}")
+        self.add("* two")
+        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* two\n")
+
+    def unsplit(self, history: bytes) -> None:
+        (self.bundle / "log.md").write_bytes(history)
+
+    def test_split_freezes_the_root_log_with_a_marker_hashing_the_history(self) -> None:
+        history = b"# Log\n\n## 2026-01-01\n* history before the split\n"
+        self.unsplit(history)
+        result = self.log("split", "knowledge")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        data = (self.bundle / "log.md").read_bytes()
+        self.assertTrue(data.startswith(history), data)
+        above, date, digest = frozen_parts(data)
+        self.assertEqual(date, TODAY)
+        self.assertEqual(digest, hashlib.sha256(above).hexdigest())
+        self.assertIn(b"log/", above[len(history):])
+        self.assertTrue((self.bundle / "log").is_dir())
+
+    def test_split_twice_changes_nothing(self) -> None:
+        frozen = (self.bundle / "log.md").read_bytes()
+        result = self.log("split", "knowledge")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("already frozen", result.stdout)
+        self.assertEqual((self.bundle / "log.md").read_bytes(), frozen)
+
+    def test_refreeze_rehashes_a_deliberate_fix_and_keeps_the_split_date(self) -> None:
+        self.unsplit(b"# Log\n\n## 2026-01-01\n* a typo\n")
+        self.log("split", "knowledge")
+        text = (self.bundle / "log.md").read_bytes()
+        _, date, old = frozen_parts(text)
+        (self.bundle / "log.md").write_bytes(text.replace(b"a typo", b"the fix"))
+        result = self.log("split", "--refreeze", "knowledge")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        above, new_date, new = frozen_parts((self.bundle / "log.md").read_bytes())
+        self.assertEqual(new_date, date)
+        self.assertNotEqual(new, old)
+        self.assertEqual(new, hashlib.sha256(above).hexdigest())
+        self.assertIn(b"the fix", above)
+
+    def test_refreeze_of_an_unfrozen_log_refuses(self) -> None:
+        self.unsplit(b"# Log\n")
+        result = self.log("split", "--refreeze", "knowledge")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual((self.bundle / "log.md").read_bytes(), b"# Log\n")
+
+    def test_split_of_a_crlf_log_hashes_the_history_as_lf(self) -> None:
+        history = b"# Log\r\n\r\n## 2026-01-01\r\n* history before the split\r\n"
+        self.unsplit(history)
+        self.log("split", "knowledge")
+        data = (self.bundle / "log.md").read_bytes()
+        self.assertTrue(data.startswith(history))
+        above, _, digest = frozen_parts(data)
+        self.assertEqual(digest, hashlib.sha256(above.replace(b"\r\n", b"\n")).hexdigest())
+
+    def test_text_below_the_marker_refuses_split_and_refreeze(self) -> None:
+        log = self.bundle / "log.md"
+        log.write_text(self.history + "* added below\n")
+        for args in (["split"], ["split", "--refreeze"]):
+            with self.subTest(args=args):
+                result = self.log(*args, "knowledge")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("below the marker", result.stderr)
+                self.assertEqual(log.read_text(), self.history + "* added below\n")
+
+    def test_add_refuses_an_unmigrated_bundle_and_names_okf_migrate(self) -> None:
+        self.unsplit(b"# Log\n")
+        self.history = "# Log\n"
+        self.assert_refused(self.log("add", "knowledge", "* x"), "/okf-migrate")
 
 
 class FormatOnlyTests(unittest.TestCase):
@@ -1212,6 +1823,533 @@ class FormatOnlyTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(self.compare(path, old, new),
                                  "format-only: indentation or trailing whitespace")
+
+
+# Kept beside the one class that uses them, so the import block above stays untouched.
+import re  # noqa: E402
+import sys  # noqa: E402
+
+
+@unittest.skipUnless(os.environ.get("OKF_SELFTEST_REAL_DRIFT") == "1",
+                     "real-drift tests; set OKF_SELFTEST_REAL_DRIFT=1")
+class LockMergeTests(unittest.TestCase):
+    """okf-lock-merge.py against the REAL drift, each case a real conflicted `git merge main`.
+
+    The branch always holds two commits: the first binds docs/d.md (it never conflicts),
+    the second is the scenario. The oracle for "serialized as drift does" is drift itself:
+    drift rewrites the whole lock on any link, so re-linking a fresh binding must leave the
+    merged bytes unchanged.
+    """
+
+    MAIN = "main"      # how the script names the side the result starts from
+    BRANCH = "branch"  # how it names the side whose changes it applies
+    FIRST = ("docs/d.md", "src/b.rs")
+
+    def setUp(self) -> None:
+        if shutil.which("drift") is None:
+            self.fail("OKF_SELFTEST_REAL_DRIFT=1 but drift is not on PATH; install the pinned drift")
+        self.tmp = tempfile.TemporaryDirectory(prefix="okf-lockmerge-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t", TMPDIR=str(self.root),
+                        GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        self.git("init", "-q", "-b", "main")
+        self.write("src/a.rs", "".join(f"fn a{i}() {{ {i} }}\n" for i in range(12)))
+        self.write("src/b.rs", "fn b() {}\n")
+        self.write("src/c.rs", "fn c() {}\n")
+        self.write("src/m.rs", "fn m() {}\n")
+        self.write("src/n.rs", "fn n() {}\n")
+        for doc in ("docs/a.md", "docs/c.md", "docs/m.md", "docs/z.md"):
+            self.write(doc, f"# {doc}\n")
+        self.drift("link", "docs/a.md", "src/a.rs")
+        self.drift("link", "docs/c.md", "src/c.rs")
+        self.drift("link", "docs/z.md", "src/b.rs")
+        self.commit("base")
+        self.git("checkout", "-q", "-b", "feature")
+        self.write(self.FIRST[0], "# d\n")
+        self.drift("link", *self.FIRST)
+        self.commit("feature binds d")
+
+    # --- fixture plumbing -------------------------------------------------------------
+    def git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", *args], cwd=self.root, env=self.env, text=True,
+                              capture_output=True, check=check)
+
+    def drift(self, *args: str) -> None:
+        result = subprocess.run(["drift", *args], cwd=self.root, env=self.env, text=True,
+                                capture_output=True)
+        self.assertEqual(result.returncode, 0, f"drift {args}: {result.stdout}{result.stderr}")
+
+    def write(self, relative: str, text: str) -> None:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def commit(self, message: str) -> None:
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", message)
+
+    def lock(self) -> str:
+        return (self.root / "drift.lock").read_text()
+
+    def on_main(self) -> None:
+        self.git("checkout", "-q", "main")
+
+    def on_feature(self) -> None:
+        self.git("checkout", "-q", "feature")
+
+    def unmerged(self) -> str:
+        return self.git("diff", "--name-only", "--diff-filter=U").stdout
+
+    def start(self) -> subprocess.CompletedProcess[str]:
+        return self.git("merge", "-q", "--no-edit", "main", check=False)
+
+    def conclude(self) -> subprocess.CompletedProcess[str]:
+        return self.git("commit", "-q", "--no-edit", check=False)
+
+    def integrate_main(self) -> None:
+        """From the branch, bring main in; the lock must come out conflicted."""
+        self.on_feature()
+        started = self.start()
+        self.assertNotEqual(started.returncode, 0, "the fixture did not conflict")
+        self.assertIn("drift.lock", self.unmerged())
+
+    def finish(self) -> None:
+        """Settle any other conflicted path on stage 3 and conclude the operation: the
+        committed lock must be the one okf-lock-merge.py wrote, with the branch's first
+        commit still in it."""
+        resolved = self.lock()
+        for path in self.unmerged().split():
+            self.git("checkout", "--theirs", "--", path)
+            self.git("add", "--", path)
+        concluded = self.conclude()
+        self.assertEqual(concluded.returncode, 0, concluded.stdout + concluded.stderr)
+        self.assertEqual(self.git("status", "--porcelain").stdout, "")
+        self.assertEqual(self.git("show", "HEAD:drift.lock").stdout, resolved)
+        self.assertIn(self.FIRST, self.blocks())
+
+    def resolve(self, path: str | None = None) -> subprocess.CompletedProcess[str]:
+        env = dict(self.env)
+        if path is not None:
+            env["PATH"] = path
+        return subprocess.run([sys.executable, str(SCRIPTS / "okf-lock-merge.py")], cwd=self.root,
+                              env=env, text=True, capture_output=True)
+
+    def blocks(self) -> dict[tuple[str, str], str]:
+        found = {}
+        for block in self.lock().split("\n\n")[1:]:
+            doc = re.search(r'^doc = "(.*)"$', block, re.M).group(1)
+            target = re.search(r'^target = "(.*)"$', block, re.M).group(1)
+            found[(doc, target)] = block
+        return found
+
+    def assert_resolved(self, result: subprocess.CompletedProcess[str]) -> None:
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("drift.lock", self.unmerged())
+        self.assertNotIn("<<<<<<<", self.lock())
+
+    def assert_drift_serialization(self, doc: str, target: str) -> None:
+        before = self.lock()
+        self.drift("link", doc, target, "--doc-is-still-accurate")
+        self.assertEqual(self.lock(), before)
+
+    def check(self) -> dict[str, str]:
+        out = subprocess.run(["drift", "check", "--format", "json"], cwd=self.root, env=self.env,
+                             text=True, capture_output=True)
+        return {doc["path"]: doc["result"] for doc in json.loads(out.stdout)["docs"]}
+
+    # --- scenarios --------------------------------------------------------------------
+    def test_two_docs_added_at_the_same_sorted_position(self) -> None:
+        self.on_main()
+        self.drift("link", "docs/m.md", "src/m.rs")
+        self.write("NOTES", "main\n")
+        self.commit("main binds m")
+        self.on_feature()
+        self.write("docs/n.md", "# n\n")
+        self.drift("link", "docs/n.md", "src/n.rs")
+        self.write("NOTES", "feature\n")
+        self.commit("feature binds n")
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(set(self.blocks()), {
+            ("docs/a.md", "src/a.rs"), ("docs/c.md", "src/c.rs"), ("docs/m.md", "src/m.rs"),
+            ("docs/n.md", "src/n.rs"), ("docs/z.md", "src/b.rs"), self.FIRST})
+        self.assertRegex(result.stdout, r"added\s+docs/n\.md -> src/n\.rs")
+        self.assertRegex(result.stdout, r"still unmerged:\n\s+NOTES\n")
+        self.assertIn("run the gate", result.stdout)
+        self.assertEqual(self.unmerged(), "NOTES\n")
+        self.assertEqual(set(self.check().values()), {"fresh"})
+        self.assert_drift_serialization("docs/n.md", "src/n.rs")
+        self.finish()
+
+    def edit_a(self, line: int) -> None:
+        text = (self.root / "src/a.rs").read_text().splitlines(keepends=True)
+        text[line] = f"fn a{line}() {{ {line} + 1 }}\n"
+        self.write("src/a.rs", "".join(text))
+
+    def restamp(self, doc: str, target: str) -> None:
+        self.drift("link", doc, target, "--doc-is-still-accurate")
+
+    MAIN_TAIL = ("docs/zm.md", "src/m.rs")
+    BRANCH_TAIL = ("docs/zn.md", "src/n.rs")
+
+    def main_appends(self, *, edit_a: bool = False, restamp_a: bool = False) -> None:
+        """On main: bind a doc that sorts last, and optionally change src/a.rs on its last
+        line (far from the branch's edit on line 0, so src/a.rs merges cleanly)."""
+        self.on_main()
+        self.write(self.MAIN_TAIL[0], "# zm\n")
+        self.drift("link", *self.MAIN_TAIL)
+        if edit_a:
+            self.edit_a(11)
+        if restamp_a:
+            self.restamp("docs/a.md", "src/a.rs")
+        self.commit("main")
+        self.on_feature()
+
+    def branch_appends(self) -> None:
+        """On the branch: bind another doc that sorts last. Two appends at the end of the
+        lock always conflict, far from the block the scenario changes, so git's alignment
+        of that change cannot dissolve the conflict."""
+        self.write(self.BRANCH_TAIL[0], "# zn\n")
+        self.drift("link", *self.BRANCH_TAIL)
+
+    def test_the_branch_removes_a_binding(self) -> None:
+        self.main_appends()
+        self.drift("unlink", "docs/c.md", "src/c.rs")
+        self.branch_appends()
+        self.commit("feature unbinds c")
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(set(self.blocks()), {
+            ("docs/a.md", "src/a.rs"), ("docs/z.md", "src/b.rs"), self.MAIN_TAIL, self.BRANCH_TAIL,
+            self.FIRST})
+        self.assertRegex(result.stdout, r"removed\s+docs/c\.md -> src/c\.rs")
+        self.assert_drift_serialization(*self.MAIN_TAIL)
+        self.finish()
+
+    def test_a_restamp_whose_target_main_left_alone_comes_out_fresh(self) -> None:
+        self.main_appends()
+        self.write("src/c.rs", "fn c() { 1 }\n")
+        self.restamp("docs/c.md", "src/c.rs")
+        self.branch_appends()
+        self.commit("feature re-stamps c")
+        branch_block = self.blocks()[("docs/c.md", "src/c.rs")]
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(self.blocks()[("docs/c.md", "src/c.rs")], branch_block)
+        self.assertRegex(result.stdout, r"modified\s+docs/c\.md -> src/c\.rs")
+        self.assertIn("no stale binding", result.stdout)
+        self.assertEqual(set(self.check().values()), {"fresh"})
+        self.finish()
+
+    def test_a_restamp_whose_target_main_changed_comes_out_stale(self) -> None:
+        self.main_appends(edit_a=True)
+        self.edit_a(0)
+        self.restamp("docs/a.md", "src/a.rs")
+        self.branch_appends()
+        self.commit("feature re-stamps a")
+        branch_block = self.blocks()[("docs/a.md", "src/a.rs")]
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(self.blocks()[("docs/a.md", "src/a.rs")], branch_block)
+        self.assertRegex(result.stdout, r"stale\s+docs/a\.md -> src/a\.rs")
+        self.assertEqual(self.check()["docs/a.md"], "stale")
+        self.finish()
+
+    def test_both_sides_resign_the_same_binding(self) -> None:
+        self.main_appends(edit_a=True, restamp_a=True)
+        self.edit_a(0)
+        self.restamp("docs/a.md", "src/a.rs")
+        self.commit("feature re-stamps a")
+        branch_block = self.blocks()[("docs/a.md", "src/a.rs")]
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(self.blocks()[("docs/a.md", "src/a.rs")], branch_block)
+        self.assertIn(self.MAIN_TAIL, self.blocks())
+        self.assertRegex(result.stdout, r"modified\s+docs/a\.md -> src/a\.rs")
+        self.assertEqual(self.check()["docs/a.md"], "stale")
+        self.finish()
+
+    def test_removed_on_the_branch_and_changed_on_main_is_dropped(self) -> None:
+        self.main_appends(edit_a=True, restamp_a=True)
+        self.drift("unlink", "docs/a.md", "src/a.rs")
+        self.commit("feature unbinds a")
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertNotIn(("docs/a.md", "src/a.rs"), self.blocks())
+        self.assertIn(self.MAIN_TAIL, self.blocks())
+        self.assertIn(f"docs/a.md -> src/a.rs: removed on {self.BRANCH}, changed on {self.MAIN}: dropped",
+                      result.stdout)
+        self.finish()
+
+    def test_removed_on_main_and_changed_on_the_branch_is_dropped(self) -> None:
+        self.on_main()
+        self.drift("unlink", "docs/a.md", "src/a.rs")
+        self.commit("main unbinds a")
+        self.on_feature()
+        self.edit_a(0)
+        self.restamp("docs/a.md", "src/a.rs")
+        self.commit("feature re-stamps a")
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(set(self.blocks()), {("docs/c.md", "src/c.rs"), ("docs/z.md", "src/b.rs"),
+                                             self.FIRST})
+        self.assertIn(f"docs/a.md -> src/a.rs: removed on {self.MAIN}, changed on {self.BRANCH}: dropped",
+                      result.stdout)
+        self.finish()
+
+    def test_a_change_to_metadata_only(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        lock = self.lock().replace('doc = "docs/c.md"\ntarget = "src/c.rs"\n',
+                                   'doc = "docs/c.md"\ntarget = "src/c.rs"\nnote = "kept"\n')
+        self.write("drift.lock", lock)
+        self.commit("feature annotates c")
+        branch_block = self.blocks()[("docs/c.md", "src/c.rs")]
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(self.blocks()[("docs/c.md", "src/c.rs")], branch_block)
+        self.assertIn('note = "kept"', branch_block)
+        self.assertRegex(result.stdout, r"modified\s+docs/c\.md -> src/c\.rs")
+        self.assert_drift_serialization("docs/c.md", "src/c.rs")
+        self.finish()
+
+    def test_a_lock_written_by_drift_round_trips_byte_identical(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        self.write("docs/x y.md", "# x y\n")
+        for target in ("src/a.rs", "src/b.rs", "src/c.rs"):
+            self.drift("link", "docs/x y.md", target)
+        self.drift("link", "docs/c.md", "src/b.rs")
+        self.commit("feature binds x y")
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertIn(("docs/x y.md", "src/b.rs"), self.blocks())
+        self.assertEqual(len(self.blocks()), 10)
+        self.assert_drift_serialization("docs/x y.md", "src/b.rs")
+        self.assert_drift_serialization("docs/c.md", "src/b.rs")
+        self.finish()
+
+    # --- refusals: nothing written, nothing staged ------------------------------------
+    def assert_refused(self, result: subprocess.CompletedProcess[str], reason: str,
+                       before: bytes, unmerged: str, code: int = 1) -> None:
+        """Exit 1 = refused, 2 = unusable (the repo-wide convention); nothing written."""
+        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+        self.assertIn(reason, result.stderr)
+        self.assertEqual((self.root / "drift.lock").read_bytes(), before)
+        self.assertEqual(self.unmerged(), unmerged)
+
+    def conflicted(self, edit_branch_lock=None) -> tuple[bytes, str]:
+        self.main_appends()
+        self.branch_appends()
+        if edit_branch_lock is not None:
+            self.write("drift.lock", edit_branch_lock(self.lock()))
+        self.commit("feature")
+        self.integrate_main()
+        return (self.root / "drift.lock").read_bytes(), self.unmerged()
+
+    def test_refuses_outside_a_merge(self) -> None:
+        before = (self.root / "drift.lock").read_bytes()
+        self.assert_refused(self.resolve(), "no merge or rebase in progress", before, "")
+
+    def test_refuses_a_merge_whose_lock_has_no_conflict(self) -> None:
+        self.on_main()
+        self.write("src/b.rs", "fn b() { 1 }\n")
+        self.commit("main changes b")
+        self.on_feature()
+        self.write("src/b.rs", "fn b() { 2 }\n")
+        self.commit("feature changes b")
+        self.start()
+        self.assertEqual(self.unmerged(), "src/b.rs\n")
+        before = (self.root / "drift.lock").read_bytes()
+        self.assert_refused(self.resolve(), "drift.lock has no conflict", before, "src/b.rs\n")
+
+    def test_refuses_a_lock_that_is_not_version_1(self) -> None:
+        before, unmerged = self.conflicted(lambda lock: lock.replace("version = 1\n", "version = 2\n", 1))
+        self.assert_refused(self.resolve(), "`version = 2`", before, unmerged)
+
+    def test_refuses_a_duplicate_binding(self) -> None:
+        def duplicate(lock: str) -> str:
+            return lock + "\n" + self.blocks()[("docs/a.md", "src/a.rs")].rstrip("\n") + "\n"
+        before, unmerged = self.conflicted(duplicate)
+        self.assert_refused(self.resolve(), "binds docs/a.md -> src/a.rs twice", before, unmerged)
+
+    def test_refuses_when_a_side_deleted_the_lock(self) -> None:
+        self.main_appends()
+        self.git("rm", "-q", "drift.lock")
+        self.commit("feature deletes the lock")
+        started = self.start()
+        self.assertNotEqual(started.returncode, 0)
+        self.assertEqual(self.unmerged(), "drift.lock\n")
+        before = (self.root / "drift.lock").read_bytes()
+        self.assert_refused(self.resolve(), f"drift.lock was deleted on {self.BRANCH}", before, "drift.lock\n")
+
+    def test_refuses_when_drift_is_missing(self) -> None:
+        before, unmerged = self.conflicted()
+        only_git = self.root / "only-git"
+        only_git.mkdir()
+        (only_git / "git").symlink_to(shutil.which("git"))
+        self.assert_refused(self.resolve(path=str(only_git)), "drift is not on PATH", before, unmerged,
+                            code=2)
+
+    def test_a_drift_crash_or_unreadable_json_restores_the_lock(self) -> None:
+        before, unmerged = self.conflicted()
+        self.assertIn(b"<<<<<<<", before)
+        for name, behaviour in (("crash", "kill -SEGV $$"),
+                                ("unreadable", "echo 'not json'; exit 1"),
+                                ("other schema", "echo '{\"docs\": []}'")):
+            with self.subTest(name=name):
+                fake = self.root / f"fake-{name.replace(' ', '-')}"
+                fake.mkdir()
+                (fake / "drift").write_text(
+                    '#!/bin/sh\n[ "$1" = "--version" ] && { echo "drift v0.10.1"; exit 0; }\n'
+                    f"{behaviour}\n")
+                (fake / "drift").chmod(0o755)
+                result = self.resolve(path=str(fake) + os.pathsep + self.env["PATH"])
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("drift.lock restored", result.stderr)
+                self.assertEqual((self.root / "drift.lock").read_bytes(), before)
+                self.assertEqual(self.unmerged(), unmerged)
+
+
+@unittest.skipUnless(os.environ.get("OKF_SELFTEST_REAL_DRIFT") == "1",
+                     "real-drift tests; set OKF_SELFTEST_REAL_DRIFT=1")
+class LockRebaseTests(LockMergeTests):
+    """The same scenario matrix and refusals under `git rebase main`, a commit replay:
+    stage 2 is the result rebased so far and stage 3 the commit being replayed. The branch's
+    first commit may stop on the lock too; it is settled with okf-lock-merge.py like any
+    other stop, so every case also proves the rules hold commit after commit."""
+
+    MAIN = "the rebased result"
+    BRANCH = "the replayed commit"
+
+    def rebasing(self) -> bool:
+        path = Path(self.git("rev-parse", "--git-path", "rebase-merge").stdout.strip())
+        return (path if path.is_absolute() else self.root / path).exists()
+
+    def start(self) -> subprocess.CompletedProcess[str]:
+        tip = self.git("rev-parse", "feature").stdout.strip()
+        started = self.git("rebase", "main", check=False)
+        while (started.returncode != 0 and self.rebasing()
+               and self.git("rev-parse", "REBASE_HEAD").stdout.strip() != tip):
+            self.assertIn("drift.lock", self.unmerged(), started.stdout + started.stderr)
+            self.assert_resolved(self.resolve())
+            for path in self.unmerged().split():
+                self.git("checkout", "--theirs", "--", path)
+                self.git("add", "--", path)
+            started = self.conclude()
+        return started
+
+    def conclude(self) -> subprocess.CompletedProcess[str]:
+        return self.git("-c", "core.editor=true", "rebase", "--continue", check=False)
+
+    def test_a_replay_says_its_result_is_per_commit(self) -> None:
+        self.main_appends(edit_a=True, restamp_a=True)
+        self.drift("unlink", "docs/a.md", "src/a.rs")
+        self.commit("feature unbinds a")
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertIn("drift.lock resolved (replay", result.stdout)
+        self.assertIn("per commit", result.stdout)
+        self.assertIn("feature unbinds a", result.stdout)
+        self.assertIn("docs/a.md -> src/a.rs: removed on the replayed commit, "
+                      "changed on the rebased result: dropped", result.stdout)
+        self.finish()
+        self.assertNotIn(("docs/a.md", "src/a.rs"), self.blocks())
+        self.assertIn(self.MAIN_TAIL, self.blocks())
+
+    def test_the_apply_backend_is_a_replay_too(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        self.commit("feature binds zn")
+        self.git("rebase", "--apply", "main", check=False)
+        self.assertIn("drift.lock", self.unmerged())
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertIn("per commit", result.stdout)
+        self.assertEqual(set(self.blocks()), {
+            ("docs/a.md", "src/a.rs"), ("docs/c.md", "src/c.rs"), ("docs/z.md", "src/b.rs"),
+            self.FIRST, self.MAIN_TAIL, self.BRANCH_TAIL})
+        continued = self.git("-c", "core.editor=true", "rebase", "--continue", check=False)
+        self.assertEqual(continued.returncode, 0, continued.stdout + continued.stderr)
+        self.assertEqual(self.git("status", "--porcelain").stdout, "")
+
+    # --- refused operations: nothing written, nothing staged --------------------------
+    def stopped(self) -> tuple[bytes, str]:
+        unmerged = self.unmerged()
+        self.assertIn("drift.lock", unmerged)
+        return (self.root / "drift.lock").read_bytes(), unmerged
+
+    def test_refuses_a_merge_recreated_by_rebase_merges(self) -> None:
+        self.git("checkout", "-q", "-b", "side")
+        self.write("docs/zs.md", "# zs\n")
+        self.drift("link", "docs/zs.md", "src/m.rs")
+        self.commit("side binds zs")
+        self.on_feature()
+        self.branch_appends()
+        self.commit("feature binds zn")
+        self.assertNotEqual(self.git("merge", "-q", "--no-edit", "side", check=False).returncode, 0)
+        self.git("checkout", "--ours", "--", "drift.lock")
+        self.drift("link", "docs/zs.md", "src/m.rs")
+        self.commit("merge side")
+        self.on_main()
+        self.write("NOTES", "main\n")
+        self.commit("main notes")
+        self.on_feature()
+        self.assertNotEqual(self.git("rebase", "--rebase-merges", "main", check=False).returncode, 0)
+        before, unmerged = self.stopped()
+        self.assert_refused(self.resolve(), "--rebase-merges", before, unmerged)
+
+    def test_refuses_git_am(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        self.commit("feature binds zn")
+        patch = self.git("format-patch", "-1", "--stdout").stdout
+        self.on_main()
+        (self.root / "zn.patch").write_text(patch)
+        self.assertNotEqual(self.git("am", "--3way", "zn.patch", check=False).returncode, 0)
+        (self.root / "zn.patch").unlink()
+        before, unmerged = self.stopped()
+        self.assert_refused(self.resolve(), "git am", before, unmerged)
+
+    def test_refuses_an_autostash_conflict(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        self.git("rebase", "--autostash", "main", check=False)
+        before, unmerged = self.stopped()
+        self.assert_refused(self.resolve(), "autostash", before, unmerged)
+
+    def test_refuses_a_cherry_pick(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        self.commit("feature binds zn")
+        self.on_main()
+        self.assertNotEqual(self.git("cherry-pick", "feature", check=False).returncode, 0)
+        before, unmerged = self.stopped()
+        self.assert_refused(self.resolve(), "cherry-pick", before, unmerged)
+
+    def test_refuses_a_revert(self) -> None:
+        self.write("src/c.rs", "fn c() { 1 }\n")
+        self.restamp("docs/c.md", "src/c.rs")
+        self.commit("feature re-stamps c")
+        first = self.git("rev-parse", "HEAD").stdout.strip()
+        self.write("src/c.rs", "fn c() { 2 }\n")
+        self.restamp("docs/c.md", "src/c.rs")
+        self.commit("feature re-stamps c again")
+        self.assertNotEqual(self.git("revert", "--no-edit", first, check=False).returncode, 0)
+        before, unmerged = self.stopped()
+        self.assert_refused(self.resolve(), "revert", before, unmerged)
 
 
 if __name__ == "__main__":

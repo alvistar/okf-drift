@@ -22,8 +22,8 @@ trusting a green validation.
 | Skill | What it does |
 |---|---|
 | `/okf-setup` | Lays the bundle down in a repo that has none: a fixed layout that validates `--strict` from the first commit, the population and resync prompts, the `CLAUDE.md` sections, the gate, the drift bootstrap, and the CI job. |
-| `/okf-migrate` | Builds the same bundle from an existing [mex](https://github.com/mex-memory/mex) scaffold, resolving every `grounds_to` and inline `mex://` anchor to a path **while the graph still exists**. |
 | `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot and its evidence; binds every new **code** `code_refs` path and never a high-churn file (scripts, CI, `VERSION`); settles drift with a mechanical format-only sweep, then re-stamps what was read — never silently; keeps index rows and `last_updated` with `okf-tidy.sh`. |
+| `/okf-migrate` | Moves an existing bundle to the split log layout: freezes the root `log.md` and creates `log/`. Writes nothing else, works on both profiles, and is a no-op on a bundle already split. |
 | `/okf-read` | Recalls from it: `okf search` joined with `drift check`, marking STALE any concept whose bound code moved after it was written, with the commit to blame. |
 
 All four are **manual trigger only** — they run when you type the slash command.
@@ -42,12 +42,43 @@ makes a concept stale is almost always one that touches only code.
 **The re-stamp rule** (`/okf-write` step 3): the agent may re-stamp a drift binding, and may
 never re-stamp one silently. `drift link … --doc-is-still-accurate` is a claim that a
 human-readable statement survived a code change, and it leaves no trace anywhere except a
-changed hex signature — so it is always paired with a dated line in `knowledge/log.md`
-naming what was checked against what. Without that line the plugin degrades into a tool that
+changed hex signature — so it is always paired with a dated line in the branch's log
+entry naming what was checked against what. Without that line the plugin degrades into a tool that
 silences its own alarm. `okf-restamp.sh` writes that line, and its `--format-only` sweep
 re-stamps, without anyone reading, only anchors whose file — in a language drift hashes
 raw, such as C or Swift — changed by indentation or trailing whitespace alone,
 measured against the version the binding was signed on.
+
+## Log entries and the lock resolver
+
+Every PR used to write the bundle's `log.md`, so merging one PR conflicted every other open
+PR (5 of 8 branch merges on the reference consumer, 2026-10-12; `merge=union` does not help,
+because GitHub still reports the PR as conflicting). Since 0.14.0:
+
+- **The root `knowledge/log.md` is the frozen log.** It keeps the history written before
+  the split, a pointer to `log/`, and a marker line with the split date and the sha256 of
+  every byte above it. Nothing writes it again. The gate fails any change to that history
+  and names the log entry to use instead; `okf-log.sh split --refreeze` re-hashes it after
+  a deliberate fix.
+- **Each branch writes one log entry**, `knowledge/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md`,
+  with the same `## YYYY-MM-DD` headings, newest first. The one writer is
+  `okf-log.sh add`: `/okf-write`, `okf-restamp.sh` and the scaffold all go through it. It
+  reuses the entry this branch already added (compared against `origin/HEAD`, or
+  `--base`), and refuses rather than guess on a detached HEAD, the default branch, more
+  than one candidate or a shallow clone (`--slug` and `--entry` settle it). okf treats the
+  nested `log.md` as reserved, so an entry is never a concept or a search hit; the gate
+  checks its headings.
+- **`/okf-migrate`** moves an existing bundle to this layout. New bundles from
+  `/okf-setup` start split.
+- **A conflicted `drift.lock`** (two branches binding docs that sort next to each other)
+  is resolved by `okf-lock-merge.py`, run through the pinned launcher while git is stopped
+  on `git merge main` or on each stop of `git rebase main` / `git pull --rebase`. It starts
+  from main's lock, replays the branch's added, removed and modified bindings, drops (and
+  reports) one removed on one side and changed on the other, writes the lock byte-for-byte
+  as drift does, and runs `drift check`, so a re-stamp main has since invalidated comes out
+  stale. Any other git state, a deleted lock, a lock that is not `version = 1`, a duplicate
+  binding or a missing drift is refused with nothing written. The gate fails a lock with
+  conflict markers and names the resolver.
 
 ## Profiles
 
@@ -92,7 +123,8 @@ CLAUDE.md                        managed Knowledge Bundle / Work Loop instructio
 ```
 
 A `wiki` consumer (see **Profiles**) carries `knowledge/`, `.okf-profile` and, to run the
-gate through `okf-runtime`, a `.okf-drift-version` pinned at v0.11.0 or later.
+gate through `okf-runtime`, a `.okf-drift-version` pinned at v0.14.0 or later (v0.11.0 is the first that knows
+the wiki profile; v0.14.0 the first with the split log the scaffold now writes).
 
 Local sessions invoke `okf-drift:okf-runtime`. It resolves the launcher from the
 absolute skill directory supplied by the host, two levels up, and calls:
@@ -196,7 +228,7 @@ Python 3.11+ and no third-party packages. For a fresh integration or conversion 
 
 ```sh
 python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
-  --repo-root "$REPO_ROOT" --tag v0.7.0 --dry-run
+  --repo-root "$REPO_ROOT" --tag v0.14.0 --dry-run
 # Review, then repeat without --dry-run. Omit --tag to preserve a compatible pin.
 ```
 
@@ -236,9 +268,10 @@ scripts/okf-scaffold.sh             the fixed bundle, laid down and validated
 scripts/okf-check.sh                the gate, six steps
 scripts/okf-recall.sh               search joined with drift; marks STALE what moved under it
 scripts/okf-drift-bootstrap.sh      one drift link per code `code_refs` entry (not shell scripts); a hand binding on a non-code path is kept
-scripts/okf-restamp.sh              re-stamp a reviewed anchor with its log line; --format-only settles formatting-only drift
+scripts/okf-restamp.sh              re-stamp a reviewed anchor with its line in the log entry; --format-only settles formatting-only drift
+scripts/okf-log.sh                  the one writer of a branch's log entry (add); split freezes the root log.md
+scripts/okf-lock-merge.py           resolves a conflicted drift.lock during a git merge or rebase
 scripts/okf-tidy.sh                 index rows and last_updated, the bookkeeping that needs no judgement
-scripts/okf-migrate.py              inventory / resolve / convert, for a mex scaffold
 scripts/okf-shim.sh                 sole root-aware, content-pinned launcher (plugin/CI/legacy)
 scripts/okf-integrate.py            conservative plugin-only integration install/conversion
 scripts/okf-launcher-selftest.py    offline fixture-release launcher/CI/conversion contracts

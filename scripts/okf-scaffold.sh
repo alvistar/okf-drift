@@ -8,7 +8,9 @@
 # `.okf-profile` beside it, which the gate and recall read. Default: code.
 #
 # Copies the templates next to this script into <target-dir>/knowledge/, substituting
-# {{PROJECT_NAME}}, {{DATE}}, {{STALE_3M}} and {{STALE_6M}}, and runs
+# {{PROJECT_NAME}}, {{DATE}}, {{STALE_3M}} and {{STALE_6M}}, starts the bundle split
+# (okf-log.sh freezes the root log.md and writes the "Created" line in the first log
+# entry, knowledge/log/<date>-setup-<hex>/log.md, unless log/ already holds one), and runs
 # `okf validate --strict --drift` on the result. Refuses to touch an existing knowledge/
 # unless --force is given, and even then only adds files it does not find — it never
 # overwrites a concept you may have populated.
@@ -32,7 +34,7 @@ while [ $# -gt 0 ]; do
     --profile) [ $# -ge 2 ] || { echo "--profile needs a value (code or wiki)" >&2; exit 2; }; profile="$2"; shift 2 ;;
     --profile=*) profile="${1#--profile=}"; shift ;;
     --force) force=1; shift ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) target="$1"; shift ;;
   esac
@@ -99,6 +101,29 @@ if [ "$profile" = wiki ]; then
   echo "  + wrote   .okf-profile (wiki)"
 fi
 
+# A new bundle starts split: the root log.md is frozen at once, and the "Created" line is
+# the first log entry. `--slug setup` needs no git history, so this works outside a
+# repository. A forced re-run finds an entry in log/ and adds no second "Created" line.
+if [ "$profile" = wiki ]; then
+  created='* **Created**: scaffolded the OKF v0.2 bundle with `okf-scaffold.sh --profile wiki` (`/okf-setup`, Profile: wiki) — reference, playbooks and decisions categories, no concepts yet.'
+else
+  created='* **Created**: scaffolded the OKF v0.2 bundle with `/okf-setup` — five context concepts, an empty decisions category and an empty playbook index. Nothing is populated yet.'
+fi
+out=$(cd "$target" && sh "$here/okf-log.sh" split knowledge) || {
+  echo "okf-log.sh split failed on $bundle/log.md" >&2; exit 1; }
+echo "  $out"
+has_entry=0
+for entry in "$bundle"/log/*/log.md; do
+  [ -f "$entry" ] && has_entry=1 && break
+done
+if [ "$has_entry" -eq 0 ]; then
+  out=$(cd "$target" && sh "$here/okf-log.sh" add --slug setup knowledge "$created") || {
+    echo "okf-log.sh add failed: the bundle has no setup log entry" >&2; exit 1; }
+  echo "  $out"
+else
+  echo "  = kept    the existing log entries in knowledge/log/ (no second \"Created\" line)"
+fi
+
 echo
 if command -v okf >/dev/null 2>&1; then
   echo "okf $(okf version 2>/dev/null | head -1)"
@@ -116,7 +141,7 @@ if [ "$profile" = wiki ]; then
   echo "Next:"
   echo "  1. Add the categories this knowledge base needs (see knowledge/reference/index.md)."
   echo "  2. Write the first concepts; the gate FAILS on a bundle with none."
-  echo "  3. Run the gate: okf-drift:okf-runtime in gate mode (pin >= v0.11.0 with okf-pin.sh)"
+  echo "  3. Run the gate: okf-drift:okf-runtime in gate mode (pin >= v0.14.0 with okf-pin.sh)"
   echo "  4. Add a Knowledge base section to CLAUDE.md: see /okf-setup, Profile: wiki."
   exit 0
 fi

@@ -21,7 +21,7 @@ stale_after: {{STALE_3M}}
      [CI], [staging], [prod] — so a reader can tell "tests pass" from "seen in production".
      The evidence behind a line (dates, PRs, figures, what was observed where, what is
      still owed) goes to state-evidence.md, under the same item in the same order. The
-     story of how it got here goes to log.md. The gate warns on a line past 300 characters.
+     story of how it got here goes to the branch's log entry (okf-log.sh add). The gate warns on a line past 300 characters.
      When a list is empty, write the single item "None known." rather than inventing one. -->
 
 The bracket on each line says how far the claim reaches. The evidence is in [state-evidence](/project/state-evidence.md), under the same item in the same order.

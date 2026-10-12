@@ -353,6 +353,34 @@ class Integration(Fixture):
     def test_official_v0_9_2_sections_are_recognised_and_upgraded(self):
         self.assert_official_sections_upgrade("v0.9.2")
 
+    def test_v0_13_0_consumer_upgrades_sections_and_workflow(self):
+        """The outgoing release: a consumer carrying v0.13.0's official CLAUDE.md sections
+        and gate workflow is upgraded in place, then a second run changes nothing."""
+        tag = "v0.13.0"
+        official = self.historic(tag, "skills/okf-setup/templates/CLAUDE-knowledge-section.md").decode()
+        (self.repo / "CLAUDE.md").write_text("# Identity\n\n" + official + "\n## Other\nKeep this.\n")
+        workflow = self.repo / ".github/workflows/knowledge.yml"
+        workflow.parent.mkdir(parents=True)
+        old_workflow = self.historic(tag, "skills/okf-setup/templates/knowledge.yml")
+        workflow.write_bytes(old_workflow)
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("customized", result.stderr)
+        text = (self.repo / "CLAUDE.md").read_text()
+        current = (SOURCE / "skills/okf-setup/templates/CLAUDE-knowledge-section.md").read_text()
+        for title in ("Knowledge Bundle", "Work Loop"):
+            self.assertNotEqual(self.section(official, title), self.section(text, title), title)
+            self.assertEqual(self.section(current, title), self.section(text, title), title)
+        self.assertIn("Keep this.", text)
+        self.assertNotEqual(workflow.read_bytes(), old_workflow)
+        self.assertEqual(workflow.read_bytes(),
+                         (SOURCE / "skills/okf-setup/templates/knowledge.yml").read_bytes())
+        after = self.snapshot()
+        again = self.integrate()
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertNotIn("write ", again.stdout)
+        self.assertEqual(after, self.snapshot())
+
     def assert_official_sections_upgrade(self, tag):
         # The OUTGOING release's body digests must be in SECTIONS before the template text
         # moves; otherwise every consumer carrying the previous official body is refused

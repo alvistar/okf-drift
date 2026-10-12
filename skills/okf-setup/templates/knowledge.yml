@@ -1,7 +1,8 @@
 name: knowledge
 # Standalone bootstrap: no installed plugin or consumer scripts. Requires a pin to
 # v0.7.0 or newer (first root-aware launcher). Verify the launcher before executing it;
-# it verifies the gate, including on a warm cache. Keep this file verbatim for safe updates.
+# it verifies the gate, including on a warm cache. A pin to v0.14.0 or newer fails a bundle
+# whose root log.md is not frozen yet: run /okf-migrate. Keep this file verbatim for safe updates.
 on:
   push:
     branches: [main]      # never on every push: both triggers on a topic branch cancel each other

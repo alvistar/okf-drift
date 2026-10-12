@@ -124,6 +124,7 @@ jobs:
           - [Project](/project/index.md) — Project concepts.
           MD
           printf '# Log\n\n- 2026-09-19 — scratch bundle, written by this CI step.\n' > knowledge/log.md
+          sh "$W/scripts/okf-log.sh" split knowledge   # the frozen log, as /okf-migrate leaves it
 
           cat > knowledge/architecture/index.md <<'MD'
           # Architecture
@@ -203,6 +204,12 @@ jobs:
           MD
 
           git add -A && git commit -qm "scratch bundle"
+          # The scratch commit is what origin/HEAD names, and the work happens on a branch:
+          # the re-stamps below write that branch's log entry, never the root log.md.
+          git update-ref refs/remotes/origin/main HEAD
+          git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+          git checkout -qb ci/restamp
+          root_log=$(cat knowledge/log.md)
 
           # ONE deliberate SYMBOL binding. `path` (src/lib.rs) and `identity`
           # (src/lib.rs#admit_reusable) differ here, which is the whole point of the printed
@@ -265,8 +272,12 @@ jobs:
           [ -n "$cmd" ] || fail "could not extract the printed command"
           echo "+ okf-restamp.sh $cmd 'read admit_reusable: the ceiling check still holds'"
           eval "sh '$W/scripts/okf-restamp.sh' $cmd 'read admit_reusable: the ceiling check still holds'"
-          grep -qF '* STILL ACCURATE, re-stamped `architecture/core.md` <- `src/lib.rs#admit_reusable`' knowledge/log.md \
-            || { cat knowledge/log.md; fail "the re-stamp wrote no log line"; }
+          set -- knowledge/log/*-restamp-*/log.md
+          [ "$#" = 1 ] && [ -f "$1" ] || { ls -R knowledge; fail "expected one log entry for the branch, found: $*"; }
+          entry=$1
+          grep -qF '* STILL ACCURATE, re-stamped `architecture/core.md` <- `src/lib.rs#admit_reusable`' "$entry" \
+            || { cat "$entry"; fail "the re-stamp wrote no line in the log entry"; }
+          [ "$(cat knowledge/log.md)" = "$root_log" ] || { cat knowledge/log.md; fail "the re-stamp wrote the root log.md"; }
 
           say "the gate is green again, and the lock holds exactly one binding for that doc"
           gate=$(sh "$W/scripts/okf-check.sh" knowledge) || { printf '%s\n' "$gate"; fail "the printed command did not restore a green gate"; }
@@ -297,7 +308,10 @@ jobs:
           has 're-stamped  knowledge/architecture/core.md <- src/ceiling.c' "$out" || fail "the wrong anchor was settled"
           has 'needs reading  knowledge/architecture/core.md <- src/lib.rs#admit_reusable (a language the sweep never settles)' "$out" \
             || fail "a Rust token change was settled without reading"
-          grep -qF '* FORMAT-ONLY, re-stamped mechanically' knowledge/log.md || fail "the sweep wrote no log line"
+          set -- knowledge/log/*/log.md
+          [ "$#" = 1 ] && [ "$1" = "$entry" ] || fail "the sweep did not reuse the branch's entry: $*"
+          grep -qF '* FORMAT-ONLY, re-stamped mechanically' "$entry" || { cat "$entry"; fail "the sweep wrote no line in the log entry"; }
+          [ "$(cat knowledge/log.md)" = "$root_log" ] || { cat knowledge/log.md; fail "the sweep wrote the root log.md"; }
           git add -A && git commit -qm "swept"
           perl -pi -e 's/return 8;/return 9;/' src/ceiling.c
           git commit -qam "a real change"
@@ -388,10 +402,15 @@ jobs:
           set -eu
           smoke=$(mktemp -d)
           scripts/okf-scaffold.sh --name "Smoke" "$smoke"
-          if (cd "$smoke" && "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge); then
+          if out=$(cd "$smoke" && "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge 2>&1); then
             echo "::error::the gate passed a fresh scaffold; it must fail on the annotations and placeholders"
             exit 1
           fi
+          echo "$out"
+          # The scaffold starts split: the frozen log and the setup entry draw no finding.
+          case "$out" in
+            *"FAIL  log"*|*"FAIL  knowledge/log/"*|*"/okf-migrate"*) echo "::error::the gate failed the scaffold's log, not only its population"; exit 1 ;;
+          esac
           echo "ok — scaffold validates clean and the gate fails it, as it must until population"
 
       - name: wiki scaffold validates clean, the gate fails it empty and passes it populated
@@ -431,3 +450,8 @@ jobs:
             *"not drift-tracked (wiki)"*) echo "ok — wiki recall through the real okf, without drift" ;;
             *) echo "::error::wiki recall did not serve the concept"; exit 1 ;;
           esac
+
+      # okf-lock-merge.py against the pinned drift: each case a real conflicted `git merge`, then a real `git rebase`.
+      # The flag makes the class fail, not skip, if drift is ever missing from this step.
+      - name: okf-lock-merge resolves real drift.lock conflicts
+        run: OKF_SELFTEST_REAL_DRIFT=1 python3 scripts/okf-runtime-selftest.py LockMergeTests LockRebaseTests

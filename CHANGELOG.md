@@ -7,6 +7,90 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [0.14.0] - 2026-10-12
+
+Every PR wrote the bundle's `log.md`, so merging one PR conflicted every other open PR:
+on 2026-10-12 the log conflicted in 5 of 8 branch merges on the reference consumer, and
+`drift.lock` in 1 of 8. `merge=union` does not help, because GitHub still reports the PR
+as conflicting. This release gives each branch its own log file and a resolver for the
+lock. ADR 0001 records the choice.
+
+### Added
+
+- **Log entries.** Each branch writes one log entry,
+  `knowledge/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md`, with the same `## YYYY-MM-DD`
+  headings as the old log, newest first. okf v0.6.0 treats a nested `log.md` as reserved,
+  so an entry is never a concept or a search hit.
+- `okf-log.sh add`, the one writer of a branch's log entry. It reuses the entry the branch
+  added since its merge-base with `origin/HEAD` (or `--base`; it prints the ref it used),
+  committed, staged or untracked, even on a later day; ignores a parent branch's entry,
+  even one with the same slug (`bob/fix` stacked on `alice/fix`): an entry it names from
+  the branch records the full branch name in a `<!-- okf-log branch: … -->` comment above
+  its first heading, and is reused only on that branch (an entry without the comment, such
+  as the setup entry or a `--slug` one, is matched by slug); and refuses, asking for `--slug` or `--entry`, on a detached HEAD, the default branch,
+  more than one candidate, a missing base ref or a shallow clone. `/okf-write`,
+  `okf-restamp.sh` (both modes) and the scaffold all write through it. Through the
+  pinned launcher, `okf-restamp.sh` gets `okf-log.sh` from the same release
+  (`OKF_DRIFT_SHIM`).
+- `okf-log.sh split` makes the root `log.md` the **frozen log**: it appends a pointer to
+  `log/` and a marker with the split date and the sha256 of every byte above it (line
+  endings normalized to LF). It is idempotent; `split --refreeze` re-hashes a deliberate
+  fix to old history.
+- `okf-lock-merge.py` resolves a conflicted `drift.lock` while git is stopped on
+  `git merge main` or on a commit replay of `git rebase main` / `git pull --rebase`. It
+  starts from main's lock and replays the bindings the branch added, removed or modified;
+  one removed on one side and changed on the other is dropped and reported. The lock is
+  written byte-for-byte as drift writes it, then `drift check` runs: a branch re-stamp
+  whose target main also changed comes out stale. It refuses, writing nothing, any other
+  git state (a merge recreated by `--rebase-merges`, `git am`, an autostash conflict,
+  cherry-pick, revert), a missing or deleted lock, a lock that is not `version = 1`, a
+  duplicate binding (exit 1). A missing drift is unusable, and a drift crash restores the
+  working lock (both exit 2).
+
+### Changed
+
+- **`/okf-migrate` has a new job:** it moves an existing bundle to the split layout
+  (`okf-log.sh split`, then `log/`). It writes nothing else, works on both profiles and is
+  a no-op on a bundle already split.
+- **New bundles start split.** `/okf-setup`'s scaffold freezes the root `log.md` and
+  writes the "Created" line in the first log entry, `log/<date>-setup-<hex>/log.md`; a
+  forced re-run adds no second line. `/okf-setup` now pins v0.14.0.
+- **The gate** fails a root `log.md` with no frozen-log marker (naming `/okf-migrate`),
+  any change to the frozen history on any day, and text below the marker (naming the log
+  entry to use instead); it fails a log entry heading that is not a bare ISO date. A CRLF
+  checkout of unchanged history passes. It fails a `drift.lock` with git conflict markers
+  before running drift, and names `okf-lock-merge.py`.
+- The `CLAUDE.md` Knowledge Bundle and Work Loop sections name the frozen log, the log
+  entry, `okf-log.sh add` and `okf-lock-merge.py`; the gate workflow's header says a
+  v0.14.0 pin needs `/okf-migrate`. `okf-integrate.py` accepts the v0.12.0–v0.13.0
+  section bodies and the v0.13.0 workflow, so a consumer carrying them upgrades in place.
+- `/okf-write`, `/okf-read`, the populate and resync prompts, `okf-quirks.md` and the
+  README send every new line to the branch's log entry; none tells anyone to edit the
+  root `log.md`.
+
+### Removed
+
+- The mex → OKF conversion: the old `/okf-migrate` skill text, `scripts/okf-migrate.py`
+  and their README rows. Nobody uses mex any more. `okf-integrate.py` stays, because
+  `/okf-setup` uses it.
+
+### Notes
+
+- **Upgrading a consumer.** Do these in order, and commit them together:
+
+  1. Update the plugin.
+  2. `okf-pin.sh v0.14.0` (or `/okf-setup`'s integration helper with `--tag v0.14.0`,
+     which also upgrades the `CLAUDE.md` sections and the gate workflow).
+  3. `/okf-migrate`: it freezes `knowledge/log.md` and creates `knowledge/log/`.
+  4. Drop `merge=union` for `log.md` from `.gitattributes`, and any workflow that
+     union-merges the log.
+  5. Run the gate.
+  6. Commit everything together: the pin, the frozen `log.md`, `log/`, and the
+     integration changes.
+
+  A bundle pinned to v0.14.0 without step 3 fails the gate, `/okf-write` and
+  `okf-restamp.sh`, each naming `/okf-migrate`.
+
 ## [0.13.0] - 2026-10-08
 
 ### Changed

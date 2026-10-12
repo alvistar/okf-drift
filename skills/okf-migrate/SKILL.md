@@ -2,247 +2,90 @@
 name: okf-migrate
 disable-model-invocation: true
 description: |
-  Migrate a mex scaffold (`.mex/`: ROUTER, AGENTS, context/, patterns/, grounds_to,
-  mex:// anchors) into an OKF v0.2 bundle in the okf-drift layout, keeping every
-  document, resolving every grounding to a path WHILE mex still exists, and finishing
-  with the gate green and drift bootstrapped. Built from two real migrations; carries
-  what they got wrong.
+  Move an existing OKF bundle to the split log layout: freeze the root `log.md` (the
+  history stays, a marker hashes it) and create `log/`, where each branch writes its own
+  log entry from then on. Runs `okf-log.sh split`; writes nothing else in the bundle.
+  Works on both profiles (code and wiki). Safe to run twice: on a bundle that is already
+  split it changes nothing.
 
   MANUAL TRIGGER ONLY: invoke only when the user types /okf-migrate.
 
-  Trigger on: "/okf-migrate", "migrate from mex", "convert .mex to okf", "leave mex",
-  "mex to knowledge/".
+  Trigger on: "/okf-migrate", "split the log", "freeze log.md", "migrate the bundle to
+  log entries", "the gate says run /okf-migrate".
 ---
 
-# /okf-migrate — from `.mex/` to `knowledge/`, without losing anything
+# /okf-migrate — freeze `log.md`, write log entries from now on
 
-The fourth skill in the `okf-drift` plugin. `/okf-setup` is for a repo with no bundle;
-this one is for a repo that has a mex scaffold and wants out. The mechanical half is
-`${PLUGIN_ROOT}/scripts/okf-migrate.py`; the rest is judgement, and the order
-matters because **step 2 is only possible while mex and its graph are still there.**
+Every PR used to write the bundle's root `log.md`, so merging one PR conflicted every
+other open PR. Now each branch writes its own **log entry**,
+`<bundle>/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md`, and the root `log.md` becomes the
+**frozen log**: it keeps the history written before the split, points to `log/`, and
+ends with a marker that carries the split date and the sha256 of the history. The gate
+fails on any change to that history. See `docs/adr/0001-log-entries-as-reserved-log-files.md`
+in the plugin.
 
-**Every path below is relative to the target repository root**, and every command runs
-from there. Nothing here pushes, opens a PR, or bumps a version.
+This skill makes that move for a bundle that predates it. The gate, `okf-log.sh add`
+(which `/okf-write` uses) and `okf-restamp.sh` all refuse an unmigrated bundle and name
+this skill. A bundle made by `/okf-setup` starts split and does not need it.
 
-For setup-only commands, resolve `PLUGIN_ROOT` two directories above this skill's
-absolute base directory supplied by the host; set `REPO_ROOT` to the absolute consumer
-root. Gate/recall use `okf-drift:okf-runtime`, not consumer scripts. For conversion
-of an existing OKF integration only (not mex content), follow `/okf-setup` Step 3
-and stop there: no inventory, scaffold, population or bundle/log edits.
+Set `PLUGIN_ROOT` to two directories above this skill's absolute base directory supplied
+by the host. **Every command runs from the target repository root.** Nothing here
+commits, pushes or opens a PR.
 
-## What the first migration got wrong, so this one does not
+## Step 1 — Find the bundle
 
-Measured on repo A — a Rust/Python/Swift protocol family (27 documents, 31 groundings) and repo B — a TypeScript
-monorepo (20 documents, 34 groundings, 25 inline anchors):
+The bundle is `knowledge/` unless the repository keeps it elsewhere (the CLAUDE.md
+knowledge section names it). It must hold a root `log.md`. If it does not, stop: the
+bundle is incomplete, and `/okf-setup` is the job, not this one.
 
-- **PyYAML folded 22 long descriptions over two lines and okf reads a description to
-  the end of its first line.** Half of each description vanished from search and the
-  indexes, silently, and no check saw it for a day. The migrator writes frontmatter by
-  hand, one line per key. Never round-trip a bundle through a YAML dumper.
-- **PyYAML also ate an unquoted `#`** (`(issue #48); …` → `(issue`). Quote descriptions
-  that carry `#` or `: `; the migrator does.
-- **The plan's counts were wrong** (26 docs, 33 groundings, "README has frontmatter").
-  Count with `inventory`, not from memory; `patterns/README.md` and `INDEX.md` are
-  body-only.
-- **`mex graph get` exits 0 with no source record** for some nodes (7 of 31). Those
-  groundings are recorded as UNRESOLVED in `log.md`, with the node id, not invented.
-- **Links from an index do not connect a concept**; two concepts were orphans until they
-  got a `## Related` of their own. And a link *to* an `index.md` is a broken link.
-- **The routing table, the session contract and the format guides were mex, not
-  knowledge**; the layout conversion afterwards cost a second commit and 180 lines of
-  state had to be put on a diet. The migrator writes the okf-drift layout directly.
-- **Deleting a doc leaves its drift bindings in the lock.** Not a migration problem —
-  bootstrap comes after the layout is final — but it is why drift is the last step.
-
-## Step 0 — Inventory, and the one precondition
+## Step 2 — Split
 
 ```bash
-uvx --with pyyaml python3 "${PLUGIN_ROOT}/scripts/okf-migrate.py" inventory --mex .mex
-git grep -c '\.mex/' -- . ':!.mex' ':!docs/plans/'      # every file that names the old paths
-mex graph status
+sh "${PLUGIN_ROOT}/scripts/okf-log.sh" split knowledge
 ```
 
-Read the numbers back to the user: documents, body-only files, `grounds_to` entries,
-inline `mex://` anchors, decisions and how many are superseded, files referencing
-`.mex/` outside it.
+What it does:
 
-**If `mex graph status` says `missing`, stop and build it before anything else.** Every
-`grounds_to` and every inline `[symbol](mex://function:…)` is a node id that only the
-graph can turn into a path; without it the migration keeps the prose and loses the
-grounding. Building it is the user's call and the user's terminal for a TypeScript
-repo (deps must be installed first — node ids depend on the compiler's rendered types,
-see `mex-adopt`), ~60 s on 1 300 files:
+- appends a short pointer to `log/` and, as the last line, the marker
+  `<!-- okf-log frozen <YYYY-MM-DD> sha256:<hex> -->`. The hash covers every byte above
+  the marker line, with line endings normalized to LF, so a CRLF checkout of the same
+  history still passes;
+- keeps every byte already in `log.md` as it was;
+- creates `<bundle>/log/`.
 
-```
-Run this yourself, from <repo root>:   mex graph rebuild
-```
+Read its output:
 
-Do not skip this because it is slow. The graph is deleted with `.mex/` at the end and
-there is no second chance.
+- `froze …` — done. Go to Step 3.
+- `… is already frozen …; nothing to do` — the bundle was split before. Nothing changed.
+  If it also warns that the history changed since it was frozen, someone edited old
+  history. Ask the user whether that edit is deliberate. Only if it is, re-hash it:
+  `sh "${PLUGIN_ROOT}/scripts/okf-log.sh" split --refreeze knowledge`. Otherwise restore
+  `log.md` from git and move the new lines into a log entry.
+- `text below the marker …` (exit 1) — a line was added after the split. Move it into the
+  branch's log entry (`okf-log.sh add knowledge '<line>'`), delete it from `log.md`, and
+  run the split again.
 
-## Step 1 — Resolve every node id, while mex still exists
+## Step 3 — Check
 
 ```bash
-uvx --with pyyaml python3 "${PLUGIN_ROOT}/scripts/okf-migrate.py" resolve --mex .mex --map okf-migrate-map.json
+git diff -- knowledge/log.md
 ```
 
-One `mex graph get <node> --detail source` per distinct id; prints `ok`/`MISS` per node
-and the count. Keep the map file until the commit — it is the provenance. A `MISS` is
-`matchedNodes: 1` with `returnedNodes: 0`: the graph knows the id and holds no source for
-it, so it is not an error to fix now; it is a row in `log.md`.
+The diff must only ADD lines at the end of the file. A changed or removed line means
+something else wrote the file: stop and tell the user.
 
-**A MISS whose id also appears as an inline anchor can usually be recovered**, because the
-anchor carries the label: `[`acceptService()`](mex://function:89ea857d…)`. Grep
-the codebase for that declaration, and if exactly one file declares it, write the path into
-the map by hand and mark the row `RECOVERED by symbol name, not by the graph` in `log.md`.
-That is verification, not invention — and on repo B it saved 2 of 6 misses. A `MISS`
-that appears only in a `grounds_to:` block has no label (mex records `node` and
-`fingerprint`, nothing else) and stays unresolved.
+Then run the gate through `okf-drift:okf-runtime` (gate mode). It must not report
+`log.md: not frozen`. Other findings are not this skill's job. Report them, but do not
+fix them here.
 
-## Step 2 — Convert
+## Step 4 — Hand back
 
-```bash
-uvx --with pyyaml python3 "${PLUGIN_ROOT}/scripts/okf-migrate.py" convert \
-  --mex .mex --out knowledge --map okf-migrate-map.json \
-  --templates "${PLUGIN_ROOT}/skills/okf-setup/templates/knowledge" --name "<Project>"
-```
+Tell the user:
 
-What it writes, from what:
-
-| mex | knowledge/ |
-|---|---|
-| `context/{stack,setup,conventions}.md` | `project/` — `type: Reference` |
-| `context/decisions.md`, one `### ` entry each | `decisions/<slug>.md` — `type: Decision`, `status: stable` / `deprecated`, `date:` from the entry (a `2026-06` becomes `-01` and a NOTE) |
-| every other `context/*.md` | `architecture/` |
-| `patterns/*.md` | `playbooks/` — `type: Playbook`; `README.md`/`INDEX.md` dropped, the format guide comes from the templates |
-| `ROUTER.md` → *Current Project State* | `project/state.md`, `stale_after` +3 months |
-| `ROUTER.md` → *Behavioural Contract* | **not written** — it is `CLAUDE.md`'s Work Loop (Step 4) |
-| `name`, `triggers`, `edges`, `grounds_to` | `title`, `tags`, `## Related` (targets remapped; edges to `INDEX.md`, `README.md` or `decisions.md` dropped with a NOTE — those are not concepts), `code_refs` (from the map) |
-| `[text](mex://kind:id)` in prose | `` text (`path`) `` when resolved and the path added to `code_refs`; plain `text` + NOTE when not |
-| `AGENTS.md`, `SETUP.md`, `SYNC.md`, `events/` | nothing — identity is in `CLAUDE.md`, the prompts are this skill, the event log is `log.md` |
-
-It refuses an existing `knowledge/`, never touches `.mex/`, and prints every judgement
-it could not make as `NOTE` — and writes the same notes plus the node→path table into
-`knowledge/log.md`. **Read the notes.** The usual ones: an edge to `decisions.md` that
-should now point at one specific decision; a superseded status naming a decision that
-was never an entry (write it as its own file, or the gate fails on the `Superseded by`
-rule); a state section far longer than a snapshot.
-
-## Step 3 — Links that leave the bundle
-
-okf validates **every** markdown link in a concept as a concept link. A relative link
-to a repo document outside `knowledge/` — `[x](../../docs/incidents/foo.md)` — is a
-broken link under `--strict`, and mex scaffolds are full of them (repo B: 19).
-Measured on okf v0.3.0 and again on v0.6.0: a relative `.md` link and a root-relative `/docs/x.md` are
-broken; an **angle-bracket destination** `[text](<../../docs/foo.md>)` is not counted
-at all, and neither is a non-`.md` target, an `https://` URL, or a reference-style
-link. The angle form is still a link everywhere Markdown is rendered, so the migrator
-rewrites every link it can prove leaves the bundle into that form and appends the
-target to `sources:`. Check `okf validate knowledge --strict` for any it missed and
-do the same by hand. Do not delete the reference: the concept's claim rests on that
-document.
-
-## Step 4 — Everything outside `knowledge/`
-
-1. **`CLAUDE.md`**: replace the mex block (`## Code Graph`, the mex-agent template
-   comment, `## Scaffold Growth`, `## Agent Logging`, `## Navigation`, and any prose
-   paragraph that routes to `.mex/context/…`) with the three sections from
-   `${PLUGIN_ROOT}/skills/okf-setup/templates/CLAUDE-knowledge-section.md`
-   (**Knowledge Bundle**, **Work Loop**, **Navigation**). Repoint any paragraph that
-   named a context doc (`.mex/context/auth-model.md` → `knowledge/architecture/auth-model.md`).
-   Keep identity, non-negotiables, commands untouched.
-2. **`.gitignore`**: remove the `.mex/graph.db*` block.
-3. **`orca.yaml`** (if present): remove the background `mex graph` build at worktree
-   creation and any `.mex` shared path — a bundle is tracked Markdown, nothing to build.
-3b. **Inside the bundle too.** The migrator rewrites *links*, not prose paths, and a mex
-   scaffold is full of the latter: measured on repo B, all five `patterns/` files ended
-   in an **`## Update Scaffold`** checklist telling the agent to edit `.mex/ROUTER.md`,
-   `.mex/context/` and `.mex/patterns/INDEX.md`, and four concepts cited a sibling as a bare
-   `` `context/auth-model.md` ``. Sweep
-   `grep -rn 'context/\|patterns/\|ROUTER\.md\|\.mex' knowledge/ | grep -v log.md`
-   and fix both: replace the scaffold checklist with one matching `CLAUDE.md`'s Work Loop,
-   and turn a prose citation into a real `[title](/category/slug.md)` link.
-4. **Every other file from Step 0's `git grep`**: `TODOS.md`, `docs/reference/*`,
-   `docs/agents/*`, `CONCEPTS.md`, READMEs, `.claude/rules/*` — repoint to the new
-   path. Historical plan files under `docs/plans/` are left alone; a dated plan naming
-   `.mex/` is a record, not a link.
-5. **Install the wrapper-free integration** using `/okf-setup` Step 3, including its
-   explicit compatible release selection and preflight. That shared procedure installs
-   the standalone CI workflow too. It refuses customized/vendored scripts rather than
-   overwriting them; resolve a refusal with the user before continuing. Preserve all
-   project-owned sections and the project's required read order.
-
-Then `git grep -n '\.mex' -- . ':!docs/plans/' ':!knowledge/log.md'` must be empty
-(the log's provenance table names the old paths on purpose).
-
-## Step 5 — Gate, then diet
-
-```bash
-okf validate knowledge --strict --drift --stale
-# Invoke okf-drift:okf-runtime in gate mode
-```
-
-Expect failures of three kinds, in this order of effort: out-of-bundle links the
-migrator could not prove (Step 3); `[TO DETERMINE]` where a document had no
-description; and `project/state.md` over the snapshot rule — one line per item, the gate warning
-past 300 characters. Per-item evidence goes to `project/state-evidence.md` (the okf-setup
-template, with a row in `project/index.md`) under the same item; the narrative that was
-in the ROUTER goes to `log.md` as dated entries, every date and number kept. That last one is editorial
-work, not mechanical; do it, do not skip it, and say what moved.
-
-Three searches you would actually type must hit the concept you meant first.
-
-## Step 6 — drift, then remove mex
-
-```bash
-sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-drift-bootstrap.sh knowledge     # drift.lock from code paths in code_refs; okf watches every path
-drift check --format json | head -20                                   # all fresh, by construction
-git rm -r .mex && rm -rf .mex                                          # graph.db* was ignored; the wrapper stays
-# Invoke okf-drift:okf-runtime in gate mode                                         # step 6 now runs
-```
-
-Symbol-level anchors (`path#Symbol`) are worth it where the prose depends on one
-declaration and the language is Go/Java/Python/Rust/TypeScript/Zig — the map file carries
-the symbol name for each node, which is exactly the list to narrow from. Three things
-measured on the repo B migration, each of which costs the whole narrowing pass if you
-assume otherwise:
-
-- **mex's `source` record has no symbol NAME** (mex 0.8.2): `resolve` parses it out of the
-  first line of the range's `content`. Before that fix every `symbol` in the map was `null`.
-- **A bare name binds the first declaration of that name in the file** — check each one is
-  unique in its file before linking it (`grep -c 'function <name>\b'`), and say which
-  declaration you bound in `log.md` when it is not.
-- **`.mjs` and `.cjs` refuse a `#Symbol` anchor**; `.ts` accepts one. Node-side scripts stay
-  whole-file. See `okf-quirks.md`.
-
-The bootstrap is idempotent per `(doc, path)`: a plain `code_refs` path is already covered
-when that document holds either the plain path or any `path#Symbol` binding, so rerunning
-after narrowing no longer adds a whole-file binding beside a symbol binding. Before 0.8.2,
-`path#Symbol` was treated as a different pair and a second run re-added every whole-file
-binding you had just replaced (measured: 48 bindings became 67); this was fixed in 0.8.2.
-Keep `#Symbol` only in `drift.lock` via `drift link`; write the file path alone in `code_refs`.
-
-Non-code paths take no *automatic* binding; when a claim's truth lives in one — a Kconfig
-value, a fixture's shape — hand-link it and accept that a reformat will alarm, or restate
-the claim as a dated observation. A high-churn file — a CI workflow, `VERSION`, a manifest,
-a build script — is never bound; its claims are dated observations (`/okf-write` Step 2).
-
-Do it after the commit, as its own change (`/okf-write` knows the rule: never re-stamp
-silently).
-
-`~/.local/bin/mex` (the pinned wrapper) is per machine, not per repo: leave it until
-the last mex repo is gone.
-
-## Step 7 — Commit
-
-One commit, `chore: migrate the knowledge base from .mex/ to an OKF bundle at knowledge/`,
-body: documents moved, decisions split, groundings resolved/unresolved, references
-repointed, drift bindings. `knowledge/log.md` already carries the provenance table. Then
-the user decides about `/ship`; a knowledge migration takes no version bump.
-
-## Report
-
-Inventory numbers vs what was written; groundings resolved / unresolved with the node
-ids; every NOTE the migrator printed and what was done about it; lines moved from state
-to log; the gate line; the search checks; the commit hash; and anything above that
-turned out wrong when measured.
+- the bundle is split; `log/` holds no entry yet, so git does not show the empty folder
+  (the first `okf-log.sh add` creates the branch's entry);
+- from now on every new line goes into the branch's log entry through `okf-log.sh add`
+  (`/okf-write` and `okf-restamp.sh` do this). Nothing writes the root `log.md` again;
+- `merge=union` on `log.md` in `.gitattributes`, and any workflow that union-merges the
+  log, are no longer needed. This skill does not edit them; the user removes them;
+- commit `log.md` together with the pin bump and the rest of the upgrade.

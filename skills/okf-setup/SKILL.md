@@ -17,7 +17,7 @@ description: |
 # /okf-setup — A fixed OKF knowledge bundle for a repository
 
 One of four skills in the `okf-drift` plugin: `/okf-setup` lays the bundle down in a
-repo that has none, `/okf-migrate` builds it from an existing mex scaffold,
+repo that has none, `/okf-migrate` moves an existing bundle to the split log layout,
 `/okf-write` records into it (the Grow step, with `drift link`), `/okf-read` recalls
 from it (search joined with `drift check`, so a stale concept is never served as a
 fact). Gate and recall use the model-invocable `okf-drift:okf-runtime` skill.
@@ -41,7 +41,8 @@ trusting a green validation.
 ```
 knowledge/
   index.md                  reserved — category map + the state link; no routing table
-  log.md                    reserved — dated history and rationale
+  log.md                    reserved — the frozen log: a pointer to log/ and its marker
+  log/<date>-setup-<hex>/log.md   the first log entry, with the "Created" line; each branch adds its own
   project/
     index.md
     state.md                Reference — Working / Not yet built / Known issues: a one-line SNAPSHOT
@@ -110,10 +111,8 @@ test -d knowledge && echo "BUNDLE EXISTS"
 - A bundle that fails on comments/placeholders → Step 4 (populate). Missing files from
   the layout above: `okf-scaffold.sh --force .` adds only what is absent, never
   overwrites.
-- A `.mex/` directory and no `knowledge/` → a migration, not a setup. The first migration (repo A) is the worked example: its plan's `Result` section
-  listed everything the plan had got wrong, and those lessons are in `/okf-migrate`. Note that bundle predates this layout (it still has the routing
-  table, a session contract and a single decisions file) — converting it is a
-  separate, mechanical task.
+- A bundle the gate fails with `log.md: not frozen` predates log entries → `/okf-migrate`
+  first (it freezes `log.md` and creates `log/`), then back here.
 
 ## Step 2 — Scaffold
 
@@ -122,7 +121,10 @@ test -d knowledge && echo "BUNDLE EXISTS"
 ```
 
 Copies the templates with the name and dates substituted (`stale_after` = +3 months on
-state, +6 on stack and setup), refuses an existing `knowledge/`, and runs
+state, +6 on stack and setup), refuses an existing `knowledge/`, starts the bundle split
+(`okf-log.sh split` freezes the root `log.md`, then `okf-log.sh add --slug setup` writes
+the "Created" line in the first log entry, unless `log/` already holds one, so a
+`--force` re-run adds no second line; neither needs a repository), and runs
 `okf validate knowledge --strict --drift`. Expect
 `5 concept(s), 0 error(s), 0 warning(s); 0 broken link(s), 0 orphan(s)`. Anything else
 is a bug in this skill — report it rather than patching the output.
@@ -136,15 +138,16 @@ scaffolds, edits `knowledge/`, writes `drift.lock`, or changes project navigatio
 
 ```bash
 python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
-  --repo-root "$REPO_ROOT" --tag v0.7.0 --dry-run
+  --repo-root "$REPO_ROOT" --tag v0.14.0 --dry-run
 # Review the proposed paths, then repeat without --dry-run.
 python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
-  --repo-root "$REPO_ROOT" --tag v0.7.0
+  --repo-root "$REPO_ROOT" --tag v0.14.0
 ```
 
-Requires Python 3.11+. **v0.7.0 is the first compatible release**; while it is
-unpublished, consumer adoption is blocked. Choose an explicitly approved published
-version at or above that minimum; never derive a project upgrade from the installed
+Requires Python 3.11+. **v0.7.0 is the first compatible release**, but a bundle
+scaffolded by this skill starts split, and the frozen-log gate and `okf-log.sh` first
+ship in **v0.14.0**: pin that release or a later one. Choose an explicitly approved
+published version; never derive a project upgrade from the installed
 plugin version. The helper calls `okf-pin.sh` against the release's `SHA256SUMS`,
 stages the result, and validates it before changing the consumer. Omitting `--tag`
 keeps an already compatible pin byte-for-byte. See README **Integration conversion**
@@ -274,7 +277,8 @@ anchor, no `code_refs` to fill and no project snapshot to keep. Scaffold it with
 "${PLUGIN_ROOT}/scripts/okf-scaffold.sh" --profile wiki --name "<Name>" .
 ```
 
-That lays down `index.md`, `log.md`, `reference/`, `playbooks/` and `decisions/` (the
+That lays down `index.md`, the frozen `log.md` with the "Created" line in its first log
+entry under `log/`, `reference/`, `playbooks/` and `decisions/` (the
 last two with non-code formats at the top of their indexes), and writes `.okf-profile`
 containing `wiki` beside the bundle. Add the categories the knowledge base needs — the
 reference consumer uses `contacts/`, `assets/`, `matters/` (one per case, with its state
@@ -299,16 +303,17 @@ question written into a concept — `[TO VERIFY]` or `[DA VERIFICARE]` — so an
 claim stays visible instead of passing.
 
 Skip Steps 3b–3c: there is no drift bootstrap and no CI job to install. To run the gate
-and recall through `okf-drift:okf-runtime`, pin a release at or above v0.11.0 with
-`okf-pin.sh` (the pin alone; the integration helper also installs the code-profile CI
+and recall through `okf-drift:okf-runtime`, pin a release at or above v0.14.0 (the first
+with the split log) with `okf-pin.sh` (the pin alone; the integration helper also installs the code-profile CI
 workflow and Work Loop, which a wiki does not use). Give `CLAUDE.md` a short
 Knowledge base section instead of the Work Loop: what lives in the bundle and what lives
 elsewhere (tasks, mail), how to search it, and how a change is recorded — concept dated
-with its evidence, a line in `log.md`, the gate.
+with its evidence, a line in the branch's log entry (`okf-log.sh add`, never the frozen
+root `log.md`), the gate.
 
 Search: `okf search` is BM25 and misses paraphrases ("home phone" for a concept that says
 "landline"). A local hybrid index — qmd with a multilingual embedding model, the bundle
-as a collection with `index.md` and `log.md` ignored — found three of the four questions
+as a collection with `index.md` and every `log.md` ignored — found three of the four questions
 BM25 missed on the reference consumer; run both, they fail on different questions.
 
 ## Rules the templates encode
@@ -334,7 +339,7 @@ BM25 missed on the reference consumer; run both, they fail on different question
   `stale_after`. `--strict` rejects any other status word.
 - **`state.md` is a one-line snapshot.** One line per item, ending with how far the claim
   reaches; "None known." when a list is empty. Per-item evidence goes to
-  `state-evidence.md` under the same item, the story to `log.md`. The budget is the line,
+  `state-evidence.md` under the same item, the story to the branch's log entry. The budget is the line,
   not the count: without an evidence file, the reference consumer's snapshot reached 58 KB.
 
 ## What OKF does not give you, said once
@@ -343,7 +348,7 @@ No code graph, no symbol-level drift, no `impact`. `code_refs` + `--drift` tell 
 path vanished; `drift.lock` (Step 3b) tells you a governed path **changed**, and who
 changed it — file-level, not symbol-level, so a formatting pass flags a concept exactly
 as a rewrite does. Whether the prose is still *true* after that flag is the agent's job,
-in `/okf-write`'s step 3, paired with a line in `log.md` saying what was checked. That is
+in `/okf-write`'s step 3, paired with a line in the branch's log entry saying what was checked. That is
 the trade this layout makes for a corpus that outlives both tools.
 
 ## Report

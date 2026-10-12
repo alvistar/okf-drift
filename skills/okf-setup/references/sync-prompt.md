@@ -55,7 +55,7 @@ last_updated, or that I name below:
    description changed, change the same line in its index row.
 6. Refresh project/state.md if what is working / not built / broken has moved:
    one line per item, the evidence in project/state-evidence.md under the same
-   item, the story in log.md.
+   item, the story in the branch's log entry.
 
 Every concept the gate reports with no tracked target is re-read against the
 repository by hand during this resync: nothing checked it, and `git log -- <its
@@ -66,8 +66,9 @@ Playbooks: run the Steps of each flagged playbook mentally against the current
 code. A command that no longer exists, a path that moved, a gotcha that was
 fixed — update or delete. A playbook nobody could follow is worse than none.
 
-Then re-run both checks until clean, and append a dated entry to
-knowledge/log.md: which concepts changed and why, one line each.
+Then re-run both checks until clean, and log which concepts changed and why, one
+line each, with `okf-log.sh add knowledge '<line>'` through the pinned launcher (as
+/okf-write does). The lines go in this branch's log entry; knowledge/log.md is frozen.
 
 Do not touch a concept the checks and the git log leave alone unless I named
 it. Report: concepts changed, concepts confirmed unchanged, and anything you
