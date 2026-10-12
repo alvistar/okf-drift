@@ -15,23 +15,6 @@ on 2026-10-12 the log conflicted in 5 of 8 branch merges on the reference consum
 as conflicting. This release gives each branch its own log file and a resolver for the
 lock. ADR 0001 records the choice.
 
-### Upgrading a consumer
-
-Do these in order, and commit them together:
-
-1. Update the plugin.
-2. `okf-pin.sh v0.14.0` (or `/okf-setup`'s integration helper with `--tag v0.14.0`,
-   which also upgrades the `CLAUDE.md` sections and the gate workflow).
-3. `/okf-migrate`: it freezes `knowledge/log.md` and creates `knowledge/log/`.
-4. Drop `merge=union` for `log.md` from `.gitattributes`, and any workflow that
-   union-merges the log.
-5. Run the gate.
-6. Commit everything together: the pin, the frozen `log.md`, `log/`, and the
-   integration changes.
-
-A bundle pinned to v0.14.0 without step 3 fails the gate, `/okf-write` and
-`okf-restamp.sh`, each naming `/okf-migrate`.
-
 ### Added
 
 - **Log entries.** Each branch writes one log entry,
@@ -90,6 +73,23 @@ A bundle pinned to v0.14.0 without step 3 fails the gate, `/okf-write` and
 - The mex → OKF conversion: the old `/okf-migrate` skill text, `scripts/okf-migrate.py`
   and their README rows. Nobody uses mex any more. `okf-integrate.py` stays, because
   `/okf-setup` uses it.
+
+### Notes
+
+- **Upgrading a consumer.** Do these in order, and commit them together:
+
+  1. Update the plugin.
+  2. `okf-pin.sh v0.14.0` (or `/okf-setup`'s integration helper with `--tag v0.14.0`,
+     which also upgrades the `CLAUDE.md` sections and the gate workflow).
+  3. `/okf-migrate`: it freezes `knowledge/log.md` and creates `knowledge/log/`.
+  4. Drop `merge=union` for `log.md` from `.gitattributes`, and any workflow that
+     union-merges the log.
+  5. Run the gate.
+  6. Commit everything together: the pin, the frozen `log.md`, `log/`, and the
+     integration changes.
+
+  A bundle pinned to v0.14.0 without step 3 fails the gate, `/okf-write` and
+  `okf-restamp.sh`, each naming `/okf-migrate`.
 
 ## [0.13.0] - 2026-10-08
 
