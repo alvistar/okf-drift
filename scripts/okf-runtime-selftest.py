@@ -667,6 +667,41 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue((target / "knowledge" / rel).is_file(), rel)
         self.assertFalse((target / "knowledge/project").exists())
 
+    def setup_entries(self, target: Path) -> list[Path]:
+        return sorted((target / "knowledge/log").glob("*/log.md"))
+
+    def test_scaffold_starts_split_with_the_created_line_in_the_setup_entry(self) -> None:
+        """Outside any git repository, both profiles lay down a frozen root log.md and
+        put the "Created" line in the first log entry, not under a dated heading."""
+        for profile in ("code", "wiki"):
+            with self.subTest(profile=profile):
+                target = Path(tempfile.mkdtemp(dir=self.root))
+                result = self.scaffold(target, "--profile", profile, "--name", "S")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("fatal", result.stderr)
+                above, date, _ = frozen_parts((target / "knowledge/log.md").read_bytes())
+                self.assertEqual(date, TODAY)
+                self.assertNotRegex(above.decode(), r"(?m)^## ")
+                self.assertNotIn("Created", above.decode())
+                entries = self.setup_entries(target)
+                self.assertEqual(len(entries), 1, entries)
+                self.assertRegex(str(entries[0].relative_to(target)),
+                                 rf"\Aknowledge/log/{TODAY}-setup-[0-9a-f]{{4}}/log\.md\Z")
+                text = entries[0].read_text()
+                self.assertTrue(text.startswith(f"## {TODAY}\n"), text)
+                self.assertEqual(text.count("**Created**"), 1, text)
+
+    def test_a_forced_scaffold_rerun_adds_no_second_created_line(self) -> None:
+        for profile in ("code", "wiki"):
+            with self.subTest(profile=profile):
+                target = Path(tempfile.mkdtemp(dir=self.root))
+                self.assertEqual(self.scaffold(target, "--profile", profile).returncode, 0)
+                before = {p: p.read_bytes() for p in (target / "knowledge").rglob("*.md")}
+                result = self.scaffold(target, "--profile", profile, "--force")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                after = {p: p.read_bytes() for p in (target / "knowledge").rglob("*.md")}
+                self.assertEqual(after, before)
+
     def workflow(self, name: str, drift_version: str) -> None:
         """The consumer's own gate workflow, as /okf-setup installs it (`.yml`) or as a
         repository whose every other workflow is `.yaml` renames it."""

@@ -131,7 +131,9 @@ if ($cmd eq 'add') {
 my $NAME = qr/(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-([0-9a-f]{4})/;
 sub slugify { my $s = lc shift; $s =~ s/[^a-z0-9]+/-/g; $s =~ s/\A-+|-+\z//g; $s }
 sub git {   # stdout of a git command, undef when it fails; stderr dropped
-  open my $h, '-|', 'git', @_ or return undef;
+  my $pid = open my $h, '-|';
+  return undef unless defined $pid;
+  if (!$pid) { open STDERR, '>', '/dev/null'; exec 'git', @_; exit 127 }
   local $/; my $o = <$h>; close $h or return undef;
   $o //= ''; $o =~ s/\n\z//; return $o;
 }
