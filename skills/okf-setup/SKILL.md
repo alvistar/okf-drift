@@ -138,15 +138,16 @@ scaffolds, edits `knowledge/`, writes `drift.lock`, or changes project navigatio
 
 ```bash
 python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
-  --repo-root "$REPO_ROOT" --tag v0.7.0 --dry-run
+  --repo-root "$REPO_ROOT" --tag v0.14.0 --dry-run
 # Review the proposed paths, then repeat without --dry-run.
 python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
-  --repo-root "$REPO_ROOT" --tag v0.7.0
+  --repo-root "$REPO_ROOT" --tag v0.14.0
 ```
 
-Requires Python 3.11+. **v0.7.0 is the first compatible release**; while it is
-unpublished, consumer adoption is blocked. Choose an explicitly approved published
-version at or above that minimum; never derive a project upgrade from the installed
+Requires Python 3.11+. **v0.7.0 is the first compatible release**, but a bundle
+scaffolded by this skill starts split, and the frozen-log gate and `okf-log.sh` first
+ship in **v0.14.0**: pin that release or a later one. Choose an explicitly approved
+published version; never derive a project upgrade from the installed
 plugin version. The helper calls `okf-pin.sh` against the release's `SHA256SUMS`,
 stages the result, and validates it before changing the consumer. Omitting `--tag`
 keeps an already compatible pin byte-for-byte. See README **Integration conversion**
@@ -302,8 +303,8 @@ question written into a concept — `[TO VERIFY]` or `[DA VERIFICARE]` — so an
 claim stays visible instead of passing.
 
 Skip Steps 3b–3c: there is no drift bootstrap and no CI job to install. To run the gate
-and recall through `okf-drift:okf-runtime`, pin a release at or above v0.11.0 with
-`okf-pin.sh` (the pin alone; the integration helper also installs the code-profile CI
+and recall through `okf-drift:okf-runtime`, pin a release at or above v0.14.0 (the first
+with the split log) with `okf-pin.sh` (the pin alone; the integration helper also installs the code-profile CI
 workflow and Work Loop, which a wiki does not use). Give `CLAUDE.md` a short
 Knowledge base section instead of the Work Loop: what lives in the bundle and what lives
 elsewhere (tasks, mail), how to search it, and how a change is recorded — concept dated

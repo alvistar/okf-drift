@@ -35,7 +35,8 @@ Exit code stays **0**, with a line in `warnings`, for:
   `a.md: concept is not listed in parent index index.md` (`--drift`). v0.3.0 said nothing.
   The gate already failed this itself; under v0.6.0 the same concept is reported twice,
   once as okf's warning and once as the gate's own `not listed in` line.
-- a `log.md` heading that is not a bare ISO date (see Reserved names).
+- a heading in the root `log.md` that is not a bare ISO date (see Reserved names). okf
+  does not check a log entry's headings; the gate does.
 
 Exit code stays 0 with **no output at all** for:
 
@@ -79,8 +80,8 @@ all**: an angle-bracket destination `[t](<../../docs/a.md>)`, a non-`.md` target
 (`../../src/a.ts`), an `https://` URL, and a reference-style link (`[t][r]` +
 `[r]: ../../docs/a.md`). The angle form is CommonMark and renders as a normal link, so
 it is how a concept cites a repo document outside `knowledge/` — with the path listed
-under `sources:` as well. `okf-migrate.py` rewrites outbound links that way (19 in the
-repo B scaffold).
+under `sources:` as well. The mex conversion (removed in 0.14.0) rewrote outbound links
+that way (19 in the repo B scaffold).
 
 ## `okf create` — prefer writing the file
 
@@ -99,12 +100,21 @@ adding a link, `okf update` for a description — but check the file afterwards.
 ## Reserved names
 
 `index.md` and `log.md` are reserved at every level: not concepts, not counted, not
-validated for frontmatter, not searched. **`log.md` is not entirely unvalidated, though:
-every `## ` heading in it must be a bare ISO date.** Measured on okf v0.3.0 during the
-repo B migration, and again on v0.6.0: `## 2026-09-16 — migration from .mex/` is a `warnings` entry,
-`log.md: log heading '…' is not ISO 8601 YYYY-MM-DD` — exit 0 from `okf validate`, but
-fatal under `okf-check.sh`, which treats warnings as failures. Put the title on the line
-below the heading. A `README.md` inside the bundle **is** a
+validated for frontmatter, not searched. **The root `log.md` is not entirely unvalidated,
+though: every `## ` heading in it must be a bare ISO date.** Measured on okf v0.3.0 during
+the repo B migration, and again on v0.6.0: `## 2026-09-16 — migration from .mex/` is a
+`warnings` entry, `log.md: log heading '…' is not ISO 8601 YYYY-MM-DD` — exit 0 from
+`okf validate`, but fatal under `okf-check.sh`, which treats warnings as failures. Put the
+title on the line below the heading.
+
+Since 0.14.0 the root `log.md` is the **frozen log**: the history written before the split,
+then a pointer to `log/` and an `<!-- okf-log frozen <date> sha256:<hex> -->` marker as the
+last line. Nothing writes it again; the gate fails any change above the marker and names
+`/okf-migrate` when the marker is missing. Each branch writes one **log entry**,
+`log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md`, with the same `## YYYY-MM-DD` headings, newest
+first, and only through `okf-log.sh add`. okf v0.6.0 treats that nested `log.md` as
+reserved too (not a concept, not searched, passed by `okf validate`) but never checks its
+headings, so the gate checks them itself. A `README.md` inside the bundle **is** a
 concept and is rejected for having no frontmatter. That is why the format guides live
 at the top of `playbooks/index.md` and `decisions/index.md`: reserved, so no
 frontmatter, no orphan check, no search pollution — and, being reserved, nothing will
@@ -354,6 +364,17 @@ the indexes and the gate stay ignorant of drift entirely.
 written now is fresh now, by construction — if a fresh bootstrap reports anything stale,
 the lock was not written by that bootstrap.
 
+**Two branches that bind docs whose names sort next to each other conflict on the lock**
+(1 of 8 merges on the reference consumer, 2026-10-12). Git leaves conflict markers, the
+file is no longer TOML, and the gate fails naming the resolver instead of running drift.
+Do not hand-edit the binding tables: while git is stopped on the conflict (`git merge
+main`, or each stop of `git rebase main` / `git pull --rebase`), run `okf-lock-merge.py`
+through the pinned launcher. It starts from main's lock, replays what the branch added,
+removed or modified, drops a binding one side removed and the other changed, writes the
+lock the way drift writes it, and runs `drift check`: a branch re-stamp whose target main
+also changed comes out stale, to be reviewed again. It refuses, writing nothing, any other
+git state (cherry-pick, revert, `git am`, `--rebase-merges`, an autostash conflict).
+
 **Deleting the doc does not delete its bindings.** After `git rm knowledge/x.md`,
 `drift check` still lists `knowledge/x.md` in `docs[]` and still evaluates its anchors
 from the lock alone (measured during repo A's layout conversion: the removed
@@ -367,7 +388,7 @@ is a `FAIL` in step 6.
 it — none of it. The only thing that re-stamps the signature is
 `drift link <doc> <target> --doc-is-still-accurate`. That is a feature: it forces the
 re-grounding to be a deliberate claim rather than a side effect of touching a file. It is
-also why `/okf-write` pairs every re-stamp with a dated line in `knowledge/log.md`: the
+also why `/okf-write` pairs every re-stamp with a dated line in the branch's log entry: the
 lock records *that* a signature changed and never *why*, so the audit trail has to be
 written beside it or it does not exist. `okf-restamp.sh` writes that line; the reader
 supplies what was read.
