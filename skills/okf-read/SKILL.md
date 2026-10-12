@@ -103,7 +103,7 @@ a stale hit appears mid-branch — usually because this session moved the code. 
    things are no safer: you do not know where the inaccuracy stops.
 3. If the concept turns out to be wrong — or right — **fix or confirm it with
    `/okf-write`**, whose `okf-restamp.sh` re-stamps the binding and writes the dated line
-   in `log.md` saying what was read. Do not run `drift link --doc-is-still-accurate`
+   in the branch's log entry saying what was read. Do not run `drift link --doc-is-still-accurate`
    yourself as a way to make the mark go away.
 4. Stale is not a bug report. A bundle where nothing is ever stale is either a dead
    codebase or a lock nobody bootstrapped.

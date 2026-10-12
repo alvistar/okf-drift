@@ -19,7 +19,7 @@ stale_after: {{STALE_3M}}
      was observed, where (which lane, environment or device), when, and what is still owed
      before the claim reaches further. A figure carries its date and its source. This file
      is read by item, never whole: when an entry becomes history rather than evidence,
-     move it to log.md. -->
+     move it to the branch's log entry (okf-log.sh add). -->
 
 **Working:**
 - [TO DETERMINE]

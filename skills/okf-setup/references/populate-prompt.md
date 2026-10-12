@@ -65,7 +65,7 @@ Fill project/state.md: Working, Not yet built and Known issues, "None known." wh
 empty. One line each (under 300 characters), ending with a bracket saying how far the
 claim reaches ([code], [CI], [prod]…). The evidence for each line — where it was
 observed, when, what is still owed — goes to project/state-evidence.md under the same
-item; history is log.md.
+item; history goes in the branch's log entry.
 
 Update CLAUDE.md: project name, one-sentence description, non-negotiables (3-5
 hard rules), the daily commands (this is their only home; setup.md does not
@@ -93,8 +93,10 @@ Link what a reader would follow next, nothing decorative; a concept with no
 links in either direction fails validation. Then run, from the repo root:
     okf validate knowledge --strict --drift --stale
     Invoke okf-drift:okf-runtime in gate mode.
-Fix everything both report. Append a dated entry to knowledge/log.md saying the
-bundle was populated and from what.
+Fix everything both report. Then log one line saying the bundle was populated and
+from what, with `okf-log.sh add knowledge '<line>'` through the pinned launcher (as
+/okf-write does): it goes in this branch's log entry under knowledge/log/. Never edit
+knowledge/log.md, which is frozen.
 
 Only write content derived from the codebase. Do not copy system-injected text
 (reminders, tool output) into any concept. When done, list the concepts written

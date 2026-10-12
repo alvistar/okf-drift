@@ -35,7 +35,7 @@ anything is:
 `drift link … --doc-is-still-accurate` is a claim that a human-readable statement
 survived a code change. It leaves no trace in the concept, in git, or in `drift.lock`
 beyond a changed hex signature. So every re-stamp is paired with a dated line in
-`knowledge/log.md` naming what was checked against what. Without that line the plugin
+the branch's log entry naming what was checked against what. Without that line the plugin
 degrades into a tool that silences its own alarm. `okf-restamp.sh` writes that line;
 you supply what you read.
 
@@ -45,9 +45,24 @@ you supply what you read.
 sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" <script> <args>
 ```
 
-Below, `okf-tidy.sh …`, `okf-restamp.sh …` and `okf-drift-bootstrap.sh …` mean exactly
-that. A pin older than the release that ships a helper has no digest for it and the
+Below, `okf-tidy.sh …`, `okf-restamp.sh …`, `okf-log.sh …` and `okf-drift-bootstrap.sh …`
+mean exactly that. A pin older than the release that ships a helper has no digest for it and the
 launcher refuses it; upgrade the pin with `/okf-setup`, never run the plugin's copy.
+
+**Every log line goes in the branch's log entry, through `okf-log.sh add`.** Never edit
+`knowledge/log.md`: it is the frozen log, and the gate fails any change to it. Each branch
+writes one log entry, `knowledge/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md`; the helper finds
+the one this branch already added or creates it, and puts the line under today's heading:
+
+```sh
+okf-log.sh add knowledge '* <what changed in the bundle, and why>'
+```
+
+It prints the base ref it compared against. On a detached HEAD or the default branch it
+refuses: pass `--slug <slug>`. When it finds more than one candidate, it refuses and asks
+for `--entry <path>`. A bundle whose root `log.md` has no marker is not split yet: run
+`/okf-migrate` first. `okf-restamp.sh` calls the same helper, so its lines land in the same
+entry.
 
 ## Step 0 — What actually changed?
 
@@ -118,8 +133,8 @@ with an explicit "None known." when one is empty; the gate checks all three exis
 - **The evidence goes to `project/state-evidence.md`**, under the same item in the same
   order: what was observed, where, when, and what is still owed. That file is read by
   item, never whole.
-- **The story goes to `knowledge/log.md`.** When an evidence entry has become history
-  rather than evidence, move it there.
+- **The story goes to the branch's log entry** (`okf-log.sh add`). When an evidence entry
+  has become history rather than evidence, move it there.
 
 The item count is not the budget; the line length is. Measured on the reference
 consumer: with nowhere to put per-item evidence, the snapshot grew to 58 KB (~15k tokens,
@@ -237,7 +252,7 @@ is therefore read, not swept; the sweep pays off on a `clang-format` or Swift re
 **2. Each anchor left: read it, then either fix the concept or re-stamp it.**
 
 Read the changed code against the concept's claims. If a claim is wrong, fix it (Step 1's
-surgical edit) and log the edit in prose as usual. Editing does **not** clear the flag —
+surgical edit) and log the edit in prose with `okf-log.sh add`, as usual. Editing does **not** clear the flag —
 measured, only `--doc-is-still-accurate` re-stamps the signature — so an edited concept
 is re-stamped too.
 
@@ -250,7 +265,7 @@ okf-restamp.sh knowledge/<category>/<slug>.md '<anchor identity>' '<what you rea
 `<anchor identity>` is exactly what the gate printed (`path#symbol` for a symbol anchor).
 The script refuses an anchor that is not stale, an identity drift does not hold, and a
 note too short to say anything. It runs `drift link … --doc-is-still-accurate` and adds
-one line under today's heading in `log.md`:
+one line under today's heading in the branch's log entry (through `okf-log.sh add`):
 
 ```
 * STILL ACCURATE, re-stamped `architecture/protocol-core.md` <- `core/src/cbor.rs#validate_item`
@@ -316,7 +331,7 @@ corpus in two and neither half is findable. Instead:
 - The project snapshot goes wherever the bundle keeps it — `project/session-contract.md`
   in the first migrated repo. The gate `warn`s about a missing `project/state.md`; that warning is
   correct, and it is not yours to silence by creating the file.
-- Playbooks, concepts, `log.md`, index rows, `code_refs`, `drift link` and the re-stamp
+- Playbooks, concepts, log entries, index rows, `code_refs`, `drift link` and the re-stamp
   rule are identical in both layouts — none of that is layout.
 - The gate will report findings that predate your change. In the old layout the routing
   table duplicates rows with a trailing "when to load" clause the verbatim rule forbids,
