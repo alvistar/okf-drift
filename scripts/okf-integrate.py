@@ -28,6 +28,7 @@ WORKFLOWS = {
     "84c2669a3da9249431771f8a861074161ce7edca73430c534eee546c87d16260",  # v0.5.0-v0.5.1
     "c9cfd3865f4886360e6c3b0259c4a6906f9d616606fcc16016a0e63c9da333a3",  # v0.6.0-v0.6.2
     "bb19190ef4d0f91ad149f33a1c75aa56f3595312b9bd060512c3e42f663195f0",  # v0.7.0-v0.12.0 (okf v0.3.0)
+    "a6ce4bd268e5cd2eb32a31aed2a13459815e573c20d6160614e55ced5cdf949c",  # v0.13.0 (okf v0.6.0)
 }
 # Accepted official template digests; the current template text is compared separately.
 # Each entry names the releases whose template body digests to it, measured from the
@@ -38,6 +39,7 @@ SECTIONS = {
         "0c641e5e55c92165a85e76920416b1676906c7c24db4cf33c4a5d044f3d6b485",  # v0.4.0-v0.6.2
         "372e7ee23c7fe542a3808c6724fd590df150a9d4c77037739a8da4303edefe8d",  # v0.7.0-v0.8.2
         "16fa3ecb217b7c0ef288c9f3f143ea4dd3addf15541e119756122fda7823ffc5",  # v0.9.0-v0.11.0
+        "bb2ec783b4be0f157651e18d7b9e850e865d53060c37caa54eedc6b5204da104",  # v0.12.0-v0.13.0
     },
     "Work Loop": {
         "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.4.0-v0.6.2
@@ -46,6 +48,7 @@ SECTIONS = {
         "e9a9556dff30fe8af69b550524116927e9a3e6424405ce6e89107e6c78300171",  # v0.9.0-v0.9.1
         "460a6d6b3a957bdd92917b1d350fe5ac5921ef36393af99e3adae9044e01d3e3",  # v0.9.2
         "00ddca47f3cf18f6aeafa01529d2cfaf4c52320770f92ade354bebf0fedf688f",  # v0.10.0-v0.11.0
+        "cd754f2955590c540f67fef9692ace3d52e43d50cbe938a56058bc1cb8208506",  # v0.12.0-v0.13.0
     },
 }
 LEGACY = [f"scripts/{name}.sh" for name in ("okf-check", "okf-recall", "okf-shim")]
