@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Resolve a conflicted drift.lock after `git merge main`. Python 3.11+, no third-party imports.
+"""Resolve a conflicted drift.lock after `git merge main` or during `git rebase main`.
+Python 3.11+, no third-party imports.
 
-Run it from inside the repository while the merge is stopped on the conflict. It merges
+Run it from inside the repository while git is stopped on the conflict. It merges
 bindings by (doc, target): start from main's lock, then apply what the branch changed
-against the merge base.
+against the merge base. In a merge the branch is stage 2 and main stage 3. In a rebase
+(or `git pull --rebase`) each stop is a commit replay: the result rebased so far is
+stage 2 and the replayed commit stage 3, so the rules apply per commit, and the script
+runs once per stop.
 
 - added on the branch     -> copy the branch's block
 - removed on the branch   -> drop the block
@@ -16,9 +20,10 @@ does, so the next `drift link` produces no unrelated diff. Signatures are never 
 here: `drift check` judges them against the merged tree afterwards, so a re-stamp that
 main has since invalidated comes out stale instead of silently fresh.
 
-Refuses, writing nothing: any state but a merge, no conflicted drift.lock, a side that
-deleted the lock, a lock that is not `version = 1`, a duplicate (doc, target), drift
-missing. A drift crash or unreadable `drift check` JSON restores the working lock.
+Refuses, writing nothing: any state but a merge or a replay (a merge recreated by
+`--rebase-merges`, `git am`, a stash or autostash conflict, cherry-pick, revert),
+no conflicted drift.lock, a side that deleted the lock, a lock that is not
+`version = 1`, a duplicate (doc, target), drift missing. A drift crash or unreadable `drift check` JSON restores the working lock.
 It never calls `drift link` or `drift unlink`.
 
 Exit: 0 resolved (even with stale bindings: staleness belongs to the Work Loop);
@@ -74,22 +79,41 @@ def git_path(root: Path, name: str) -> Path:
     return path if path.is_absolute() else root / path
 
 
+SUPPORTED = "okf-lock-merge.py resolves only a `git merge` or a `git rebase` commit replay"
+
+
+def replayed_commit(root: Path) -> str:
+    shown = git("show", "-s", "--format=%h %s", "REBASE_HEAD", cwd=root, check=False)
+    return shown.stdout.decode(errors="replace").strip() if shown.returncode == 0 else "this commit"
+
+
 def detect_state(root: Path) -> State:
-    """Recognize the operation git stopped in. Only a merge is supported; every other
-    state is refused, so a stage is never read with the wrong meaning."""
+    """Recognize the operation git stopped in: a merge, or a commit replay during a rebase.
+    Every other state is refused, so a stage is never read with the wrong meaning."""
     exists = {name: git_path(root, name).exists()
-              for name in ("MERGE_HEAD", "rebase-merge", "rebase-apply",
+              for name in ("MERGE_HEAD", "rebase-merge", "rebase-apply", "rebase-apply/rebasing",
                            "CHERRY_PICK_HEAD", "REVERT_HEAD")}
     if exists["CHERRY_PICK_HEAD"]:
-        raise Refusal("a cherry-pick is in progress; okf-lock-merge.py resolves only a `git merge`")
+        raise Refusal(f"a cherry-pick is in progress; {SUPPORTED}")
     if exists["REVERT_HEAD"]:
-        raise Refusal("a revert is in progress; okf-lock-merge.py resolves only a `git merge`")
+        raise Refusal(f"a revert is in progress; {SUPPORTED}")
+    if exists["rebase-merge"] and exists["MERGE_HEAD"]:
+        raise Refusal("a merge recreated by `git rebase --rebase-merges` is in progress; "
+                      f"{SUPPORTED} — resolve this merge by hand")
+    if exists["rebase-apply"] and not exists["rebase-apply/rebasing"]:
+        raise Refusal(f"`git am` is in progress; {SUPPORTED}")
     if exists["rebase-merge"] or exists["rebase-apply"]:
-        raise Refusal("a rebase (or `git am`) is in progress; okf-lock-merge.py resolves "
-                      "only a `git merge` — abort it and run `git merge main` instead")
+        commit = replayed_commit(root)
+        return State(name="replay", main_stage=2, branch_stage=3,
+                     main_label="the rebased result", branch_label="the replayed commit",
+                     note=f"per commit: this result covers only {commit}, replayed onto the "
+                          "result rebased so far; if a later commit stops on drift.lock, "
+                          "run okf-lock-merge.py again")
     if exists["MERGE_HEAD"]:
         return State(name="merge", main_stage=3, branch_stage=2)
-    raise Refusal("no merge in progress; run it after `git merge main` stops on drift.lock")
+    raise Refusal("no merge or rebase in progress; run it after `git merge main` or "
+                  "`git rebase main` stops on drift.lock (a conflict left by a stash or "
+                  "autostash apply is not supported: resolve it by hand)")
 
 
 # --- lock -------------------------------------------------------------------------------

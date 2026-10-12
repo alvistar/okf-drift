@@ -1729,9 +1729,15 @@ import sys  # noqa: E402
 class LockMergeTests(unittest.TestCase):
     """okf-lock-merge.py against the REAL drift, each case a real conflicted `git merge main`.
 
-    The oracle for "serialized as drift does" is drift itself: drift rewrites the whole
-    lock on any link, so re-linking a fresh binding must leave the merged bytes unchanged.
+    The branch always holds two commits: the first binds docs/d.md (it never conflicts),
+    the second is the scenario. The oracle for "serialized as drift does" is drift itself:
+    drift rewrites the whole lock on any link, so re-linking a fresh binding must leave the
+    merged bytes unchanged.
     """
+
+    MAIN = "main"      # how the script names the side the result starts from
+    BRANCH = "branch"  # how it names the side whose changes it applies
+    FIRST = ("docs/d.md", "src/b.rs")
 
     def setUp(self) -> None:
         if shutil.which("drift") is None:
@@ -1755,6 +1761,9 @@ class LockMergeTests(unittest.TestCase):
         self.drift("link", "docs/z.md", "src/b.rs")
         self.commit("base")
         self.git("checkout", "-q", "-b", "feature")
+        self.write(self.FIRST[0], "# d\n")
+        self.drift("link", *self.FIRST)
+        self.commit("feature binds d")
 
     # --- fixture plumbing -------------------------------------------------------------
     def git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -1787,12 +1796,32 @@ class LockMergeTests(unittest.TestCase):
     def unmerged(self) -> str:
         return self.git("diff", "--name-only", "--diff-filter=U").stdout
 
-    def merge_main(self) -> None:
-        """From the branch, `git merge main`; the lock must come out conflicted."""
+    def start(self) -> subprocess.CompletedProcess[str]:
+        return self.git("merge", "-q", "--no-edit", "main", check=False)
+
+    def conclude(self) -> subprocess.CompletedProcess[str]:
+        return self.git("commit", "-q", "--no-edit", check=False)
+
+    def integrate_main(self) -> None:
+        """From the branch, bring main in; the lock must come out conflicted."""
         self.on_feature()
-        merged = self.git("merge", "-q", "--no-edit", "main", check=False)
-        self.assertNotEqual(merged.returncode, 0, "the fixture did not conflict")
+        started = self.start()
+        self.assertNotEqual(started.returncode, 0, "the fixture did not conflict")
         self.assertIn("drift.lock", self.unmerged())
+
+    def finish(self) -> None:
+        """Settle any other conflicted path on stage 3 and conclude the operation: the
+        committed lock must be the one okf-lock-merge.py wrote, with the branch's first
+        commit still in it."""
+        resolved = self.lock()
+        for path in self.unmerged().split():
+            self.git("checkout", "--theirs", "--", path)
+            self.git("add", "--", path)
+        concluded = self.conclude()
+        self.assertEqual(concluded.returncode, 0, concluded.stdout + concluded.stderr)
+        self.assertEqual(self.git("status", "--porcelain").stdout, "")
+        self.assertEqual(self.git("show", "HEAD:drift.lock").stdout, resolved)
+        self.assertIn(self.FIRST, self.blocks())
 
     def resolve(self, path: str | None = None) -> subprocess.CompletedProcess[str]:
         env = dict(self.env)
@@ -1835,18 +1864,19 @@ class LockMergeTests(unittest.TestCase):
         self.drift("link", "docs/n.md", "src/n.rs")
         self.write("NOTES", "feature\n")
         self.commit("feature binds n")
-        self.merge_main()
+        self.integrate_main()
         result = self.resolve()
         self.assert_resolved(result)
         self.assertEqual(set(self.blocks()), {
             ("docs/a.md", "src/a.rs"), ("docs/c.md", "src/c.rs"), ("docs/m.md", "src/m.rs"),
-            ("docs/n.md", "src/n.rs"), ("docs/z.md", "src/b.rs")})
+            ("docs/n.md", "src/n.rs"), ("docs/z.md", "src/b.rs"), self.FIRST})
         self.assertRegex(result.stdout, r"added\s+docs/n\.md -> src/n\.rs")
         self.assertRegex(result.stdout, r"still unmerged:\n\s+NOTES\n")
         self.assertIn("run the gate", result.stdout)
         self.assertEqual(self.unmerged(), "NOTES\n")
         self.assertEqual(set(self.check().values()), {"fresh"})
         self.assert_drift_serialization("docs/n.md", "src/n.rs")
+        self.finish()
 
     def edit_a(self, line: int) -> None:
         text = (self.root / "src/a.rs").read_text().splitlines(keepends=True)
@@ -1884,13 +1914,15 @@ class LockMergeTests(unittest.TestCase):
         self.drift("unlink", "docs/c.md", "src/c.rs")
         self.branch_appends()
         self.commit("feature unbinds c")
-        self.merge_main()
+        self.integrate_main()
         result = self.resolve()
         self.assert_resolved(result)
         self.assertEqual(set(self.blocks()), {
-            ("docs/a.md", "src/a.rs"), ("docs/z.md", "src/b.rs"), self.MAIN_TAIL, self.BRANCH_TAIL})
+            ("docs/a.md", "src/a.rs"), ("docs/z.md", "src/b.rs"), self.MAIN_TAIL, self.BRANCH_TAIL,
+            self.FIRST})
         self.assertRegex(result.stdout, r"removed\s+docs/c\.md -> src/c\.rs")
         self.assert_drift_serialization(*self.MAIN_TAIL)
+        self.finish()
 
     def test_a_restamp_whose_target_main_left_alone_comes_out_fresh(self) -> None:
         self.main_appends()
@@ -1899,13 +1931,14 @@ class LockMergeTests(unittest.TestCase):
         self.branch_appends()
         self.commit("feature re-stamps c")
         branch_block = self.blocks()[("docs/c.md", "src/c.rs")]
-        self.merge_main()
+        self.integrate_main()
         result = self.resolve()
         self.assert_resolved(result)
         self.assertEqual(self.blocks()[("docs/c.md", "src/c.rs")], branch_block)
         self.assertRegex(result.stdout, r"modified\s+docs/c\.md -> src/c\.rs")
         self.assertIn("no stale binding", result.stdout)
         self.assertEqual(set(self.check().values()), {"fresh"})
+        self.finish()
 
     def test_a_restamp_whose_target_main_changed_comes_out_stale(self) -> None:
         self.main_appends(edit_a=True)
@@ -1914,12 +1947,13 @@ class LockMergeTests(unittest.TestCase):
         self.branch_appends()
         self.commit("feature re-stamps a")
         branch_block = self.blocks()[("docs/a.md", "src/a.rs")]
-        self.merge_main()
+        self.integrate_main()
         result = self.resolve()
         self.assert_resolved(result)
         self.assertEqual(self.blocks()[("docs/a.md", "src/a.rs")], branch_block)
         self.assertRegex(result.stdout, r"stale\s+docs/a\.md -> src/a\.rs")
         self.assertEqual(self.check()["docs/a.md"], "stale")
+        self.finish()
 
     def test_both_sides_resign_the_same_binding(self) -> None:
         self.main_appends(edit_a=True, restamp_a=True)
@@ -1927,25 +1961,27 @@ class LockMergeTests(unittest.TestCase):
         self.restamp("docs/a.md", "src/a.rs")
         self.commit("feature re-stamps a")
         branch_block = self.blocks()[("docs/a.md", "src/a.rs")]
-        self.merge_main()
+        self.integrate_main()
         result = self.resolve()
         self.assert_resolved(result)
         self.assertEqual(self.blocks()[("docs/a.md", "src/a.rs")], branch_block)
         self.assertIn(self.MAIN_TAIL, self.blocks())
         self.assertRegex(result.stdout, r"modified\s+docs/a\.md -> src/a\.rs")
         self.assertEqual(self.check()["docs/a.md"], "stale")
+        self.finish()
 
     def test_removed_on_the_branch_and_changed_on_main_is_dropped(self) -> None:
         self.main_appends(edit_a=True, restamp_a=True)
         self.drift("unlink", "docs/a.md", "src/a.rs")
         self.commit("feature unbinds a")
-        self.merge_main()
+        self.integrate_main()
         result = self.resolve()
         self.assert_resolved(result)
         self.assertNotIn(("docs/a.md", "src/a.rs"), self.blocks())
         self.assertIn(self.MAIN_TAIL, self.blocks())
-        self.assertIn("docs/a.md -> src/a.rs: removed on branch, changed on main: dropped",
+        self.assertIn(f"docs/a.md -> src/a.rs: removed on {self.BRANCH}, changed on {self.MAIN}: dropped",
                       result.stdout)
+        self.finish()
 
     def test_removed_on_main_and_changed_on_the_branch_is_dropped(self) -> None:
         self.on_main()
@@ -1955,12 +1991,14 @@ class LockMergeTests(unittest.TestCase):
         self.edit_a(0)
         self.restamp("docs/a.md", "src/a.rs")
         self.commit("feature re-stamps a")
-        self.merge_main()
+        self.integrate_main()
         result = self.resolve()
         self.assert_resolved(result)
-        self.assertEqual(set(self.blocks()), {("docs/c.md", "src/c.rs"), ("docs/z.md", "src/b.rs")})
-        self.assertIn("docs/a.md -> src/a.rs: removed on main, changed on branch: dropped",
+        self.assertEqual(set(self.blocks()), {("docs/c.md", "src/c.rs"), ("docs/z.md", "src/b.rs"),
+                                             self.FIRST})
+        self.assertIn(f"docs/a.md -> src/a.rs: removed on {self.MAIN}, changed on {self.BRANCH}: dropped",
                       result.stdout)
+        self.finish()
 
     def test_a_change_to_metadata_only(self) -> None:
         self.main_appends()
@@ -1970,13 +2008,14 @@ class LockMergeTests(unittest.TestCase):
         self.write("drift.lock", lock)
         self.commit("feature annotates c")
         branch_block = self.blocks()[("docs/c.md", "src/c.rs")]
-        self.merge_main()
+        self.integrate_main()
         result = self.resolve()
         self.assert_resolved(result)
         self.assertEqual(self.blocks()[("docs/c.md", "src/c.rs")], branch_block)
         self.assertIn('note = "kept"', branch_block)
         self.assertRegex(result.stdout, r"modified\s+docs/c\.md -> src/c\.rs")
         self.assert_drift_serialization("docs/c.md", "src/c.rs")
+        self.finish()
 
     def test_a_lock_written_by_drift_round_trips_byte_identical(self) -> None:
         self.main_appends()
@@ -1986,13 +2025,14 @@ class LockMergeTests(unittest.TestCase):
             self.drift("link", "docs/x y.md", target)
         self.drift("link", "docs/c.md", "src/b.rs")
         self.commit("feature binds x y")
-        self.merge_main()
+        self.integrate_main()
         result = self.resolve()
         self.assert_resolved(result)
         self.assertIn(("docs/x y.md", "src/b.rs"), self.blocks())
-        self.assertEqual(len(self.blocks()), 9)
+        self.assertEqual(len(self.blocks()), 10)
         self.assert_drift_serialization("docs/x y.md", "src/b.rs")
         self.assert_drift_serialization("docs/c.md", "src/b.rs")
+        self.finish()
 
     # --- refusals: nothing written, nothing staged ------------------------------------
     def assert_refused(self, result: subprocess.CompletedProcess[str], reason: str,
@@ -2008,12 +2048,12 @@ class LockMergeTests(unittest.TestCase):
         if edit_branch_lock is not None:
             self.write("drift.lock", edit_branch_lock(self.lock()))
         self.commit("feature")
-        self.merge_main()
+        self.integrate_main()
         return (self.root / "drift.lock").read_bytes(), self.unmerged()
 
     def test_refuses_outside_a_merge(self) -> None:
         before = (self.root / "drift.lock").read_bytes()
-        self.assert_refused(self.resolve(), "no merge in progress", before, "")
+        self.assert_refused(self.resolve(), "no merge or rebase in progress", before, "")
 
     def test_refuses_a_merge_whose_lock_has_no_conflict(self) -> None:
         self.on_main()
@@ -2022,7 +2062,7 @@ class LockMergeTests(unittest.TestCase):
         self.on_feature()
         self.write("src/b.rs", "fn b() { 2 }\n")
         self.commit("feature changes b")
-        self.git("merge", "-q", "--no-edit", "main", check=False)
+        self.start()
         self.assertEqual(self.unmerged(), "src/b.rs\n")
         before = (self.root / "drift.lock").read_bytes()
         self.assert_refused(self.resolve(), "drift.lock has no conflict", before, "src/b.rs\n")
@@ -2041,11 +2081,11 @@ class LockMergeTests(unittest.TestCase):
         self.main_appends()
         self.git("rm", "-q", "drift.lock")
         self.commit("feature deletes the lock")
-        merged = self.git("merge", "-q", "--no-edit", "main", check=False)
-        self.assertNotEqual(merged.returncode, 0)
+        started = self.start()
+        self.assertNotEqual(started.returncode, 0)
         self.assertEqual(self.unmerged(), "drift.lock\n")
         before = (self.root / "drift.lock").read_bytes()
-        self.assert_refused(self.resolve(), "drift.lock was deleted on branch", before, "drift.lock\n")
+        self.assert_refused(self.resolve(), f"drift.lock was deleted on {self.BRANCH}", before, "drift.lock\n")
 
     def test_refuses_when_drift_is_missing(self) -> None:
         before, unmerged = self.conflicted()
@@ -2072,6 +2112,136 @@ class LockMergeTests(unittest.TestCase):
                 self.assertIn("drift.lock restored", result.stderr)
                 self.assertEqual((self.root / "drift.lock").read_bytes(), before)
                 self.assertEqual(self.unmerged(), unmerged)
+
+
+@unittest.skipUnless(os.environ.get("OKF_SELFTEST_REAL_DRIFT") == "1",
+                     "real-drift tests; set OKF_SELFTEST_REAL_DRIFT=1")
+class LockRebaseTests(LockMergeTests):
+    """The same scenario matrix and refusals under `git rebase main`, a commit replay:
+    stage 2 is the result rebased so far and stage 3 the commit being replayed. The branch's
+    first commit may stop on the lock too; it is settled with okf-lock-merge.py like any
+    other stop, so every case also proves the rules hold commit after commit."""
+
+    MAIN = "the rebased result"
+    BRANCH = "the replayed commit"
+
+    def rebasing(self) -> bool:
+        path = Path(self.git("rev-parse", "--git-path", "rebase-merge").stdout.strip())
+        return (path if path.is_absolute() else self.root / path).exists()
+
+    def start(self) -> subprocess.CompletedProcess[str]:
+        tip = self.git("rev-parse", "feature").stdout.strip()
+        started = self.git("rebase", "main", check=False)
+        while (started.returncode != 0 and self.rebasing()
+               and self.git("rev-parse", "REBASE_HEAD").stdout.strip() != tip):
+            self.assertIn("drift.lock", self.unmerged(), started.stdout + started.stderr)
+            self.assert_resolved(self.resolve())
+            for path in self.unmerged().split():
+                self.git("checkout", "--theirs", "--", path)
+                self.git("add", "--", path)
+            started = self.conclude()
+        return started
+
+    def conclude(self) -> subprocess.CompletedProcess[str]:
+        return self.git("-c", "core.editor=true", "rebase", "--continue", check=False)
+
+    def test_a_replay_says_its_result_is_per_commit(self) -> None:
+        self.main_appends(edit_a=True, restamp_a=True)
+        self.drift("unlink", "docs/a.md", "src/a.rs")
+        self.commit("feature unbinds a")
+        self.integrate_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertIn("drift.lock resolved (replay", result.stdout)
+        self.assertIn("per commit", result.stdout)
+        self.assertIn("feature unbinds a", result.stdout)
+        self.assertIn("docs/a.md -> src/a.rs: removed on the replayed commit, "
+                      "changed on the rebased result: dropped", result.stdout)
+        self.finish()
+        self.assertNotIn(("docs/a.md", "src/a.rs"), self.blocks())
+        self.assertIn(self.MAIN_TAIL, self.blocks())
+
+    def test_the_apply_backend_is_a_replay_too(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        self.commit("feature binds zn")
+        self.git("rebase", "--apply", "main", check=False)
+        self.assertIn("drift.lock", self.unmerged())
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertIn("per commit", result.stdout)
+        self.assertEqual(set(self.blocks()), {
+            ("docs/a.md", "src/a.rs"), ("docs/c.md", "src/c.rs"), ("docs/z.md", "src/b.rs"),
+            self.FIRST, self.MAIN_TAIL, self.BRANCH_TAIL})
+        continued = self.git("-c", "core.editor=true", "rebase", "--continue", check=False)
+        self.assertEqual(continued.returncode, 0, continued.stdout + continued.stderr)
+        self.assertEqual(self.git("status", "--porcelain").stdout, "")
+
+    # --- refused operations: nothing written, nothing staged --------------------------
+    def stopped(self) -> tuple[bytes, str]:
+        unmerged = self.unmerged()
+        self.assertIn("drift.lock", unmerged)
+        return (self.root / "drift.lock").read_bytes(), unmerged
+
+    def test_refuses_a_merge_recreated_by_rebase_merges(self) -> None:
+        self.git("checkout", "-q", "-b", "side")
+        self.write("docs/zs.md", "# zs\n")
+        self.drift("link", "docs/zs.md", "src/m.rs")
+        self.commit("side binds zs")
+        self.on_feature()
+        self.branch_appends()
+        self.commit("feature binds zn")
+        self.assertNotEqual(self.git("merge", "-q", "--no-edit", "side", check=False).returncode, 0)
+        self.git("checkout", "--ours", "--", "drift.lock")
+        self.drift("link", "docs/zs.md", "src/m.rs")
+        self.commit("merge side")
+        self.on_main()
+        self.write("NOTES", "main\n")
+        self.commit("main notes")
+        self.on_feature()
+        self.assertNotEqual(self.git("rebase", "--rebase-merges", "main", check=False).returncode, 0)
+        before, unmerged = self.stopped()
+        self.assert_refused(self.resolve(), "--rebase-merges", before, unmerged)
+
+    def test_refuses_git_am(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        self.commit("feature binds zn")
+        patch = self.git("format-patch", "-1", "--stdout").stdout
+        self.on_main()
+        (self.root / "zn.patch").write_text(patch)
+        self.assertNotEqual(self.git("am", "--3way", "zn.patch", check=False).returncode, 0)
+        (self.root / "zn.patch").unlink()
+        before, unmerged = self.stopped()
+        self.assert_refused(self.resolve(), "git am", before, unmerged)
+
+    def test_refuses_an_autostash_conflict(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        self.git("rebase", "--autostash", "main", check=False)
+        before, unmerged = self.stopped()
+        self.assert_refused(self.resolve(), "autostash", before, unmerged)
+
+    def test_refuses_a_cherry_pick(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        self.commit("feature binds zn")
+        self.on_main()
+        self.assertNotEqual(self.git("cherry-pick", "feature", check=False).returncode, 0)
+        before, unmerged = self.stopped()
+        self.assert_refused(self.resolve(), "cherry-pick", before, unmerged)
+
+    def test_refuses_a_revert(self) -> None:
+        self.write("src/c.rs", "fn c() { 1 }\n")
+        self.restamp("docs/c.md", "src/c.rs")
+        self.commit("feature re-stamps c")
+        first = self.git("rev-parse", "HEAD").stdout.strip()
+        self.write("src/c.rs", "fn c() { 2 }\n")
+        self.restamp("docs/c.md", "src/c.rs")
+        self.commit("feature re-stamps c again")
+        self.assertNotEqual(self.git("revert", "--no-edit", first, check=False).returncode, 0)
+        before, unmerged = self.stopped()
+        self.assert_refused(self.resolve(), "revert", before, unmerged)
 
 
 if __name__ == "__main__":

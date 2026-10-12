@@ -449,7 +449,7 @@ jobs:
             *) echo "::error::wiki recall did not serve the concept"; exit 1 ;;
           esac
 
-      # okf-lock-merge.py against the pinned drift: each case a real conflicted `git merge`.
+      # okf-lock-merge.py against the pinned drift: each case a real conflicted `git merge`, then a real `git rebase`.
       # The flag makes the class fail, not skip, if drift is ever missing from this step.
       - name: okf-lock-merge resolves real drift.lock conflicts
-        run: OKF_SELFTEST_REAL_DRIFT=1 python3 scripts/okf-runtime-selftest.py LockMergeTests
+        run: OKF_SELFTEST_REAL_DRIFT=1 python3 scripts/okf-runtime-selftest.py LockMergeTests LockRebaseTests
