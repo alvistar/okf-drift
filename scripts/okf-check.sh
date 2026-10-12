@@ -31,7 +31,8 @@
 #      status with findings only outside the bundle is noted and tolerated; a non-zero
 #      status with no stale/broken findings is an execution failure. Content-level drift
 #      is the one thing `code_refs` cannot give you: okf tells you a path VANISHED,
-#      drift tells you it CHANGED. Bindings come from `okf-drift-bootstrap.sh` for code
+#      drift tells you it CHANGED. A drift.lock git left with conflict markers fails
+#      before drift runs and names `okf-lock-merge.py`, which resolves it. Bindings come from `okf-drift-bootstrap.sh` for code
 #      `code_refs` entries; non-code paths take no *automatic* binding, but a hand
 #      `drift link` on one is a deliberate content anchor and stays valid. A concept
 #      reviewed against a change is re-stamped with
@@ -150,6 +151,10 @@ elif ! command -v drift >/dev/null 2>&1; then
   fi
 elif [ ! -f "$parent/drift.lock" ]; then
   shell_warns=$((shell_warns+1)); echo "warn  no drift.lock in $parent — step 6 (content drift) did not run; use /okf-setup for the explicit pinned drift bootstrap"
+elif grep -Eq '^(<<<<<<<|>>>>>>>)( |$)|^=======$' "$parent/drift.lock"; then
+  # A lock git left conflicted is not TOML; drift would refuse it with no JSON. Name the
+  # resolver instead of hand-editing binding tables.
+  adoption_error="drift.lock has git conflict markers — step 6 did not run; while git is stopped on the merge or rebase, run okf-lock-merge.py (through the pinned launcher, as /okf-write's helpers run), then run the gate again"
 else
   if [ -n "$pinned_drift" ]; then
     have_drift=$(drift --version 2>/dev/null | awk 'NR==1{print $NF}')
