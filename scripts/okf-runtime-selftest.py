@@ -10,6 +10,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -1141,6 +1142,224 @@ class BootstrapTests(unittest.TestCase):
         gate = self.run_script("okf-check.sh", "knowledge")
         self.assertNotIn("carries a description", gate.stdout)
         self.assertNotIn("not listed in", gate.stdout)
+
+
+GIT_ID = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+          "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+TODAY = datetime.date.today().isoformat()
+ENTRY_RE = r"knowledge/log/(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)-([0-9a-f]{4})/log\.md"
+
+
+def pin_scripts(root: Path, names: tuple[str, ...], *, fill_cache: bool = True) -> Path:
+    """A v0.7.0 lockfile in `root` pinning the working-tree bytes of `names`; the cache
+    holds those bytes when `fill_cache`. Returns the XDG cache home."""
+    cache = root / "cache/okf-drift/v0.7.0"
+    cache.mkdir(parents=True, exist_ok=True)
+    lines = ["v0.7.0"]
+    for name in names:
+        data = (SCRIPTS / name).read_bytes()
+        if fill_cache:
+            (cache / name).write_bytes(data)
+        lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
+    (root / ".okf-drift-version").write_text("\n".join(lines) + "\n")
+    return root / "cache"
+
+
+class LogEntryTests(unittest.TestCase):
+    """`okf-log.sh add`: the one writer of a branch's log entry, driven through its CLI in
+    a throwaway repository whose `origin/HEAD` is `main`."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="okf-log-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "repo"
+        self.bundle = self.root / "knowledge"
+        self.bundle.mkdir(parents=True)
+        self.history = "# Log\n\n## 2026-01-01\n* history before the split\n"
+        (self.bundle / "log.md").write_text(self.history)
+        (self.bundle / "index.md").write_text('---\nokf_version: "0.2"\n---\n')
+        self.env = dict(os.environ, **GIT_ID, TMPDIR=str(Path(self.tmp.name)))
+        self.env.pop("OKF_DRIFT_ROOT", None)
+        self.env.pop("OKF_DRIFT_SHIM", None)
+        if os.environ.get("OKF_SELFTEST_PINNED") == "1":
+            self.env["XDG_CACHE_HOME"] = str(pin_scripts(self.root, ("okf-log.sh",)))
+            (self.root / ".gitignore").write_text("cache/\n")
+        self.git("init", "-q", "-b", "main")
+        self.git("add", ".")
+        self.git("commit", "-qm", "base")
+        self.publish()
+        self.git("checkout", "-qb", "alice/fix")
+
+    def git(self, *args: str) -> str:
+        return subprocess.run(["git", *args], cwd=self.root, env=self.env, check=True,
+                              text=True, capture_output=True).stdout
+
+    def publish(self) -> None:
+        """Make the current commit what `origin/HEAD` points at."""
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+    def log(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+        cwd = cwd or self.root
+        if os.environ.get("OKF_SELFTEST_PINNED") == "1":
+            command = ["sh", str(SCRIPTS / "okf-shim.sh"), "--repo-root", str(cwd), "okf-log.sh"]
+        else:
+            command = ["sh", str(SCRIPTS / "okf-log.sh")]
+        return subprocess.run(command + list(args), cwd=cwd, env=self.env, text=True, capture_output=True)
+
+    def entries(self) -> list[str]:
+        return sorted(str(p.relative_to(self.root)) for p in self.bundle.glob("log/*/log.md"))
+
+    def add(self, line: str, *opts: str) -> str:
+        result = self.log("add", *opts, "knowledge", line)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout + result.stderr
+
+    def assert_refused(self, result: subprocess.CompletedProcess[str], *needles: str) -> None:
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for needle in needles:
+            self.assertIn(needle, result.stderr)
+        self.assertEqual(self.entries(), [])
+        self.assertEqual((self.bundle / "log.md").read_text(), self.history)
+
+    def test_first_write_creates_the_branch_entry_and_names_the_base(self) -> None:
+        out = self.add("* one")
+        [entry] = self.entries()
+        date, slug, _ = re.fullmatch(ENTRY_RE, entry).groups()
+        self.assertEqual((date, slug), (TODAY, "fix"))
+        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* one\n")
+        self.assertIn("origin/HEAD", out)
+        self.assertIn(entry, out)
+        self.assertEqual((self.bundle / "log.md").read_text(), self.history)
+
+    def test_a_second_write_reuses_the_untracked_entry_newest_first(self) -> None:
+        self.add("* one")
+        self.add("* two")
+        [entry] = self.entries()
+        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* two\n* one\n")
+
+    def test_a_staged_entry_is_reused(self) -> None:
+        self.add("* one")
+        self.git("add", ".")
+        self.add("* two")
+        [entry] = self.entries()
+        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* two\n* one\n")
+
+    def test_a_committed_entry_from_an_earlier_day_is_reused_under_a_new_heading(self) -> None:
+        self.add("* one")
+        [entry] = self.entries()
+        old = self.bundle / "log/2026-01-02-fix-abcd/log.md"
+        (self.root / entry).parent.rename(old.parent)
+        old.write_text("## 2026-01-02\n* one\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "entry")
+        self.add("* later")
+        self.assertEqual(self.entries(), ["knowledge/log/2026-01-02-fix-abcd/log.md"])
+        self.assertEqual(old.read_text(), f"## {TODAY}\n* later\n\n## 2026-01-02\n* one\n")
+
+    def test_a_stacked_branch_does_not_reuse_its_parents_entry(self) -> None:
+        self.git("checkout", "-qb", "feat/parser")
+        self.add("* parent")
+        self.git("add", ".")
+        self.git("commit", "-qm", "parent entry")
+        self.git("checkout", "-qb", "feat/parser-tests")
+        self.add("* child")
+        slugs = sorted(re.fullmatch(ENTRY_RE, e).group(2) for e in self.entries())
+        self.assertEqual(slugs, ["parser", "parser-tests"])
+
+    def test_an_entry_already_on_the_base_is_not_reused(self) -> None:
+        self.add("* merged earlier")
+        self.git("add", ".")
+        self.git("commit", "-qm", "entry")
+        self.publish()
+        self.add("* new work")
+        self.assertEqual(len(self.entries()), 2)
+
+    def test_two_branches_with_the_same_last_segment_get_two_folders(self) -> None:
+        self.add("* alice")
+        self.git("add", ".")
+        self.git("commit", "-qm", "alice entry")
+        self.git("checkout", "-q", "main")
+        self.git("checkout", "-qb", "bob/fix")
+        self.add("* bob")
+        self.git("add", ".")
+        self.git("commit", "-qm", "bob entry")
+        self.git("checkout", "-q", "alice/fix")
+        self.git("merge", "-q", "--no-edit", "bob/fix")
+        entries = self.entries()
+        self.assertEqual(len(entries), 2, entries)
+        for e in entries:
+            self.assertEqual(re.fullmatch(ENTRY_RE, e).groups()[:2], (TODAY, "fix"))
+
+    def test_more_than_one_candidate_refuses_and_asks_for_entry(self) -> None:
+        for suffix in ("aaaa", "bbbb"):
+            path = self.bundle / f"log/2026-01-02-fix-{suffix}/log.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("## 2026-01-02\n* x\n")
+        result = self.log("add", "knowledge", "* three")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("--entry", result.stderr)
+        self.assertNotIn("three", "".join(p.read_text() for p in self.bundle.glob("log/*/log.md")))
+
+    def test_entry_wins_and_skips_headings_inside_fences_and_comments(self) -> None:
+        self.add("* mine")
+        other = self.bundle / "log/2026-01-02-other-abcd/log.md"
+        other.parent.mkdir(parents=True)
+        head = "Intro.\n\n```\n## 2026-01-03\n```\n<!--\n## 2026-01-04\n-->\n\n"
+        other.write_text(head + "## 2026-01-02\n* x\n")
+        self.add("* chosen", "--entry", "knowledge/log/2026-01-02-other-abcd/log.md")
+        self.assertEqual(other.read_text(), head + f"## {TODAY}\n* chosen\n\n## 2026-01-02\n* x\n")
+        mine = [e for e in self.entries() if "-other-" not in e]
+        self.assertEqual((self.root / mine[0]).read_text(), f"## {TODAY}\n* mine\n")
+
+    def test_entry_outside_the_bundles_log_is_refused(self) -> None:
+        self.assert_refused(self.log("add", "--entry", "knowledge/log.md", "knowledge", "* x"), "--entry")
+
+    def test_detached_head_refuses_without_slug_and_writes_with_one(self) -> None:
+        self.git("checkout", "-q", "--detach")
+        self.assert_refused(self.log("add", "knowledge", "* x"), "detached", "--slug")
+        self.add("* x", "--slug", "Hot Fix")
+        [entry] = self.entries()
+        self.assertEqual(re.fullmatch(ENTRY_RE, entry).group(2), "hot-fix")
+
+    def test_the_default_branch_refuses_without_slug(self) -> None:
+        self.git("checkout", "-q", "main")
+        self.assert_refused(self.log("add", "knowledge", "* x"), "main", "--slug")
+
+    def test_a_missing_base_ref_refuses(self) -> None:
+        self.assert_refused(self.log("add", "--base", "origin/nope", "knowledge", "* x"), "origin/nope")
+        self.git("symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+        self.assert_refused(self.log("add", "knowledge", "* x"), "origin/HEAD", "--base")
+
+    def test_the_base_flag_is_used_and_printed(self) -> None:
+        self.git("branch", "trunk", "main")
+        out = self.add("* x", "--base", "trunk")
+        self.assertIn("trunk", out)
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_a_shallow_clone_refuses(self) -> None:
+        self.git("commit", "-q", "--allow-empty", "-m", "second")
+        self.git("commit", "-q", "--allow-empty", "-m", "third")
+        shallow = Path(self.tmp.name) / "shallow"
+        subprocess.run(["git", "clone", "-q", "--depth", "1", "--no-single-branch",
+                        f"file://{self.root}", str(shallow)], env=self.env, check=True)
+        for args in (["remote", "set-head", "origin", "main"], ["checkout", "-qb", "carol/work"]):
+            subprocess.run(["git", *args], cwd=shallow, env=self.env, check=True, capture_output=True)
+        result = self.log("add", "knowledge", "* x", cwd=shallow)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("shallow", result.stderr)
+        self.assertEqual(list((shallow / "knowledge").glob("log/*/log.md")), [])
+
+    def test_an_explicit_slug_needs_no_git_history(self) -> None:
+        plain = Path(self.tmp.name) / "plain"
+        (plain / "knowledge").mkdir(parents=True)
+        result = subprocess.run(["sh", str(SCRIPTS / "okf-log.sh"), "add", "--slug", "setup",
+                                 "knowledge", "* Created"], cwd=plain, env=self.env,
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        [entry] = list((plain / "knowledge").glob("log/*/log.md"))
+        self.assertRegex(str(entry.relative_to(plain)), ENTRY_RE)
+        self.assertEqual(entry.read_text(), f"## {TODAY}\n* Created\n")
 
 
 class FormatOnlyTests(unittest.TestCase):
