@@ -139,7 +139,11 @@ if [ -n "$workflow" ]; then
     | sed -n 's/.*--version \(v\{0,1\}[0-9][0-9.]*\).*/\1/p' | head -1)
 fi
 
-if [ "$profile" = wiki ] && [ ! -f "$parent/drift.lock" ]; then
+if [ -f "$parent/drift.lock" ] && grep -Eq '^(<<<<<<<|>>>>>>>)( |$)|^=======$' "$parent/drift.lock"; then
+  # First, whether drift is installed or not: a lock git left conflicted is not TOML, and
+  # drift would refuse it with no JSON. Name the resolver instead of hand-editing binding tables.
+  adoption_error="drift.lock has git conflict markers — step 6 did not run; while git is stopped on the merge or rebase, run okf-lock-merge.py (through the pinned launcher, as /okf-write's helpers run), then run the gate again"
+elif [ "$profile" = wiki ] && [ ! -f "$parent/drift.lock" ]; then
   # A wiki binds no code, so there is no detector to miss. A wiki that did hand-link a
   # concept has a drift.lock and takes the branches below like any other repository.
   :
@@ -151,10 +155,6 @@ elif ! command -v drift >/dev/null 2>&1; then
   fi
 elif [ ! -f "$parent/drift.lock" ]; then
   shell_warns=$((shell_warns+1)); echo "warn  no drift.lock in $parent — step 6 (content drift) did not run; use /okf-setup for the explicit pinned drift bootstrap"
-elif grep -Eq '^(<<<<<<<|>>>>>>>)( |$)|^=======$' "$parent/drift.lock"; then
-  # A lock git left conflicted is not TOML; drift would refuse it with no JSON. Name the
-  # resolver instead of hand-editing binding tables.
-  adoption_error="drift.lock has git conflict markers — step 6 did not run; while git is stopped on the merge or rebase, run okf-lock-merge.py (through the pinned launcher, as /okf-write's helpers run), then run the gate again"
 else
   if [ -n "$pinned_drift" ]; then
     have_drift=$(drift --version 2>/dev/null | awk 'NR==1{print $NF}')

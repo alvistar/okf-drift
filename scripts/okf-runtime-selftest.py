@@ -576,6 +576,15 @@ class RuntimeTests(unittest.TestCase):
         out = self.assert_gate_fails("drift.lock", "conflict", "okf-lock-merge.py")
         self.assertNotIn("okf gate passed", out)
 
+    def test_a_conflicted_drift_lock_names_okf_lock_merge_even_without_drift(self) -> None:
+        (self.root / "drift.lock").write_text(
+            'version = 1\n\n<<<<<<< HEAD\n[[bindings]]\ndoc = "a"\n=======\n'
+            '[[bindings]]\ndoc = "b"\n>>>>>>> main\n')
+        (self.stub / "drift").unlink()
+        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
+                                            "/usr/sbin", "/sbin"])
+        self.assert_gate_fails("drift.lock", "conflict", "okf-lock-merge.py")
+
     def test_an_unmigrated_bundle_fails_naming_okf_migrate_in_both_profiles(self) -> None:
         for profile in ("code", "wiki"):
             with self.subTest(profile=profile):
