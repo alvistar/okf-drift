@@ -124,6 +124,7 @@ jobs:
           - [Project](/project/index.md) — Project concepts.
           MD
           printf '# Log\n\n- 2026-09-19 — scratch bundle, written by this CI step.\n' > knowledge/log.md
+          sh "$W/scripts/okf-log.sh" split knowledge   # the frozen log, as /okf-migrate leaves it
 
           cat > knowledge/architecture/index.md <<'MD'
           # Architecture
@@ -346,6 +347,7 @@ jobs:
           set -eu
           repo=$(mktemp -d)
           scripts/okf-scaffold.sh --name "ArgLimit" "$repo" >/dev/null
+          (cd "$repo" && sh "$GITHUB_WORKSPACE/scripts/okf-log.sh" split knowledge >/dev/null)
           # Pad with docs OUTSIDE the bundle: step 6 skips them, so this measures the
           # argument size and nothing else. One real in-bundle doc keeps $checked non-zero.
           python3 - "$repo/drift-big.json" <<'PY'
@@ -380,6 +382,7 @@ jobs:
           set -eu
           repo=$(mktemp -d)
           scripts/okf-scaffold.sh --name "AbsPath" "$repo" >/dev/null
+          (cd "$repo" && sh "$GITHUB_WORKSPACE/scripts/okf-log.sh" split knowledge >/dev/null)
           mkdir -p "$repo/stub"
           # drift reporting only docs OUTSIDE the bundle is the positive control for the
           # no-op guard: without it, "nothing matched" would print as "fresh".
@@ -413,6 +416,7 @@ jobs:
           wiki=$(mktemp -d)
           scripts/okf-scaffold.sh --profile wiki --name "Wiki" "$wiki"
           [ "$(cat "$wiki/.okf-profile")" = wiki ] || { echo "::error::scaffold did not write .okf-profile"; exit 1; }
+          (cd "$wiki" && sh "$GITHUB_WORKSPACE/scripts/okf-log.sh" split knowledge >/dev/null)
           empty=$(cd "$wiki" && "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge 2>&1 || true)
           case "$empty" in
             *"FAIL  no concept"*) echo "ok — the gate fails an empty wiki scaffold, for the right reason" ;;

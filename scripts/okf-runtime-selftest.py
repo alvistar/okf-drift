@@ -70,6 +70,7 @@ class RuntimeTests(unittest.TestCase):
         (self.bundle / "project").mkdir(parents=True)
         (self.bundle / "index.md").write_text('---\nokf_version: "0.2"\n---\n')
         (self.bundle / "log.md").write_text("# Log\n")
+        split_log(self.root)
         (self.bundle / "project/index.md").write_text(
             "- [State](/project/state.md) — Fixture state.\n"
         )
@@ -552,6 +553,82 @@ class RuntimeTests(unittest.TestCase):
         return subprocess.run(["sh", str(SCRIPTS / "okf-scaffold.sh"), *args, str(target)],
                               env=self.env, text=True, capture_output=True)
 
+    def freeze(self, history: bytes) -> bytes:
+        (self.bundle / "log.md").write_bytes(history)
+        split_log(self.root)
+        return (self.bundle / "log.md").read_bytes()
+
+    def assert_gate_fails(self, *needles: str) -> str:
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for needle in needles:
+            self.assertIn(needle, result.stdout)
+        return result.stdout
+
+    def assert_gate_passes(self) -> None:
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_an_unmigrated_bundle_fails_naming_okf_migrate_in_both_profiles(self) -> None:
+        for profile in ("code", "wiki"):
+            with self.subTest(profile=profile):
+                if profile == "wiki":
+                    self.wiki()
+                (self.bundle / "log.md").write_text("# Log\n")
+                self.assert_gate_fails("log.md", "/okf-migrate")
+
+    def test_a_change_to_the_frozen_history_fails_naming_the_log_entry(self) -> None:
+        history = f"# Log\n\n## {TODAY}\n* split today\n\n## 2026-01-01\n* older\n".encode()
+        frozen = self.freeze(history)
+        self.assert_gate_passes()
+        cases = {
+            "a line under the split-day heading": frozen.replace(b"* split today\n", b"* split today\n* new\n"),
+            "a line under an old heading": frozen.replace(b"* older\n", b"* older\n* new\n"),
+        }
+        for label, data in cases.items():
+            with self.subTest(label):
+                (self.bundle / "log.md").write_bytes(data)
+                self.assert_gate_fails("log.md", "frozen", "knowledge/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md",
+                                       "okf-log.sh add")
+
+    def test_text_below_the_marker_fails_and_a_trailing_newline_passes(self) -> None:
+        frozen = self.freeze(b"# Log\n\n## 2026-01-01\n* older\n")
+        (self.bundle / "log.md").write_bytes(frozen + b"\n\n")
+        self.assert_gate_passes()
+        (self.bundle / "log.md").write_bytes(frozen + b"\n## 2026-10-12\n* new\n")
+        self.assert_gate_fails("below the marker", "knowledge/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md")
+
+    def test_a_crlf_checkout_of_unchanged_history_passes(self) -> None:
+        frozen = self.freeze(b"# Log\n\n## 2026-01-01\n* older\n")
+        (self.bundle / "log.md").write_bytes(frozen.replace(b"\n", b"\r\n"))
+        self.assert_gate_passes()
+
+    def test_refreeze_turns_the_gate_green_again(self) -> None:
+        frozen = self.freeze(b"# Log\n\n## 2026-01-01\n* a typo\n")
+        (self.bundle / "log.md").write_bytes(frozen.replace(b"a typo", b"the fix"))
+        self.assert_gate_fails("frozen")
+        subprocess.run(["sh", str(SCRIPTS / "okf-log.sh"), "split", "--refreeze", "knowledge"],
+                       cwd=self.root, check=True, capture_output=True)
+        self.assert_gate_passes()
+
+    def entry(self, text: str) -> None:
+        path = self.bundle / "log/2026-10-12-fix-abcd/log.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def test_a_log_entry_with_iso_headings_passes(self) -> None:
+        self.entry("## 2026-10-12\n* two\n\n```\n## not a heading\n```\n\n## 2026-10-11\n* one\n")
+        self.assert_gate_passes()
+
+    def test_a_log_entry_heading_that_is_not_a_bare_iso_date_fails_in_both_profiles(self) -> None:
+        for profile in ("code", "wiki"):
+            if profile == "wiki":
+                self.wiki()
+            for heading in ("## 2026-10-12 — the fix", "## Today", "## 2026-1-2"):
+                with self.subTest(profile=profile, heading=heading):
+                    self.entry(f"{heading}\n* x\n")
+                    self.assert_gate_fails("knowledge/log/2026-10-12-fix-abcd/log.md", heading)
+
     def test_scaffold_refusals_write_nothing(self) -> None:
         cases = {
             "wiki over a code profile": (("--profile", "wiki"), {".okf-profile": "code\n"}),
@@ -910,6 +987,7 @@ class BootstrapTests(unittest.TestCase):
             "- [Fixture](/concept.md) — Fixture concept.\n"
         )
         (bundle / "log.md").write_text("# Log\n")
+        split_log(self.root)
         (bundle / "concept.md").write_text(
             "---\n"
             "type: Reference\n"

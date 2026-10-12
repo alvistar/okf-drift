@@ -19,7 +19,9 @@
 #      vocabulary itself, draft|stable|deprecated, okf --strict does enforce);
 #   4. fails on leftover template material: HTML comments (search indexes them), the
 #      population placeholders, and a section with no content;
-#   5. checks the reserved files: root okf_version, log.md, project/state.md's three lists,
+#   5. checks the reserved files: root okf_version; log.md frozen (its marker the last
+#      line, the history above it unchanged — else it names /okf-migrate or the log entry
+#      to write instead) and every log entry's `## ` heading a bare ISO date; project/state.md's three lists,
 #      and warns on a state item long enough to be evidence — and, over every concept, on
 #      a `stale_after` that falls within the next OKF_REVIEW_WINDOW_DAYS days (default
 #      30): the day it arrives, step 1 fails it, so the review is better done before;
@@ -34,7 +36,7 @@
 #      `drift link` on one is a deliberate content anchor and stays valid. A concept
 #      reviewed against a change is re-stamped with
 #      `okf-restamp.sh '<doc>' '<anchor identity>' '<what you read>'`, which runs
-#      `drift link … --doc-is-still-accurate` and writes the log.md line — the IDENTITY
+#      `drift link … --doc-is-still-accurate` and writes the log entry's line — the IDENTITY
 #      (`path#symbol` for a symbol anchor), never the bare path, which would create a
 #      second, whole-file binding and leave the stale one stale.
 #
@@ -176,7 +178,7 @@ printf '%s' "$drift_json" > "$tmp/drift.json" || exit 2
 
 perl - "$bundle" "$tmp/okf.json" "$tmp/drift.json" "$parent" "$okf_status" "$drift_status" "$adoption_error" "$profile" "$shell_warns" "$( [ -f "$parent/drift.lock" ] && echo 1 || echo 0 )" <<'PERL'
 use strict; use warnings; use utf8;
-use JSON::PP; use File::Find; use File::Basename; use Time::Local qw(timegm);
+use JSON::PP; use File::Find; use File::Basename; use Time::Local qw(timegm); use Digest::SHA qw(sha256_hex);
 binmode STDOUT, ':utf8';
 my ($bundle, $json_file, $drift_file, $parent, $okf_status, $drift_status, $adoption_error, $profile, $shell_warns, $has_lock) = @ARGV;
 # A wiki is relieved of the code-only expectations (snapshot, code_refs) always; of drift
@@ -279,6 +281,39 @@ else {
 my $root = slurp("$bundle/index.md");
 bad("index.md: missing okf_version: \"0.2\"") unless $root =~ /^okf_version:\s*"0\.2"/m;
 bad("log.md: missing") unless -f "$bundle/log.md";
+# The frozen log and the log entries (docs/adr/0001-log-entries-as-reserved-log-files.md).
+# The root log.md ends with okf-log.sh's marker, which hashes every byte above it (LF line
+# endings, so a CRLF checkout of the same history passes). No new line goes there on any
+# day; it goes in the branch's log entry, which okf-log.sh finds or creates. This gate
+# never looks for that entry (no branch discovery here): it names the form and the writer.
+my $ENTRY_FORM = "$bundle/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md";
+my $USE_ENTRY  = "write new lines in this branch's log entry, $ENTRY_FORM, with `okf-log.sh add $bundle '<line>'`";
+if (-f "$bundle/log.md") {
+  my $t = slurp_raw("$bundle/log.md");
+  my @m;
+  while ($t =~ /^<!-- okf-log frozen (\d{4}-\d{2}-\d{2}) sha256:([0-9a-f]{64}) -->[ \t]*\r?$/mg) { @m = ($-[0], $+[0], $1, $2) }
+  if (!@m) {
+    bad("log.md: not frozen (no okf-log marker): this bundle predates log entries — run /okf-migrate, which freezes log.md and creates log/");
+  } else {
+    my ($start, $end, $date, $hash) = @m;
+    bad("log.md: text below the marker — the frozen-log marker must be the last line; $USE_ENTRY") if substr($t, $end) =~ /\S/;
+    (my $above = substr($t, 0, $start)) =~ s/\r\n/\n/g;
+    bad("log.md: the history frozen on $date changed (its sha256 no longer matches the marker) — log.md is frozen; "
+      . "$USE_ENTRY. A deliberate fix to old history: `okf-log.sh split --refreeze $bundle`") if sha256_hex($above) ne $hash;
+  }
+}
+# Every `## ` heading in a log entry is a bare ISO date, as in the old log; one inside a
+# fenced example or an HTML comment is not a heading (the writer skips those too).
+for my $entry (sort glob("\Q$bundle\E/log/*/log.md")) {
+  my $t = slurp($entry);
+  my @skip;
+  while ($t =~ /(<!--.*?-->|^[ \t]*```.*?^[ \t]*```[^\n]*$)/smg) { push @skip, [$-[0], $+[0]] }
+  while ($t =~ /^## ([^\n]*?)\r?$/mg) {
+    my ($pos, $h) = ($-[0], $1);
+    next if grep { $pos >= $_->[0] && $pos < $_->[1] } @skip;
+    bad("$entry: `## $h` is not a bare ISO date heading (## YYYY-MM-DD)") unless $h =~ /^\d{4}-\d{2}-\d{2}[ \t]*$/;
+  }
+}
 
 # Collect concepts and indexes.
 my (@concepts, @indexes);
