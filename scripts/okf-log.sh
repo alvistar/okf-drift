@@ -3,6 +3,7 @@
 #
 #   okf-log.sh add  [--entry <path>] [--slug <slug>] [--base <ref>] <bundle> "<line>"
 #   okf-log.sh path [--entry <path>] [--slug <slug>] [--base <ref>] <bundle>
+#   okf-log.sh split [--refreeze] <bundle>
 #
 # Run from the REPO ROOT. A log entry is <bundle>/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md:
 # the date the entry was created, the branch's slug (its last path segment, lowercased,
@@ -27,6 +28,18 @@
 # With `--slug` and no usable history (no repository, no base ref, a shallow clone) the
 # candidates are the existing entries with that slug in the working tree.
 #
+# `add` and `path` refuse a bundle whose root log.md is not frozen yet: run /okf-migrate.
+#
+# `split` makes the root log.md the FROZEN LOG (/okf-migrate runs it): it appends a pointer
+# to log/ and, as the last line, the marker
+#     <!-- okf-log frozen <YYYY-MM-DD> sha256:<hex> -->
+# carrying the split date and the sha256 of every byte above the marker line, line endings
+# normalized to LF (a CRLF checkout of the same history hashes the same). The bytes already
+# there are kept as they are, and log/ is created. On a log that is already frozen it
+# changes nothing. `split --refreeze` re-hashes the history after a deliberate fix and
+# keeps the split date. Both refuse when text sits below the marker: that text belongs in
+# a log entry. The gate (okf-check.sh) checks the hash.
+#
 # Exit 0 = written (or printed), 1 = refused, nothing written, 2 = unusable.
 set -u
 die() { echo "okf-log: $*" >&2; exit 2; }
@@ -36,14 +49,16 @@ use strict; use warnings;
 my $today = shift @ARGV;
 sub unusable { print STDERR "okf-log: @_\n"; exit 2 }
 sub refuse   { print STDERR "okf-log: @_\n"; exit 1 }
-my $usage = 'usage: okf-log.sh add|path [--entry <path>] [--slug <slug>] [--base <ref>] <bundle> ["<line>"]';
+my $usage = 'usage: okf-log.sh add|path [--entry <path>] [--slug <slug>] [--base <ref>] <bundle> ["<line>"]'
+          . ' | split [--refreeze] <bundle>';
 my $cmd = shift(@ARGV) // unusable($usage);
-unusable($usage) unless $cmd eq 'add' || $cmd eq 'path';
+unusable($usage) unless $cmd eq 'add' || $cmd eq 'path' || $cmd eq 'split';
 my (%opt, @pos);
 while (@ARGV) {
   my $a = shift @ARGV;
-  if ($a =~ /\A--(entry|slug|base)\z/) { defined($opt{$1} = shift @ARGV) or unusable("$a needs a value") }
-  elsif ($a =~ /\A--(entry|slug|base)=(.*)\z/s) { $opt{$1} = $2 }
+  if ($a eq '--refreeze' && $cmd eq 'split') { $opt{refreeze} = 1 }
+  elsif ($a =~ /\A--(entry|slug|base)\z/ && $cmd ne 'split') { defined($opt{$1} = shift @ARGV) or unusable("$a needs a value") }
+  elsif ($a =~ /\A--(entry|slug|base)=(.*)\z/s && $cmd ne 'split') { $opt{$1} = $2 }
   elsif ($a eq '--') { push @pos, @ARGV; last }
   elsif ($a =~ /\A--/) { unusable("unknown option $a") }
   else { push @pos, $a }
@@ -52,6 +67,62 @@ unusable($usage) unless @pos == ($cmd eq 'add' ? 2 : 1);
 my ($bundle, $line) = @pos;
 $bundle =~ s{\A(?:\./)+}{}; $bundle =~ s{(?<=.)/+\z}{};
 -d $bundle or unusable("no bundle at $bundle (run from the repository root)");
+
+sub slurp_raw { my $f = shift; open my $h, '<:raw', $f or return undef; local $/; my $c = <$h>; $c // '' }
+sub write_raw {
+  my ($f, $t) = @_;
+  open my $h, '>:raw', "$f.tmp" or unusable("$f.tmp: $!");
+  print $h $t; close $h or unusable("$f.tmp: $!");
+  rename "$f.tmp", $f or unusable("$f: $!");
+}
+# The frozen log. The marker is the LAST line matching MARKER; `$+[0]` ends it.
+my $MARKER = qr/^<!-- okf-log frozen (\d{4}-\d{2}-\d{2}) sha256:([0-9a-f]{64}) -->[ \t]*\r?$/m;
+my $root_log = "$bundle/log.md";
+sub find_marker {   # (start of the marker line, end of it, date, hash) or ()
+  my $t = shift; my @m;
+  while ($t =~ /$MARKER/g) { @m = ($-[0], $+[0], $1, $2) }
+  return @m;
+}
+sub history_hash { require Digest::SHA; (my $h = shift) =~ s/\r\n/\n/g; Digest::SHA::sha256_hex($h) }
+
+if ($cmd eq 'split') {
+  -f $root_log or refuse("no $root_log to freeze");
+  my $t = slurp_raw($root_log) // unusable("$root_log unreadable");
+  my ($start, $end, $date, $hash) = find_marker($t);
+  if (!defined $start) {
+    refuse("$root_log is not frozen yet: run `okf-log.sh split $bundle` (no --refreeze) first") if $opt{refreeze};
+    my $eol = $t =~ /\r\n/ ? "\r\n" : "\n";
+    my $sep = $t !~ /\S/ ? '' : $t =~ /$eol$eol\z/ ? '' : $t =~ /\n\z/ ? $eol : "$eol$eol";
+    my $above = $t . $sep
+      . "New log entries live in `log/`, one folder per branch (`log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md`),$eol"
+      . "written with `okf-log.sh add`. Everything above the marker below is frozen: the gate fails$eol"
+      . "on any change to it (a deliberate fix is re-hashed with `okf-log.sh split --refreeze`).$eol$eol";
+    -d "$bundle/log" or mkdir "$bundle/log" or unusable("$bundle/log: $!");
+    write_raw($root_log, $above . "<!-- okf-log frozen $today sha256:" . history_hash($above) . " -->$eol");
+    print "froze $root_log on $today; new log entries go in $bundle/log/\n";
+    exit 0;
+  }
+  refuse("text below the marker in $root_log: move it into a log entry (okf-log.sh add $bundle '<line>'), "
+       . "then delete it from $root_log") if substr($t, $end) =~ /\S/;
+  my $now = history_hash(substr($t, 0, $start));
+  -d "$bundle/log" or mkdir "$bundle/log" or unusable("$bundle/log: $!");
+  if (!$opt{refreeze}) {
+    print "$root_log is already frozen (split on $date); nothing to do\n";
+    print STDERR "okf-log: the history above the marker changed since it was frozen: "
+               . "if the change is deliberate, `okf-log.sh split --refreeze $bundle`\n" if $now ne $hash;
+    exit 0;
+  }
+  if ($now eq $hash) { print "$root_log: the history is unchanged; nothing to re-hash\n"; exit 0 }
+  my $marker = substr($t, $start, $end - $start);
+  $marker =~ s/sha256:[0-9a-f]{64}/sha256:$now/;
+  write_raw($root_log, substr($t, 0, $start) . $marker . substr($t, $end));
+  print "re-froze $root_log (split on $date): the marker now hashes the corrected history\n";
+  exit 0;
+}
+if (-f $root_log && !find_marker(slurp_raw($root_log) // '')) {
+  refuse("$root_log is not frozen yet, so there is nowhere to write a log entry: run /okf-migrate "
+       . "(it runs `okf-log.sh split $bundle`) first");
+}
 if ($cmd eq 'add') {
   $line =~ s/\s+\z//;
   refuse('nothing to log: the line is empty') unless $line =~ /\S/;
@@ -156,7 +227,6 @@ if (defined $opt{entry}) {
 
 if ($cmd eq 'path') { print "$entry\n"; exit 0 }
 
-sub slurp_raw { my $f = shift; open my $h, '<:raw', $f or return undef; local $/; my $c = <$h>; $c // '' }
 my $t;
 if (-e $entry) {
   $t = slurp_raw($entry) // unusable("$entry unreadable");
@@ -179,9 +249,7 @@ if    ($t !~ /\S/)     { $t = "## $today\n$line\n" }
 elsif (!defined $at)   { $t =~ s/\n*\z/\n\n## $today\n$line\n/ }
 elsif ($is_today)      { my $eol = index($t, "\n", $at); $eol = length $t if $eol < 0; substr($t, $eol + 1, 0) = "$line\n" }
 else                   { substr($t, $at, 0) = "## $today\n$line\n\n" }
-open my $h, '>:raw', "$entry.tmp" or unusable("$entry.tmp: $!");
-print $h $t; close $h or unusable("$entry.tmp: $!");
-rename "$entry.tmp", $entry or unusable("$entry: $!");
+write_raw($entry, $t);
 print "logged in $entry under $today\n";
 exit 0;
 PERL

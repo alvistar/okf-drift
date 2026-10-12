@@ -90,6 +90,12 @@ fi
 if [ "$mode" != compare ]; then
   [ -d "$bundle" ] || die "no bundle at $bundle (run from the repository root)"
   [ -f "$bundle/log.md" ] || die "$bundle/log.md is missing"
+  # An unmigrated bundle (a root log.md with no frozen-log marker) has no log entries yet:
+  # refused before anything is linked or written. The marker is okf-log.sh's.
+  grep -Eq '^<!-- okf-log frozen [0-9]{4}-[0-9]{2}-[0-9]{2} sha256:[0-9a-f]{64} -->' "$bundle/log.md" || {
+    echo "okf-restamp: $bundle/log.md is not frozen yet, so there is no log entry to write: run /okf-migrate first" >&2
+    exit 1
+  }
   command -v drift >/dev/null 2>&1 || die 'drift not on PATH'
   [ -f drift.lock ] || die 'no drift.lock at the repository root'
   top=$(git rev-parse --show-toplevel 2>/dev/null) || die 'not a git repository'

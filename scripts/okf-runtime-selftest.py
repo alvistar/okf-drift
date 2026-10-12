@@ -24,6 +24,19 @@ GIT_ID = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 TODAY = datetime.date.today().isoformat()
 ENTRY_RE = r"knowledge/log/(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)-([0-9a-f]{4})/log\.md"
+# The frozen log's marker, as the spec defines it: the split date and the sha256 of every
+# byte above the marker line, line endings normalized to LF.
+MARKER_RE = r"<!-- okf-log frozen (\d{4}-\d{2}-\d{2}) sha256:([0-9a-f]{64}) -->"
+
+
+def frozen_parts(data: bytes) -> tuple[bytes, str, str]:
+    """(the bytes above the marker line, its date, its hash) of a frozen log."""
+    lines = data.splitlines(keepends=True)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    match = re.fullmatch(MARKER_RE, lines[-1].decode().rstrip("\r\n")) if lines else None
+    assert match, f"the last non-blank line is not a marker: {data[-200:]!r}"
+    return b"".join(lines[:-1]), match.group(1), match.group(2)
 
 
 def pin_scripts(root: Path, names: tuple[str, ...], *, fill_cache: bool = True) -> Path:
@@ -39,6 +52,13 @@ def pin_scripts(root: Path, names: tuple[str, ...], *, fill_cache: bool = True) 
         lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
     (root / ".okf-drift-version").write_text("\n".join(lines) + "\n")
     return root / "cache"
+
+
+def split_log(root: Path, bundle: str = "knowledge") -> None:
+    """Freeze `root/bundle/log.md`, as /okf-migrate does: fixture preparation, so the
+    working-tree okf-log.sh runs directly in either selftest mode."""
+    subprocess.run(["sh", str(SCRIPTS / "okf-log.sh"), "split", bundle], cwd=root, check=True,
+                   capture_output=True)
 
 
 class RuntimeTests(unittest.TestCase):
@@ -1083,6 +1103,8 @@ class BootstrapTests(unittest.TestCase):
                          "blame": {"commit": "0123456789abcdef", "subject": "tighten it"}}],
         }]}))
         (self.root / "knowledge/log.md").write_text(self.HISTORY)
+        split_log(self.root)
+        self.frozen = (self.root / "knowledge/log.md").read_text()
         (self.root / "drift.lock").write_text('version = 1\n\n[[bindings]]\ndoc = "knowledge/concept.md"\n'
                                               'target = "src/lib.rs#fixture"\nsig = "fixture"\n')
         self.git("add", ".")
@@ -1101,7 +1123,21 @@ class BootstrapTests(unittest.TestCase):
 
     def assert_nothing_logged(self) -> None:
         self.assertEqual(self.entries(), {})
-        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.HISTORY)
+        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
+
+    def test_restamp_refuses_an_unmigrated_bundle_and_names_okf_migrate(self) -> None:
+        self.stale_anchor()
+        (self.root / "knowledge/log.md").write_text(self.HISTORY)
+        self.frozen = self.HISTORY
+        result = self.restamp("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("/okf-migrate", result.stderr)
+        self.assert_nothing_logged()
+        self.assertFalse(self.link_log.exists() and self.link_log.read_text().strip())
+        sweep = self.run_script("okf-restamp.sh", "--format-only")
+        self.assertEqual(sweep.returncode, 1, sweep.stdout + sweep.stderr)
+        self.assertIn("/okf-migrate", sweep.stderr)
+        self.assert_nothing_logged()
 
     def test_restamp_refuses_an_empty_note_and_an_unknown_binding(self) -> None:
         self.stale_anchor()
@@ -1125,13 +1161,13 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(re.fullmatch(ENTRY_RE, entry).groups()[:2], (TODAY, "restamp"))
         self.assertEqual(text, f"## {TODAY}\n{self.STILL}read fixture(): the guard the concept names is unchanged\n")
         self.assertIn(entry, result.stdout)
-        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.HISTORY)
+        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
         again = self.restamp("read fixture() a second time: still the same guard")
         self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
         self.assertEqual(self.entries(), {entry: f"## {TODAY}\n{self.STILL}read fixture() a second time: "
                                                  f"still the same guard\n{self.STILL}read fixture(): the guard "
                                                  "the concept names is unchanged\n"})
-        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.HISTORY)
+        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
 
     def test_restamp_of_a_fresh_anchor_changes_nothing(self) -> None:
         # Value: protects=no link and no log line for a fresh anchor; fails_when=the fresh branch falls through to drift link; why_new=only stale anchors were tested; seam=none
@@ -1286,6 +1322,9 @@ class LogEntryTests(unittest.TestCase):
         if os.environ.get("OKF_SELFTEST_PINNED") == "1":
             self.env["XDG_CACHE_HOME"] = str(pin_scripts(self.root, ("okf-log.sh",)))
             (self.root / ".gitignore").write_text("cache/\n")
+        split = self.log("split", "knowledge")
+        self.assertEqual(split.returncode, 0, split.stdout + split.stderr)
+        self.history = (self.bundle / "log.md").read_text()
         self.git("init", "-q", "-b", "main")
         self.git("add", ".")
         self.git("commit", "-qm", "base")
@@ -1462,6 +1501,73 @@ class LogEntryTests(unittest.TestCase):
         [entry] = list((plain / "knowledge").glob("log/*/log.md"))
         self.assertRegex(str(entry.relative_to(plain)), ENTRY_RE)
         self.assertEqual(entry.read_text(), f"## {TODAY}\n* Created\n")
+
+    def unsplit(self, history: bytes) -> None:
+        (self.bundle / "log.md").write_bytes(history)
+
+    def test_split_freezes_the_root_log_with_a_marker_hashing_the_history(self) -> None:
+        history = b"# Log\n\n## 2026-01-01\n* history before the split\n"
+        self.unsplit(history)
+        result = self.log("split", "knowledge")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        data = (self.bundle / "log.md").read_bytes()
+        self.assertTrue(data.startswith(history), data)
+        above, date, digest = frozen_parts(data)
+        self.assertEqual(date, TODAY)
+        self.assertEqual(digest, hashlib.sha256(above).hexdigest())
+        self.assertIn(b"log/", above[len(history):])
+        self.assertTrue((self.bundle / "log").is_dir())
+
+    def test_split_twice_changes_nothing(self) -> None:
+        frozen = (self.bundle / "log.md").read_bytes()
+        result = self.log("split", "knowledge")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("already frozen", result.stdout)
+        self.assertEqual((self.bundle / "log.md").read_bytes(), frozen)
+
+    def test_refreeze_rehashes_a_deliberate_fix_and_keeps_the_split_date(self) -> None:
+        self.unsplit(b"# Log\n\n## 2026-01-01\n* a typo\n")
+        self.log("split", "knowledge")
+        text = (self.bundle / "log.md").read_bytes()
+        _, date, old = frozen_parts(text)
+        (self.bundle / "log.md").write_bytes(text.replace(b"a typo", b"the fix"))
+        result = self.log("split", "--refreeze", "knowledge")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        above, new_date, new = frozen_parts((self.bundle / "log.md").read_bytes())
+        self.assertEqual(new_date, date)
+        self.assertNotEqual(new, old)
+        self.assertEqual(new, hashlib.sha256(above).hexdigest())
+        self.assertIn(b"the fix", above)
+
+    def test_refreeze_of_an_unfrozen_log_refuses(self) -> None:
+        self.unsplit(b"# Log\n")
+        result = self.log("split", "--refreeze", "knowledge")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual((self.bundle / "log.md").read_bytes(), b"# Log\n")
+
+    def test_split_of_a_crlf_log_hashes_the_history_as_lf(self) -> None:
+        history = b"# Log\r\n\r\n## 2026-01-01\r\n* history before the split\r\n"
+        self.unsplit(history)
+        self.log("split", "knowledge")
+        data = (self.bundle / "log.md").read_bytes()
+        self.assertTrue(data.startswith(history))
+        above, _, digest = frozen_parts(data)
+        self.assertEqual(digest, hashlib.sha256(above.replace(b"\r\n", b"\n")).hexdigest())
+
+    def test_text_below_the_marker_refuses_split_and_refreeze(self) -> None:
+        log = self.bundle / "log.md"
+        log.write_text(self.history + "* added below\n")
+        for args in (["split"], ["split", "--refreeze"]):
+            with self.subTest(args=args):
+                result = self.log(*args, "knowledge")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("below the marker", result.stderr)
+                self.assertEqual(log.read_text(), self.history + "* added below\n")
+
+    def test_add_refuses_an_unmigrated_bundle_and_names_okf_migrate(self) -> None:
+        self.unsplit(b"# Log\n")
+        self.history = "# Log\n"
+        self.assert_refused(self.log("add", "knowledge", "* x"), "/okf-migrate")
 
 
 class FormatOnlyTests(unittest.TestCase):
