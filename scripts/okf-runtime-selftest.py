@@ -1214,5 +1214,360 @@ class FormatOnlyTests(unittest.TestCase):
                                  "format-only: indentation or trailing whitespace")
 
 
+# Kept beside the one class that uses them, so the import block above stays untouched.
+import re  # noqa: E402
+import sys  # noqa: E402
+
+
+@unittest.skipUnless(os.environ.get("OKF_SELFTEST_REAL_DRIFT") == "1",
+                     "real-drift tests; set OKF_SELFTEST_REAL_DRIFT=1")
+class LockMergeTests(unittest.TestCase):
+    """okf-lock-merge.py against the REAL drift, each case a real conflicted `git merge main`.
+
+    The oracle for "serialized as drift does" is drift itself: drift rewrites the whole
+    lock on any link, so re-linking a fresh binding must leave the merged bytes unchanged.
+    """
+
+    def setUp(self) -> None:
+        if shutil.which("drift") is None:
+            self.fail("OKF_SELFTEST_REAL_DRIFT=1 but drift is not on PATH; install the pinned drift")
+        self.tmp = tempfile.TemporaryDirectory(prefix="okf-lockmerge-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t", TMPDIR=str(self.root),
+                        GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        self.git("init", "-q", "-b", "main")
+        self.write("src/a.rs", "".join(f"fn a{i}() {{ {i} }}\n" for i in range(12)))
+        self.write("src/b.rs", "fn b() {}\n")
+        self.write("src/c.rs", "fn c() {}\n")
+        self.write("src/m.rs", "fn m() {}\n")
+        self.write("src/n.rs", "fn n() {}\n")
+        for doc in ("docs/a.md", "docs/c.md", "docs/m.md", "docs/z.md"):
+            self.write(doc, f"# {doc}\n")
+        self.drift("link", "docs/a.md", "src/a.rs")
+        self.drift("link", "docs/c.md", "src/c.rs")
+        self.drift("link", "docs/z.md", "src/b.rs")
+        self.commit("base")
+        self.git("checkout", "-q", "-b", "feature")
+
+    # --- fixture plumbing -------------------------------------------------------------
+    def git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", *args], cwd=self.root, env=self.env, text=True,
+                              capture_output=True, check=check)
+
+    def drift(self, *args: str) -> None:
+        result = subprocess.run(["drift", *args], cwd=self.root, env=self.env, text=True,
+                                capture_output=True)
+        self.assertEqual(result.returncode, 0, f"drift {args}: {result.stdout}{result.stderr}")
+
+    def write(self, relative: str, text: str) -> None:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def commit(self, message: str) -> None:
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", message)
+
+    def lock(self) -> str:
+        return (self.root / "drift.lock").read_text()
+
+    def on_main(self) -> None:
+        self.git("checkout", "-q", "main")
+
+    def on_feature(self) -> None:
+        self.git("checkout", "-q", "feature")
+
+    def unmerged(self) -> str:
+        return self.git("diff", "--name-only", "--diff-filter=U").stdout
+
+    def merge_main(self) -> None:
+        """From the branch, `git merge main`; the lock must come out conflicted."""
+        self.on_feature()
+        merged = self.git("merge", "-q", "--no-edit", "main", check=False)
+        self.assertNotEqual(merged.returncode, 0, "the fixture did not conflict")
+        self.assertIn("drift.lock", self.unmerged())
+
+    def resolve(self, path: str | None = None) -> subprocess.CompletedProcess[str]:
+        env = dict(self.env)
+        if path is not None:
+            env["PATH"] = path
+        return subprocess.run([sys.executable, str(SCRIPTS / "okf-lock-merge.py")], cwd=self.root,
+                              env=env, text=True, capture_output=True)
+
+    def blocks(self) -> dict[tuple[str, str], str]:
+        found = {}
+        for block in self.lock().split("\n\n")[1:]:
+            doc = re.search(r'^doc = "(.*)"$', block, re.M).group(1)
+            target = re.search(r'^target = "(.*)"$', block, re.M).group(1)
+            found[(doc, target)] = block
+        return found
+
+    def assert_resolved(self, result: subprocess.CompletedProcess[str]) -> None:
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("drift.lock", self.unmerged())
+        self.assertNotIn("<<<<<<<", self.lock())
+
+    def assert_drift_serialization(self, doc: str, target: str) -> None:
+        before = self.lock()
+        self.drift("link", doc, target, "--doc-is-still-accurate")
+        self.assertEqual(self.lock(), before)
+
+    def check(self) -> dict[str, str]:
+        out = subprocess.run(["drift", "check", "--format", "json"], cwd=self.root, env=self.env,
+                             text=True, capture_output=True)
+        return {doc["path"]: doc["result"] for doc in json.loads(out.stdout)["docs"]}
+
+    # --- scenarios --------------------------------------------------------------------
+    def test_two_docs_added_at_the_same_sorted_position(self) -> None:
+        self.on_main()
+        self.drift("link", "docs/m.md", "src/m.rs")
+        self.write("NOTES", "main\n")
+        self.commit("main binds m")
+        self.on_feature()
+        self.write("docs/n.md", "# n\n")
+        self.drift("link", "docs/n.md", "src/n.rs")
+        self.write("NOTES", "feature\n")
+        self.commit("feature binds n")
+        self.merge_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(set(self.blocks()), {
+            ("docs/a.md", "src/a.rs"), ("docs/c.md", "src/c.rs"), ("docs/m.md", "src/m.rs"),
+            ("docs/n.md", "src/n.rs"), ("docs/z.md", "src/b.rs")})
+        self.assertRegex(result.stdout, r"added\s+docs/n\.md -> src/n\.rs")
+        self.assertRegex(result.stdout, r"still unmerged:\n\s+NOTES\n")
+        self.assertIn("run the gate", result.stdout)
+        self.assertEqual(self.unmerged(), "NOTES\n")
+        self.assertEqual(set(self.check().values()), {"fresh"})
+        self.assert_drift_serialization("docs/n.md", "src/n.rs")
+
+    def edit_a(self, line: int) -> None:
+        text = (self.root / "src/a.rs").read_text().splitlines(keepends=True)
+        text[line] = f"fn a{line}() {{ {line} + 1 }}\n"
+        self.write("src/a.rs", "".join(text))
+
+    def restamp(self, doc: str, target: str) -> None:
+        self.drift("link", doc, target, "--doc-is-still-accurate")
+
+    MAIN_TAIL = ("docs/zm.md", "src/m.rs")
+    BRANCH_TAIL = ("docs/zn.md", "src/n.rs")
+
+    def main_appends(self, *, edit_a: bool = False, restamp_a: bool = False) -> None:
+        """On main: bind a doc that sorts last, and optionally change src/a.rs on its last
+        line (far from the branch's edit on line 0, so src/a.rs merges cleanly)."""
+        self.on_main()
+        self.write(self.MAIN_TAIL[0], "# zm\n")
+        self.drift("link", *self.MAIN_TAIL)
+        if edit_a:
+            self.edit_a(11)
+        if restamp_a:
+            self.restamp("docs/a.md", "src/a.rs")
+        self.commit("main")
+        self.on_feature()
+
+    def branch_appends(self) -> None:
+        """On the branch: bind another doc that sorts last. Two appends at the end of the
+        lock always conflict, far from the block the scenario changes, so git's alignment
+        of that change cannot dissolve the conflict."""
+        self.write(self.BRANCH_TAIL[0], "# zn\n")
+        self.drift("link", *self.BRANCH_TAIL)
+
+    def test_the_branch_removes_a_binding(self) -> None:
+        self.main_appends()
+        self.drift("unlink", "docs/c.md", "src/c.rs")
+        self.branch_appends()
+        self.commit("feature unbinds c")
+        self.merge_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(set(self.blocks()), {
+            ("docs/a.md", "src/a.rs"), ("docs/z.md", "src/b.rs"), self.MAIN_TAIL, self.BRANCH_TAIL})
+        self.assertRegex(result.stdout, r"removed\s+docs/c\.md -> src/c\.rs")
+        self.assert_drift_serialization(*self.MAIN_TAIL)
+
+    def test_a_restamp_whose_target_main_left_alone_comes_out_fresh(self) -> None:
+        self.main_appends()
+        self.write("src/c.rs", "fn c() { 1 }\n")
+        self.restamp("docs/c.md", "src/c.rs")
+        self.branch_appends()
+        self.commit("feature re-stamps c")
+        branch_block = self.blocks()[("docs/c.md", "src/c.rs")]
+        self.merge_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(self.blocks()[("docs/c.md", "src/c.rs")], branch_block)
+        self.assertRegex(result.stdout, r"modified\s+docs/c\.md -> src/c\.rs")
+        self.assertIn("no stale binding", result.stdout)
+        self.assertEqual(set(self.check().values()), {"fresh"})
+
+    def test_a_restamp_whose_target_main_changed_comes_out_stale(self) -> None:
+        self.main_appends(edit_a=True)
+        self.edit_a(0)
+        self.restamp("docs/a.md", "src/a.rs")
+        self.branch_appends()
+        self.commit("feature re-stamps a")
+        branch_block = self.blocks()[("docs/a.md", "src/a.rs")]
+        self.merge_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(self.blocks()[("docs/a.md", "src/a.rs")], branch_block)
+        self.assertRegex(result.stdout, r"stale\s+docs/a\.md -> src/a\.rs")
+        self.assertEqual(self.check()["docs/a.md"], "stale")
+
+    def test_both_sides_resign_the_same_binding(self) -> None:
+        self.main_appends(edit_a=True, restamp_a=True)
+        self.edit_a(0)
+        self.restamp("docs/a.md", "src/a.rs")
+        self.commit("feature re-stamps a")
+        branch_block = self.blocks()[("docs/a.md", "src/a.rs")]
+        self.merge_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(self.blocks()[("docs/a.md", "src/a.rs")], branch_block)
+        self.assertIn(self.MAIN_TAIL, self.blocks())
+        self.assertRegex(result.stdout, r"modified\s+docs/a\.md -> src/a\.rs")
+        self.assertEqual(self.check()["docs/a.md"], "stale")
+
+    def test_removed_on_the_branch_and_changed_on_main_is_dropped(self) -> None:
+        self.main_appends(edit_a=True, restamp_a=True)
+        self.drift("unlink", "docs/a.md", "src/a.rs")
+        self.commit("feature unbinds a")
+        self.merge_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertNotIn(("docs/a.md", "src/a.rs"), self.blocks())
+        self.assertIn(self.MAIN_TAIL, self.blocks())
+        self.assertIn("docs/a.md -> src/a.rs: removed on branch, changed on main: dropped",
+                      result.stdout)
+
+    def test_removed_on_main_and_changed_on_the_branch_is_dropped(self) -> None:
+        self.on_main()
+        self.drift("unlink", "docs/a.md", "src/a.rs")
+        self.commit("main unbinds a")
+        self.on_feature()
+        self.edit_a(0)
+        self.restamp("docs/a.md", "src/a.rs")
+        self.commit("feature re-stamps a")
+        self.merge_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(set(self.blocks()), {("docs/c.md", "src/c.rs"), ("docs/z.md", "src/b.rs")})
+        self.assertIn("docs/a.md -> src/a.rs: removed on main, changed on branch: dropped",
+                      result.stdout)
+
+    def test_a_change_to_metadata_only(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        lock = self.lock().replace('doc = "docs/c.md"\ntarget = "src/c.rs"\n',
+                                   'doc = "docs/c.md"\ntarget = "src/c.rs"\nnote = "kept"\n')
+        self.write("drift.lock", lock)
+        self.commit("feature annotates c")
+        branch_block = self.blocks()[("docs/c.md", "src/c.rs")]
+        self.merge_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertEqual(self.blocks()[("docs/c.md", "src/c.rs")], branch_block)
+        self.assertIn('note = "kept"', branch_block)
+        self.assertRegex(result.stdout, r"modified\s+docs/c\.md -> src/c\.rs")
+        self.assert_drift_serialization("docs/c.md", "src/c.rs")
+
+    def test_a_lock_written_by_drift_round_trips_byte_identical(self) -> None:
+        self.main_appends()
+        self.branch_appends()
+        self.write("docs/x y.md", "# x y\n")
+        for target in ("src/a.rs", "src/b.rs", "src/c.rs"):
+            self.drift("link", "docs/x y.md", target)
+        self.drift("link", "docs/c.md", "src/b.rs")
+        self.commit("feature binds x y")
+        self.merge_main()
+        result = self.resolve()
+        self.assert_resolved(result)
+        self.assertIn(("docs/x y.md", "src/b.rs"), self.blocks())
+        self.assertEqual(len(self.blocks()), 9)
+        self.assert_drift_serialization("docs/x y.md", "src/b.rs")
+        self.assert_drift_serialization("docs/c.md", "src/b.rs")
+
+    # --- refusals: nothing written, nothing staged ------------------------------------
+    def assert_refused(self, result: subprocess.CompletedProcess[str], reason: str,
+                       before: bytes, unmerged: str) -> None:
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn(reason, result.stderr)
+        self.assertEqual((self.root / "drift.lock").read_bytes(), before)
+        self.assertEqual(self.unmerged(), unmerged)
+
+    def conflicted(self, edit_branch_lock=None) -> tuple[bytes, str]:
+        self.main_appends()
+        self.branch_appends()
+        if edit_branch_lock is not None:
+            self.write("drift.lock", edit_branch_lock(self.lock()))
+        self.commit("feature")
+        self.merge_main()
+        return (self.root / "drift.lock").read_bytes(), self.unmerged()
+
+    def test_refuses_outside_a_merge(self) -> None:
+        before = (self.root / "drift.lock").read_bytes()
+        self.assert_refused(self.resolve(), "no merge in progress", before, "")
+
+    def test_refuses_a_merge_whose_lock_has_no_conflict(self) -> None:
+        self.on_main()
+        self.write("src/b.rs", "fn b() { 1 }\n")
+        self.commit("main changes b")
+        self.on_feature()
+        self.write("src/b.rs", "fn b() { 2 }\n")
+        self.commit("feature changes b")
+        self.git("merge", "-q", "--no-edit", "main", check=False)
+        self.assertEqual(self.unmerged(), "src/b.rs\n")
+        before = (self.root / "drift.lock").read_bytes()
+        self.assert_refused(self.resolve(), "drift.lock has no conflict", before, "src/b.rs\n")
+
+    def test_refuses_a_lock_that_is_not_version_1(self) -> None:
+        before, unmerged = self.conflicted(lambda lock: lock.replace("version = 1\n", "version = 2\n", 1))
+        self.assert_refused(self.resolve(), "`version = 2`", before, unmerged)
+
+    def test_refuses_a_duplicate_binding(self) -> None:
+        def duplicate(lock: str) -> str:
+            return lock + "\n" + self.blocks()[("docs/a.md", "src/a.rs")].rstrip("\n") + "\n"
+        before, unmerged = self.conflicted(duplicate)
+        self.assert_refused(self.resolve(), "binds docs/a.md -> src/a.rs twice", before, unmerged)
+
+    def test_refuses_when_a_side_deleted_the_lock(self) -> None:
+        self.main_appends()
+        self.git("rm", "-q", "drift.lock")
+        self.commit("feature deletes the lock")
+        merged = self.git("merge", "-q", "--no-edit", "main", check=False)
+        self.assertNotEqual(merged.returncode, 0)
+        self.assertEqual(self.unmerged(), "drift.lock\n")
+        before = (self.root / "drift.lock").read_bytes()
+        self.assert_refused(self.resolve(), "drift.lock was deleted on branch", before, "drift.lock\n")
+
+    def test_refuses_when_drift_is_missing(self) -> None:
+        before, unmerged = self.conflicted()
+        only_git = self.root / "only-git"
+        only_git.mkdir()
+        (only_git / "git").symlink_to(shutil.which("git"))
+        self.assert_refused(self.resolve(path=str(only_git)), "drift is not on PATH", before, unmerged)
+
+    def test_a_drift_crash_or_unreadable_json_restores_the_lock(self) -> None:
+        before, unmerged = self.conflicted()
+        self.assertIn(b"<<<<<<<", before)
+        for name, behaviour in (("crash", "kill -SEGV $$"),
+                                ("unreadable", "echo 'not json'; exit 1"),
+                                ("other schema", "echo '{\"docs\": []}'")):
+            with self.subTest(name=name):
+                fake = self.root / f"fake-{name.replace(' ', '-')}"
+                fake.mkdir()
+                (fake / "drift").write_text(
+                    '#!/bin/sh\n[ "$1" = "--version" ] && { echo "drift v0.10.1"; exit 0; }\n'
+                    f"{behaviour}\n")
+                (fake / "drift").chmod(0o755)
+                result = self.resolve(path=str(fake) + os.pathsep + self.env["PATH"])
+                self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+                self.assertIn("drift.lock restored", result.stderr)
+                self.assertEqual((self.root / "drift.lock").read_bytes(), before)
+                self.assertEqual(self.unmerged(), unmerged)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

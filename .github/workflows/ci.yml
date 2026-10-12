@@ -431,3 +431,8 @@ jobs:
             *"not drift-tracked (wiki)"*) echo "ok — wiki recall through the real okf, without drift" ;;
             *) echo "::error::wiki recall did not serve the concept"; exit 1 ;;
           esac
+
+      # okf-lock-merge.py against the pinned drift: each case a real conflicted `git merge`.
+      # The flag makes the class fail, not skip, if drift is ever missing from this step.
+      - name: okf-lock-merge resolves real drift.lock conflicts
+        run: OKF_SELFTEST_REAL_DRIFT=1 python3 scripts/okf-runtime-selftest.py LockMergeTests
