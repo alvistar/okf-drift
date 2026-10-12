@@ -84,7 +84,7 @@ Tell the user:
 
 - the bundle is split; `log/` holds no entry yet, so git does not show the empty folder
   (the first `okf-log.sh add` creates the branch's entry);
-- from now on every log line goes into the branch's log entry through `okf-log.sh add`
+- from now on every new line goes into the branch's log entry through `okf-log.sh add`
   (`/okf-write` and `okf-restamp.sh` do this). Nothing writes the root `log.md` again;
 - `merge=union` on `log.md` in `.gitattributes`, and any workflow that union-merges the
   log, are no longer needed. This skill does not edit them; the user removes them;

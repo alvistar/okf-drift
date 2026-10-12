@@ -536,7 +536,7 @@ grouped("due for review within $REVIEW_WINDOW days (stale_after; the gate fails 
 
 # Said once, not per anchor: a reformat or an import sort flags every concept bound to the
 # files it touched, and the sweep settles those without anyone reading them.
-print "note  $restampable anchor(s) drifted: run `okf-restamp.sh --format-only` first — it re-stamps, with one log line, those whose file (C, Swift and other raw-hashed languages) changed only in indentation, and lists the rest\n"
+print "note  $restampable anchor(s) drifted: run `okf-restamp.sh --format-only` first — it re-stamps, with one line in the log entry, those whose file (C, Swift and other raw-hashed languages) changed only in indentation, and lists the rest\n"
   if $restampable > 1;
 
 # A repository that adopted drift and then ran the gate without it gets a FAIL, not a

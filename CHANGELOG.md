@@ -82,7 +82,7 @@ A bundle pinned to v0.14.0 without step 3 fails the gate, `/okf-write` and
   v0.14.0 pin needs `/okf-migrate`. `okf-integrate.py` accepts the v0.12.0–v0.13.0
   section bodies and the v0.13.0 workflow, so a consumer carrying them upgrades in place.
 - `/okf-write`, `/okf-read`, the populate and resync prompts, `okf-quirks.md` and the
-  README point every log line at the branch's log entry; none tells anyone to edit the
+  README send every new line to the branch's log entry; none tells anyone to edit the
   root `log.md`.
 
 ### Removed

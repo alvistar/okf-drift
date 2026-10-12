@@ -6,7 +6,7 @@ description: |
   or the surgical concept edit, refresh project/state.md, bind every new **code** `code_refs`
   path (the bootstrap does it; high-churn files — scripts, CI, VERSION — are never bound);
   settle drift with the format-only sweep, then re-stamp what you read with
-  okf-restamp.sh (never silently — it writes the log line); okf-tidy.sh keeps index rows
+  okf-restamp.sh (never silently — it writes the line in the log entry); okf-tidy.sh keeps index rows
   and last_updated; pass the gate.
 
   MANUAL TRIGGER ONLY: invoke only when the user types /okf-write.
@@ -49,7 +49,7 @@ Below, `okf-tidy.sh …`, `okf-restamp.sh …`, `okf-log.sh …` and `okf-drift-
 mean exactly that. A pin older than the release that ships a helper has no digest for it and the
 launcher refuses it; upgrade the pin with `/okf-setup`, never run the plugin's copy.
 
-**Every log line goes in the branch's log entry, through `okf-log.sh add`.** Never edit
+**Every new line goes in the branch's log entry, through `okf-log.sh add`.** Never edit
 `knowledge/log.md`: it is the frozen log, and the gate fails any change to it. Each branch
 writes one log entry, `knowledge/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md`; the helper finds
 the one this branch already added or creates it, and puts the line under today's heading:
@@ -184,7 +184,7 @@ the rule for choosing what to link.
 **List what this claim depends on, then anchor all of it.** For each sentence the concept
 makes about code, name the declarations, the dispatch, the defaults and the data the
 sentence would be false without. Anchor every one of them. Stop following calls only at a
-boundary you state in the log line.
+boundary you state in the line in the log entry.
 
 1. **The entry point stays anchored when routing or defaults live there.** OPA's
    `admit_reusable` is a six-line wrapper, but it chooses `DecodeBounds::DEFAULT`; its
@@ -205,7 +205,7 @@ boundary you state in the log line.
 
 A bare `#name` binds the **first** declaration of that name in the file, silently. Before
 binding a common name (`vend`, `new`, `check`), confirm it is unique in the file; if it is
-not and the intended one is not the first, keep the whole file. The log line names the
+not and the intended one is not the first, keep the whole file. Its line in the log entry names the
 declaration chosen and the boundary where you stopped following the claim.
 
 Measured on drift v0.10.1, and each of these will bite otherwise:
@@ -237,7 +237,7 @@ okf-restamp.sh --format-only knowledge
 ```
 
 For each stale anchor it finds the version of the file the binding was signed against and
-compares it with the working tree. It re-stamps, with ONE log line for the whole sweep,
+compares it with the working tree. It re-stamps, with ONE line in the log entry for the whole sweep,
 only a file in a language drift hashes raw — C, C++, Objective-C, Swift, Kotlin, C#,
 Dart — whose lines, blank ones included, are unchanged but for indentation and trailing
 whitespace. Everything else it lists as `needs reading` and leaves stale.

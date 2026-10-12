@@ -276,7 +276,7 @@ jobs:
           [ "$#" = 1 ] && [ -f "$1" ] || { ls -R knowledge; fail "expected one log entry for the branch, found: $*"; }
           entry=$1
           grep -qF '* STILL ACCURATE, re-stamped `architecture/core.md` <- `src/lib.rs#admit_reusable`' "$entry" \
-            || { cat "$entry"; fail "the re-stamp wrote no log line"; }
+            || { cat "$entry"; fail "the re-stamp wrote no line in the log entry"; }
           [ "$(cat knowledge/log.md)" = "$root_log" ] || { cat knowledge/log.md; fail "the re-stamp wrote the root log.md"; }
 
           say "the gate is green again, and the lock holds exactly one binding for that doc"
@@ -310,7 +310,7 @@ jobs:
             || fail "a Rust token change was settled without reading"
           set -- knowledge/log/*/log.md
           [ "$#" = 1 ] && [ "$1" = "$entry" ] || fail "the sweep did not reuse the branch's entry: $*"
-          grep -qF '* FORMAT-ONLY, re-stamped mechanically' "$entry" || { cat "$entry"; fail "the sweep wrote no log line"; }
+          grep -qF '* FORMAT-ONLY, re-stamped mechanically' "$entry" || { cat "$entry"; fail "the sweep wrote no line in the log entry"; }
           [ "$(cat knowledge/log.md)" = "$root_log" ] || { cat knowledge/log.md; fail "the sweep wrote the root log.md"; }
           git add -A && git commit -qm "swept"
           perl -pi -e 's/return 8;/return 9;/' src/ceiling.c

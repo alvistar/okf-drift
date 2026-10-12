@@ -1,5 +1,5 @@
 #!/bin/sh
-# okf-restamp.sh — re-stamp drift bindings and write the log line for them.
+# okf-restamp.sh — re-stamp drift bindings and write their line in the log entry.
 #
 #   okf-restamp.sh [log options] <doc> <anchor> "<what you read>" [bundle]   one reviewed re-stamp
 #   okf-restamp.sh --format-only [log options] [bundle]                      the mechanical sweep
@@ -34,7 +34,7 @@
 #     its leading and trailing whitespace is dropped. Nothing inside a line changes; no
 #     line is added, removed, joined, split or moved.
 #
-# The log line is written BEFORE the links, and a failed link is taken back out of it (the
+# The line in the log entry is written BEFORE the links, and a failed link is taken back out of it (the
 # entry gets its bytes back, or the folder this run created is removed): an
 # interrupted run can leave a line for an anchor the gate still flags, never a re-stamp
 # with no line.
@@ -50,7 +50,7 @@
 # Scala (Scala 3's braceless syntax; a blank line before a block in Scala 2). The
 # second review added that, the C# `@$"` strings and blank lines as significant. The
 # comparison is over the WHOLE file even for a symbol anchor, which only makes it
-# stricter. All re-stamps of one sweep share one log line.
+# stricter. All re-stamps of one sweep share one line in the log entry.
 #
 # --compare <path-as-bound> <old-file> <new-file> prints the sweep's verdict on two
 # versions of a file, with no repository, drift or bundle involved.

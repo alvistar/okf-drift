@@ -1311,7 +1311,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
 
     def test_restamp_of_a_fresh_anchor_changes_nothing(self) -> None:
-        # Value: protects=no link and no log line for a fresh anchor; fails_when=the fresh branch falls through to drift link; why_new=only stale anchors were tested; seam=none
+        # Value: protects=no link and no line in the log entry for a fresh anchor; fails_when=the fresh branch falls through to drift link; why_new=only stale anchors were tested; seam=none
         self.stale_anchor()
         data = json.loads(self.drift_check_json.read_text())
         data["docs"][0]["result"] = "fresh"

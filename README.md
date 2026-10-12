@@ -268,7 +268,7 @@ scripts/okf-scaffold.sh             the fixed bundle, laid down and validated
 scripts/okf-check.sh                the gate, six steps
 scripts/okf-recall.sh               search joined with drift; marks STALE what moved under it
 scripts/okf-drift-bootstrap.sh      one drift link per code `code_refs` entry (not shell scripts); a hand binding on a non-code path is kept
-scripts/okf-restamp.sh              re-stamp a reviewed anchor with its log line; --format-only settles formatting-only drift
+scripts/okf-restamp.sh              re-stamp a reviewed anchor with its line in the log entry; --format-only settles formatting-only drift
 scripts/okf-log.sh                  the one writer of a branch's log entry (add); split freezes the root log.md
 scripts/okf-lock-merge.py           resolves a conflicted drift.lock during a git merge or rebase
 scripts/okf-tidy.sh                 index rows and last_updated, the bookkeeping that needs no judgement
