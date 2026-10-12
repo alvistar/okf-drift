@@ -34,7 +34,7 @@ while [ $# -gt 0 ]; do
     --profile) [ $# -ge 2 ] || { echo "--profile needs a value (code or wiki)" >&2; exit 2; }; profile="$2"; shift 2 ;;
     --profile=*) profile="${1#--profile=}"; shift ;;
     --force) force=1; shift ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) target="$1"; shift ;;
   esac
