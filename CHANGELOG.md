@@ -58,7 +58,8 @@ A bundle pinned to v0.14.0 without step 3 fails the gate, `/okf-write` and
   whose target main also changed comes out stale. It refuses, writing nothing, any other
   git state (a merge recreated by `--rebase-merges`, `git am`, an autostash conflict,
   cherry-pick, revert), a missing or deleted lock, a lock that is not `version = 1`, a
-  duplicate binding and a missing drift. A drift crash restores the working lock (exit 3).
+  duplicate binding (exit 1). A missing drift is unusable, and a drift crash restores the
+  working lock (both exit 2).
 
 ### Changed
 

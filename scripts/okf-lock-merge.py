@@ -23,11 +23,13 @@ main has since invalidated comes out stale instead of silently fresh.
 Refuses, writing nothing: any state but a merge or a replay (a merge recreated by
 `--rebase-merges`, `git am`, a stash or autostash conflict, cherry-pick, revert),
 no conflicted drift.lock, a side that deleted the lock, a lock that is not
-`version = 1`, a duplicate (doc, target), drift missing. A drift crash or unreadable `drift check` JSON restores the working lock.
+`version = 1`, a duplicate (doc, target). Unusable, writing nothing: drift missing.
+A drift crash or unreadable `drift check` JSON restores the working lock.
 It never calls `drift link` or `drift unlink`.
 
 Exit: 0 resolved (even with stale bindings: staleness belongs to the Work Loop);
-2 refused; 3 `drift check` failed and the working lock was restored.
+1 refused, nothing written; 2 unusable: drift missing, or `drift check` failed and the
+working lock was restored.
 """
 from __future__ import annotations
 
@@ -41,11 +43,15 @@ import sys
 
 LOCK = "drift.lock"
 MEASURED_DRIFT = "v0.10.1"
-EXIT_REFUSED = 2
-EXIT_CHECK_FAILED = 3
+EXIT_REFUSED = 1
+EXIT_UNUSABLE = 2
 
 
 class Refusal(Exception):
+    pass
+
+
+class Unusable(Exception):
     pass
 
 
@@ -250,7 +256,7 @@ def resolve(root: Path) -> int:
             raise Refusal(f"drift.lock was deleted on {label}; keep or delete it by hand "
                           "(`git add drift.lock` or `git rm drift.lock`)")
     if shutil.which("drift") is None:
-        raise Refusal("drift is not on PATH; install the pinned drift — the merged lock "
+        raise Unusable("drift is not on PATH; install the pinned drift — the merged lock "
                       "must be checked before it is staged")
 
     base = read_stage(root, 1, "the merge base") if 1 in present else {}
@@ -269,7 +275,7 @@ def resolve(root: Path) -> int:
             lock.write_bytes(original)
         print("FAIL  `drift check` crashed or printed unreadable JSON; drift.lock restored "
               "with its conflict, nothing staged", file=sys.stderr)
-        return EXIT_CHECK_FAILED
+        return EXIT_UNUSABLE
     git("add", "--", LOCK, cwd=root)
 
     print(f"drift.lock resolved ({state.name}: started from {state.main_label}'s lock, "
@@ -302,6 +308,9 @@ def main() -> int:
     except Refusal as refusal:
         print(f"refused: {refusal}", file=sys.stderr)
         return EXIT_REFUSED
+    except Unusable as unusable:
+        print(f"unusable: {unusable}", file=sys.stderr)
+        return EXIT_UNUSABLE
 
 
 if __name__ == "__main__":

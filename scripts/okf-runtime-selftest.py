@@ -2096,8 +2096,9 @@ class LockMergeTests(unittest.TestCase):
 
     # --- refusals: nothing written, nothing staged ------------------------------------
     def assert_refused(self, result: subprocess.CompletedProcess[str], reason: str,
-                       before: bytes, unmerged: str) -> None:
-        self.assertNotEqual(result.returncode, 0, result.stdout)
+                       before: bytes, unmerged: str, code: int = 1) -> None:
+        """Exit 1 = refused, 2 = unusable (the repo-wide convention); nothing written."""
+        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         self.assertIn(reason, result.stderr)
         self.assertEqual((self.root / "drift.lock").read_bytes(), before)
         self.assertEqual(self.unmerged(), unmerged)
@@ -2152,7 +2153,8 @@ class LockMergeTests(unittest.TestCase):
         only_git = self.root / "only-git"
         only_git.mkdir()
         (only_git / "git").symlink_to(shutil.which("git"))
-        self.assert_refused(self.resolve(path=str(only_git)), "drift is not on PATH", before, unmerged)
+        self.assert_refused(self.resolve(path=str(only_git)), "drift is not on PATH", before, unmerged,
+                            code=2)
 
     def test_a_drift_crash_or_unreadable_json_restores_the_lock(self) -> None:
         before, unmerged = self.conflicted()
@@ -2168,7 +2170,7 @@ class LockMergeTests(unittest.TestCase):
                     f"{behaviour}\n")
                 (fake / "drift").chmod(0o755)
                 result = self.resolve(path=str(fake) + os.pathsep + self.env["PATH"])
-                self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn("drift.lock restored", result.stderr)
                 self.assertEqual((self.root / "drift.lock").read_bytes(), before)
                 self.assertEqual(self.unmerged(), unmerged)
