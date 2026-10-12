@@ -22,7 +22,11 @@
 #   2. Otherwise the base is `--base <ref>`, or `origin/HEAD`; the ref used is printed.
 #   3. Candidates are the entries the branch added since the merge-base with the base,
 #      committed, staged or untracked, whose slug is the branch's slug.
+#      An entry that records its branch (`<!-- okf-log branch: <full name> -->` above its
+#      first heading) is a candidate only on that exact branch, so `bob/fix` stacked on
+#      `alice/fix` gets its own; one without the comment is matched by slug alone.
 #   4. None: a new entry. One: that one. More: refused, pass --entry.
+#      A new entry named from the branch (no --slug) records the branch in that comment.
 # Refused without `--slug`: a detached HEAD, the default branch, no git repository. Always
 # refused: a missing base ref, shallow history (missing history is not "no entry yet").
 # With `--slug` and no usable history (no repository, no base ref, a shallow clone) the
@@ -138,11 +142,24 @@ sub git {   # stdout of a git command, undef when it fails; stderr dropped
   $o //= ''; $o =~ s/\n\z//; return $o;
 }
 
-my $entry;
+sub branch_of {   # the full branch name an entry's branch comment records, or undef
+  my $t = slurp_raw(shift) // return undef;
+  $t =~ s/^## .*//ms;   # only what sits above the first heading
+  return $t =~ /^<!-- okf-log branch: (\S+) -->[ \t]*\r?$/m ? $1 : undef;
+}
+
+my ($entry, $branch_tag);   # $branch_tag: the branch a NEW entry records, when the branch named it
 if (defined $opt{entry}) {
   ($entry = $opt{entry}) =~ s{\A(?:\./)+}{};
   refuse("--entry must be $bundle/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md (got '$opt{entry}')")
     unless $entry =~ m{\A\Q$bundle\E/log/$NAME/log\.md\z};
+  # A new entry named after the current branch (okf-restamp.sh resolves it with `path`,
+  # then writes it with --entry) records the branch, as discovery would have.
+  if (!-e $entry && !defined $opt{slug} && (git('rev-parse', '--is-inside-work-tree') // '') eq 'true') {
+    my $b = git('symbolic-ref', '-q', '--short', 'HEAD');
+    my ($s) = $entry =~ m{/log/$NAME/log\.md\z} ? ($2) : ();
+    $branch_tag = $b if defined $b && defined $s && slugify((split m{/}, $b)[-1]) eq $s;
+  }
 } else {
   my $slug;
   if (defined $opt{slug}) {
@@ -151,12 +168,12 @@ if (defined $opt{entry}) {
   }
   my $in_git = (git('rev-parse', '--is-inside-work-tree') // '') eq 'true';
   my $base = $opt{base} // 'origin/HEAD';
-  my ($mb, $why_not, $shallow);
+  my ($mb, $why_not, $shallow, $branch);
   if (!$in_git) {
     refuse('not a git repository: pass --slug <slug> (or --entry <path>) to name the entry') unless defined $slug;
     $why_not = 'not a git repository';
   } else {
-    my $branch = git('symbolic-ref', '-q', '--short', 'HEAD');
+    $branch = git('symbolic-ref', '-q', '--short', 'HEAD');
     if (!defined $slug) {
       refuse('HEAD is detached: pass --slug <slug> (or --entry <path>) to name the entry') unless defined $branch;
     }
@@ -187,8 +204,13 @@ if (defined $opt{entry}) {
       }
       $slug = slugify((split m{/}, $branch)[-1]);
       refuse("the branch name '$branch' gives no slug: pass --slug <slug>") unless length $slug;
+      $branch_tag = $branch;
     }
   }
+  # An entry that records its branch is that branch's only, whatever its slug: `bob/fix`
+  # stacked on `alice/fix` never reuses alice's entry. One without the comment (the setup
+  # entry, a --slug entry, an older writer's) is matched by its slug.
+  my $mine = sub { my $b = branch_of(shift); !defined $b || (defined $branch && $b eq $branch) };
   my @cand;
   if (defined $mb && !defined $why_not) {
     print STDERR "okf-log: base $base (merge-base " . substr($mb, 0, 8) . ")\n";
@@ -202,13 +224,13 @@ if (defined $opt{entry}) {
         my ($name, $s) = ($1, $3);
         next unless $s eq $slug;
         my $p = "$bundle/log/$name/log.md";
-        push @cand, $p if -f $p && !$seen{$p}++;
+        push @cand, $p if -f $p && !$seen{$p}++ && $mine->($p);
       }
     }
   } else {
     print STDERR "okf-log: $why_not; using the working tree's entries named '$slug'\n";
     for my $p (sort glob("\Q$bundle\E/log/*/log.md")) {
-      push @cand, $p if $p =~ m{/log/$NAME/log\.md\z} && $2 eq $slug;
+      push @cand, $p if $p =~ m{/log/$NAME/log\.md\z} && $2 eq $slug && $mine->($p);
     }
   }
   if (@cand > 1) {
@@ -238,6 +260,7 @@ if (-e $entry) {
   for ($logdir, $dir) { -d $_ or mkdir $_ or unusable("$_: $!") }
   $t = '';
 }
+my $tag = !length($t) && defined $branch_tag ? "<!-- okf-log branch: $branch_tag -->\n" : '';
 my @skip;
 while ($t =~ /(<!--.*?-->|^[ \t]*```.*?^[ \t]*```[^\n]*$)/smg) { push @skip, [$-[0], $+[0]] }
 my ($at, $is_today);
@@ -247,7 +270,7 @@ while ($t =~ /^## ([^\n]*)$/mg) {
   ($at, $is_today) = ($pos, $h =~ /^\Q$today\E[ \t]*$/ ? 1 : 0);
   last;
 }
-if    ($t !~ /\S/)     { $t = "## $today\n$line\n" }
+if    ($t !~ /\S/)     { $t = "$tag## $today\n$line\n" }
 elsif (!defined $at)   { $t =~ s/\n*\z/\n\n## $today\n$line\n/ }
 elsif ($is_today)      { my $eol = index($t, "\n", $at); if ($eol < 0) { $t .= "\n$line\n" } else { substr($t, $eol + 1, 0) = "$line\n" } }
 else                   { substr($t, $at, 0) = "## $today\n$line\n\n" }

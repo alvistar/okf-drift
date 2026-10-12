@@ -40,8 +40,11 @@ A bundle pinned to v0.14.0 without step 3 fails the gate, `/okf-write` and
   so an entry is never a concept or a search hit.
 - `okf-log.sh add`, the one writer of a branch's log entry. It reuses the entry the branch
   added since its merge-base with `origin/HEAD` (or `--base`; it prints the ref it used),
-  committed, staged or untracked, even on a later day; ignores a parent branch's entry;
-  and refuses, asking for `--slug` or `--entry`, on a detached HEAD, the default branch,
+  committed, staged or untracked, even on a later day; ignores a parent branch's entry,
+  even one with the same slug (`bob/fix` stacked on `alice/fix`): an entry it names from
+  the branch records the full branch name in a `<!-- okf-log branch: … -->` comment above
+  its first heading, and is reused only on that branch (an entry without the comment, such
+  as the setup entry or a `--slug` one, is matched by slug); and refuses, asking for `--slug` or `--entry`, on a detached HEAD, the default branch,
   more than one candidate, a missing base ref or a shallow clone. `/okf-write`,
   `okf-restamp.sh` (both modes) and the scaffold all write through it. Through the
   pinned launcher, `okf-restamp.sh` gets `okf-log.sh` from the same release

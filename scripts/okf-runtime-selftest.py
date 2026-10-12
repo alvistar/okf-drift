@@ -624,7 +624,8 @@ class RuntimeTests(unittest.TestCase):
         path.write_text(text)
 
     def test_a_log_entry_with_iso_headings_passes(self) -> None:
-        self.entry("## 2026-10-12\n* two\n\n```\n## not a heading\n```\n\n## 2026-10-11\n* one\n")
+        self.entry("<!-- okf-log branch: alice/fix -->\n"
+                   "## 2026-10-12\n* two\n\n```\n## not a heading\n```\n\n## 2026-10-11\n* one\n")
         self.assert_gate_passes()
 
     def test_a_log_entry_heading_that_is_not_a_bare_iso_date_fails_in_both_profiles(self) -> None:
@@ -1279,12 +1280,13 @@ class BootstrapTests(unittest.TestCase):
                          ["knowledge/concept.md src/lib.rs#fixture --doc-is-still-accurate"])
         [(entry, text)] = self.entries().items()
         self.assertEqual(re.fullmatch(ENTRY_RE, entry).groups()[:2], (TODAY, "restamp"))
-        self.assertEqual(text, f"## {TODAY}\n{self.STILL}read fixture(): the guard the concept names is unchanged\n")
+        tag = "<!-- okf-log branch: alice/restamp -->\n"
+        self.assertEqual(text, f"{tag}## {TODAY}\n{self.STILL}read fixture(): the guard the concept names is unchanged\n")
         self.assertIn(entry, result.stdout)
         self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
         again = self.restamp("read fixture() a second time: still the same guard")
         self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
-        self.assertEqual(self.entries(), {entry: f"## {TODAY}\n{self.STILL}read fixture() a second time: "
+        self.assertEqual(self.entries(), {entry: f"{tag}## {TODAY}\n{self.STILL}read fixture() a second time: "
                                                  f"still the same guard\n{self.STILL}read fixture(): the guard "
                                                  "the concept names is unchanged\n"})
         self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
@@ -1423,6 +1425,9 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotIn("not listed in", gate.stdout)
 
 
+ALICE = "<!-- okf-log branch: alice/fix -->\n"   # the comment a discovered entry records
+
+
 class LogEntryTests(unittest.TestCase):
     """`okf-log.sh add`: the one writer of a branch's log entry, driven through its CLI in
     a throwaway repository whose `origin/HEAD` is `main`."""
@@ -1488,7 +1493,7 @@ class LogEntryTests(unittest.TestCase):
         [entry] = self.entries()
         date, slug, _ = re.fullmatch(ENTRY_RE, entry).groups()
         self.assertEqual((date, slug), (TODAY, "fix"))
-        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* one\n")
+        self.assertEqual((self.root / entry).read_text(), f"{ALICE}## {TODAY}\n* one\n")
         self.assertIn("origin/HEAD", out)
         self.assertIn(entry, out)
         self.assertEqual((self.bundle / "log.md").read_text(), self.history)
@@ -1497,14 +1502,14 @@ class LogEntryTests(unittest.TestCase):
         self.add("* one")
         self.add("* two")
         [entry] = self.entries()
-        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* two\n* one\n")
+        self.assertEqual((self.root / entry).read_text(), f"{ALICE}## {TODAY}\n* two\n* one\n")
 
     def test_a_staged_entry_is_reused(self) -> None:
         self.add("* one")
         self.git("add", ".")
         self.add("* two")
         [entry] = self.entries()
-        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* two\n* one\n")
+        self.assertEqual((self.root / entry).read_text(), f"{ALICE}## {TODAY}\n* two\n* one\n")
 
     def test_a_committed_entry_from_an_earlier_day_is_reused_under_a_new_heading(self) -> None:
         self.add("* one")
@@ -1527,6 +1532,28 @@ class LogEntryTests(unittest.TestCase):
         self.add("* child")
         slugs = sorted(re.fullmatch(ENTRY_RE, e).group(2) for e in self.entries())
         self.assertEqual(slugs, ["parser", "parser-tests"])
+
+    def test_a_stacked_branch_with_the_same_slug_gets_its_own_entry(self) -> None:
+        self.add("* alice")
+        self.git("add", ".")
+        self.git("commit", "-qm", "alice entry")
+        [alice] = self.entries()
+        self.git("checkout", "-qb", "bob/fix")
+        self.add("* bob one")
+        self.add("* bob two")
+        [bob] = [e for e in self.entries() if e != alice]
+        self.assertEqual((self.root / alice).read_text(),
+                         f"<!-- okf-log branch: alice/fix -->\n## {TODAY}\n* alice\n")
+        self.assertEqual((self.root / bob).read_text(),
+                         f"<!-- okf-log branch: bob/fix -->\n## {TODAY}\n* bob two\n* bob one\n")
+
+    def test_an_entry_without_a_branch_comment_is_matched_by_slug(self) -> None:
+        self.add("* one", "--slug", "fix")
+        [entry] = self.entries()
+        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* one\n")
+        self.add("* two")
+        self.assertEqual(self.entries(), [entry])
+        self.assertEqual((self.root / entry).read_text(), f"## {TODAY}\n* two\n* one\n")
 
     def test_an_entry_already_on_the_base_is_not_reused(self) -> None:
         self.add("* merged earlier")
@@ -1571,7 +1598,7 @@ class LogEntryTests(unittest.TestCase):
         self.add("* chosen", "--entry", "knowledge/log/2026-01-02-other-abcd/log.md")
         self.assertEqual(other.read_text(), head + f"## {TODAY}\n* chosen\n\n## 2026-01-02\n* x\n")
         mine = [e for e in self.entries() if "-other-" not in e]
-        self.assertEqual((self.root / mine[0]).read_text(), f"## {TODAY}\n* mine\n")
+        self.assertEqual((self.root / mine[0]).read_text(), f"{ALICE}## {TODAY}\n* mine\n")
 
     def test_entry_outside_the_bundles_log_is_refused(self) -> None:
         self.assert_refused(self.log("add", "--entry", "knowledge/log.md", "knowledge", "* x"), "--entry")
