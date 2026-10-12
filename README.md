@@ -22,7 +22,6 @@ trusting a green validation.
 | Skill | What it does |
 |---|---|
 | `/okf-setup` | Lays the bundle down in a repo that has none: a fixed layout that validates `--strict` from the first commit, the population and resync prompts, the `CLAUDE.md` sections, the gate, the drift bootstrap, and the CI job. |
-| `/okf-migrate` | Builds the same bundle from an existing [mex](https://github.com/mex-memory/mex) scaffold, resolving every `grounds_to` and inline `mex://` anchor to a path **while the graph still exists**. |
 | `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot and its evidence; binds every new **code** `code_refs` path and never a high-churn file (scripts, CI, `VERSION`); settles drift with a mechanical format-only sweep, then re-stamps what was read — never silently; keeps index rows and `last_updated` with `okf-tidy.sh`. |
 | `/okf-read` | Recalls from it: `okf search` joined with `drift check`, marking STALE any concept whose bound code moved after it was written, with the commit to blame. |
 
@@ -238,7 +237,6 @@ scripts/okf-recall.sh               search joined with drift; marks STALE what m
 scripts/okf-drift-bootstrap.sh      one drift link per code `code_refs` entry (not shell scripts); a hand binding on a non-code path is kept
 scripts/okf-restamp.sh              re-stamp a reviewed anchor with its log line; --format-only settles formatting-only drift
 scripts/okf-tidy.sh                 index rows and last_updated, the bookkeeping that needs no judgement
-scripts/okf-migrate.py              inventory / resolve / convert, for a mex scaffold
 scripts/okf-shim.sh                 sole root-aware, content-pinned launcher (plugin/CI/legacy)
 scripts/okf-integrate.py            conservative plugin-only integration install/conversion
 scripts/okf-launcher-selftest.py    offline fixture-release launcher/CI/conversion contracts

@@ -17,7 +17,7 @@ description: |
 # /okf-setup — A fixed OKF knowledge bundle for a repository
 
 One of four skills in the `okf-drift` plugin: `/okf-setup` lays the bundle down in a
-repo that has none, `/okf-migrate` builds it from an existing mex scaffold,
+repo that has none, `/okf-migrate` moves an existing bundle to the split log layout,
 `/okf-write` records into it (the Grow step, with `drift link`), `/okf-read` recalls
 from it (search joined with `drift check`, so a stale concept is never served as a
 fact). Gate and recall use the model-invocable `okf-drift:okf-runtime` skill.
@@ -110,10 +110,8 @@ test -d knowledge && echo "BUNDLE EXISTS"
 - A bundle that fails on comments/placeholders → Step 4 (populate). Missing files from
   the layout above: `okf-scaffold.sh --force .` adds only what is absent, never
   overwrites.
-- A `.mex/` directory and no `knowledge/` → a migration, not a setup. The first migration (repo A) is the worked example: its plan's `Result` section
-  listed everything the plan had got wrong, and those lessons are in `/okf-migrate`. Note that bundle predates this layout (it still has the routing
-  table, a session contract and a single decisions file) — converting it is a
-  separate, mechanical task.
+- A bundle the gate fails with `log.md: not frozen` predates log entries → `/okf-migrate`
+  first (it freezes `log.md` and creates `log/`), then back here.
 
 ## Step 2 — Scaffold
 
