@@ -20,6 +20,26 @@ import unittest
 
 SCRIPTS = Path(__file__).resolve().parent
 
+GIT_ID = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+          "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+TODAY = datetime.date.today().isoformat()
+ENTRY_RE = r"knowledge/log/(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)-([0-9a-f]{4})/log\.md"
+
+
+def pin_scripts(root: Path, names: tuple[str, ...], *, fill_cache: bool = True) -> Path:
+    """A v0.7.0 lockfile in `root` pinning the working-tree bytes of `names`; the cache
+    holds those bytes when `fill_cache`. Returns the XDG cache home."""
+    cache = root / "cache/okf-drift/v0.7.0"
+    cache.mkdir(parents=True, exist_ok=True)
+    lines = ["v0.7.0"]
+    for name in names:
+        data = (SCRIPTS / name).read_bytes()
+        if fill_cache:
+            (cache / name).write_bytes(data)
+        lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
+    (root / ".okf-drift-version").write_text("\n".join(lines) + "\n")
+    return root / "cache"
+
 
 class RuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -916,6 +936,7 @@ class BootstrapTests(unittest.TestCase):
             'case "${1:-}" in\n'
             'link)\n'
             '  shift\n'
+            '  if [ -n "${DRIFT_LINK_FAIL:-}" ]; then echo "link refused by the stub" >&2; exit 1; fi\n'
             '  printf "%s\\n" "$*" >> "$DRIFT_LINK_LOG"\n'
             '  if [ ! -f "$DRIFT_LOCK" ]; then printf "version = 1\\n" > "$DRIFT_LOCK"; fi\n'
             '  {\n'
@@ -950,19 +971,14 @@ class BootstrapTests(unittest.TestCase):
             DRIFT_LOCK=str(self.root / "drift.lock"),
             PATH=str(self.stub) + os.pathsep + os.environ["PATH"],
             TMPDIR=str(self.root),
+            **GIT_ID,
         )
         self.env.pop("OKF_DRIFT_ROOT", None)
+        self.env.pop("OKF_DRIFT_SHIM", None)
         if os.environ.get("OKF_SELFTEST_PINNED") == "1":
-            cache = self.root / "cache/okf-drift/v0.7.0"
-            cache.mkdir(parents=True)
-            self.env["XDG_CACHE_HOME"] = str(self.root / "cache")
-            lines = ["v0.7.0"]
-            for name in ("okf-check.sh", "okf-recall.sh", "okf-drift-bootstrap.sh",
-                         "okf-restamp.sh", "okf-tidy.sh"):
-                data = (SCRIPTS / name).read_bytes()
-                (cache / name).write_bytes(data)
-                lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
-            (self.root / ".okf-drift-version").write_text("\n".join(lines) + "\n")
+            self.env["XDG_CACHE_HOME"] = str(pin_scripts(self.root, (
+                "okf-check.sh", "okf-recall.sh", "okf-drift-bootstrap.sh",
+                "okf-restamp.sh", "okf-tidy.sh", "okf-log.sh")))
         subprocess.run(["git", "add", "."], cwd=self.root, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -1051,16 +1067,41 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("not-code knowledge/concept.md -> scripts/build.sh (high-churn script: "
                       "hand-link only if the concept describes its logic)", result.stdout)
 
-    def stale_anchor(self) -> None:
+    HISTORY = "# Log\n\n## 2026-01-01\n* older entry\n"
+    STILL = ("* STILL ACCURATE, re-stamped `concept.md` <- `src/lib.rs#fixture` (last commit on the file: "
+             '01234567 "tighten it"): ')
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=self.root, env=self.env, check=True, capture_output=True)
+
+    def stale_anchor(self, branch: str = "alice/restamp") -> None:
+        """A stale symbol anchor, committed on `main` (= origin/HEAD), on a work branch."""
         self.drift_check_json.write_text(json.dumps({"docs": [{
             "path": "knowledge/concept.md", "result": "stale", "links": [],
             "anchors": [{"identity": "src/lib.rs#fixture", "path": "src/lib.rs", "result": "stale",
                          "reason": {"code": "changed_after_baseline", "message": "m"},
                          "blame": {"commit": "0123456789abcdef", "subject": "tighten it"}}],
         }]}))
-        (self.root / "knowledge/log.md").write_text("# Log\n\n## 2026-01-01\n* older entry\n")
+        (self.root / "knowledge/log.md").write_text(self.HISTORY)
         (self.root / "drift.lock").write_text('version = 1\n\n[[bindings]]\ndoc = "knowledge/concept.md"\n'
                                               'target = "src/lib.rs#fixture"\nsig = "fixture"\n')
+        self.git("add", ".")
+        self.git("commit", "-qm", "base")
+        self.git("branch", "-M", "main")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+        self.git("checkout", "-qb", branch)
+
+    def entries(self) -> dict[str, str]:
+        return {str(p.relative_to(self.root)): p.read_text()
+                for p in sorted((self.root / "knowledge").glob("log/*/log.md"))}
+
+    def restamp(self, note: str, *opts: str) -> subprocess.CompletedProcess[str]:
+        return self.run_script("okf-restamp.sh", *opts, "knowledge/concept.md", "src/lib.rs#fixture", note)
+
+    def assert_nothing_logged(self) -> None:
+        self.assertEqual(self.entries(), {})
+        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.HISTORY)
 
     def test_restamp_refuses_an_empty_note_and_an_unknown_binding(self) -> None:
         self.stale_anchor()
@@ -1072,21 +1113,25 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(unknown.returncode, 1, unknown.stdout + unknown.stderr)
         self.assertIn("path#symbol for a symbol anchor", unknown.stderr)
         self.assertEqual(self.link_log.read_text(), "")
-        self.assertNotIn("re-stamped", (self.root / "knowledge/log.md").read_text())
+        self.assert_nothing_logged()
 
-    def test_restamp_links_and_writes_one_line_under_today(self) -> None:
+    def test_restamp_links_and_writes_its_line_into_the_branch_entry(self) -> None:
         self.stale_anchor()
-        result = self.run_script("okf-restamp.sh", "knowledge/concept.md", "src/lib.rs#fixture",
-                                 "read fixture(): the guard the concept names is unchanged")
+        result = self.restamp("read fixture(): the guard the concept names is unchanged")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.link_log.read_text().splitlines(),
                          ["knowledge/concept.md src/lib.rs#fixture --doc-is-still-accurate"])
-        log = (self.root / "knowledge/log.md").read_text()
-        today = subprocess.run(["date", "+%F"], text=True, capture_output=True).stdout.strip()
-        self.assertTrue(log.startswith(f"# Log\n\n## {today}\n* STILL ACCURATE, re-stamped "
-                                       "`concept.md` <- `src/lib.rs#fixture` (last commit on the file: "
-                                       '01234567 "tighten it"): read fixture(): the guard'), log)
-        self.assertIn("\n\n## 2026-01-01\n* older entry\n", log)
+        [(entry, text)] = self.entries().items()
+        self.assertEqual(re.fullmatch(ENTRY_RE, entry).groups()[:2], (TODAY, "restamp"))
+        self.assertEqual(text, f"## {TODAY}\n{self.STILL}read fixture(): the guard the concept names is unchanged\n")
+        self.assertIn(entry, result.stdout)
+        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.HISTORY)
+        again = self.restamp("read fixture() a second time: still the same guard")
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertEqual(self.entries(), {entry: f"## {TODAY}\n{self.STILL}read fixture() a second time: "
+                                                 f"still the same guard\n{self.STILL}read fixture(): the guard "
+                                                 "the concept names is unchanged\n"})
+        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.HISTORY)
 
     def test_restamp_of_a_fresh_anchor_changes_nothing(self) -> None:
         # Value: protects=no link and no log line for a fresh anchor; fails_when=the fresh branch falls through to drift link; why_new=only stale anchors were tested; seam=none
@@ -1095,12 +1140,90 @@ class BootstrapTests(unittest.TestCase):
         data["docs"][0]["result"] = "fresh"
         data["docs"][0]["anchors"][0]["result"] = "fresh"
         self.drift_check_json.write_text(json.dumps(data))
-        result = self.run_script("okf-restamp.sh", "knowledge/concept.md", "src/lib.rs#fixture",
-                                 "read fixture(): nothing moved at all")
+        result = self.restamp("read fixture(): nothing moved at all")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("is fresh; nothing to re-stamp, nothing logged", result.stdout)
         self.assertEqual(self.link_log.read_text(), "")
-        self.assertNotIn("re-stamped", (self.root / "knowledge/log.md").read_text())
+        self.assert_nothing_logged()
+
+    def test_restamp_passes_entry_and_slug_through(self) -> None:
+        self.stale_anchor()
+        chosen = self.root / "knowledge/log/2026-01-02-other-abcd/log.md"
+        chosen.parent.mkdir(parents=True)
+        chosen.write_text("## 2026-01-02\n* x\n")
+        result = self.restamp("read fixture(): the guard still holds",
+                              "--entry", str(chosen.relative_to(self.root)))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(chosen.read_text(), f"## {TODAY}\n{self.STILL}read fixture(): the guard still holds\n\n"
+                                             "## 2026-01-02\n* x\n")
+        self.assertEqual(list(self.entries()), ["knowledge/log/2026-01-02-other-abcd/log.md"])
+        self.git("checkout", "-q", "--detach")
+        slugged = self.restamp("read fixture(): the guard holds on a detached head", "--slug", "hotfix")
+        self.assertEqual(slugged.returncode, 0, slugged.stdout + slugged.stderr)
+        [new] = [e for e in self.entries() if "-other-" not in e]
+        self.assertEqual(re.fullmatch(ENTRY_RE, new).group(2), "hotfix")
+
+    def test_restamp_on_a_detached_head_without_slug_refuses_and_writes_nothing(self) -> None:
+        self.stale_anchor()
+        self.git("checkout", "-q", "--detach")
+        result = self.restamp("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("detached", result.stderr)
+        self.assertIn("--slug", result.stderr)
+        self.assertEqual(self.link_log.read_text(), "")
+        self.assert_nothing_logged()
+
+    def test_a_failed_link_restores_the_entry_or_removes_the_new_folder(self) -> None:
+        self.stale_anchor()
+        self.env["DRIFT_LINK_FAIL"] = "1"
+        first = self.restamp("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(first.returncode, 1, first.stdout + first.stderr)
+        self.assertIn("drift link failed", first.stderr)
+        self.assertEqual([p.name for p in (self.root / "knowledge").glob("log/*")], [])
+        self.assert_nothing_logged()
+        del self.env["DRIFT_LINK_FAIL"]
+        ok = self.restamp("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        before = {p: (self.root / p).read_bytes() for p in self.entries()}
+        self.assertEqual(len(before), 1)
+        self.env["DRIFT_LINK_FAIL"] = "1"
+        failed = self.restamp("read fixture() again: still unchanged, but the link fails")
+        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+        self.assertEqual({p: (self.root / p).read_bytes() for p in self.entries()}, before)
+
+    def test_restamp_through_the_launcher_fetches_and_verifies_okf_log(self) -> None:
+        """An empty cache: the pinned launcher fetches okf-restamp.sh and, for its log
+        line, okf-log.sh, each checked against the pin; a damaged cached okf-log.sh fails."""
+        self.stale_anchor()
+        cache = Path(self.tmp.name) / "empty-cache"
+        pin_root = Path(tempfile.mkdtemp(prefix="pin-", dir=self.tmp.name))
+        pin_scripts(pin_root, ("okf-restamp.sh", "okf-log.sh"), fill_cache=False)
+        shutil.copy(pin_root / ".okf-drift-version", self.root / ".okf-drift-version")
+        (self.stub / "curl").write_text(
+            '#!/bin/sh\n'
+            'out=; url=\n'
+            'while [ "$#" -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -*) shift;; *) url=$1; shift;; esac; done\n'
+            f'cp "{SCRIPTS}/$(basename "$url")" "$out"\n'
+        )
+        (self.stub / "curl").chmod(0o755)
+        env = dict(self.env, XDG_CACHE_HOME=str(cache))
+        shim = ["sh", str(SCRIPTS / "okf-shim.sh"), "--repo-root", str(self.root), "okf-restamp.sh",
+                "knowledge/concept.md", "src/lib.rs#fixture"]
+
+        def run(note: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(shim + [note], cwd=self.root, env=env, text=True, capture_output=True)
+
+        result = run("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        cached = cache / "okf-drift/v0.7.0/okf-log.sh"
+        self.assertEqual(cached.read_bytes(), (SCRIPTS / "okf-log.sh").read_bytes())
+        [(entry, before)] = self.entries().items()
+        cached.write_bytes(cached.read_bytes() + b"# damaged\n")
+        damaged = run("read fixture() again: the cached writer is damaged")
+        self.assertNotEqual(damaged.returncode, 0, damaged.stdout + damaged.stderr)
+        self.assertIn("is damaged", damaged.stderr)
+        self.assertEqual(self.entries(), {entry: before})
+        self.assertEqual(len(self.link_log.read_text().splitlines()), 1)
 
     def test_tidy_handles_spaces_and_non_ascii_names(self) -> None:
         # Value: protects=dates and rows for café.md, no repeated row for a spaced name; fails_when=git status quoting or byte paths return; why_new=fixture names were ASCII; seam=none
@@ -1142,27 +1265,6 @@ class BootstrapTests(unittest.TestCase):
         gate = self.run_script("okf-check.sh", "knowledge")
         self.assertNotIn("carries a description", gate.stdout)
         self.assertNotIn("not listed in", gate.stdout)
-
-
-GIT_ID = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-          "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
-TODAY = datetime.date.today().isoformat()
-ENTRY_RE = r"knowledge/log/(\d{4}-\d{2}-\d{2})-([a-z0-9-]+)-([0-9a-f]{4})/log\.md"
-
-
-def pin_scripts(root: Path, names: tuple[str, ...], *, fill_cache: bool = True) -> Path:
-    """A v0.7.0 lockfile in `root` pinning the working-tree bytes of `names`; the cache
-    holds those bytes when `fill_cache`. Returns the XDG cache home."""
-    cache = root / "cache/okf-drift/v0.7.0"
-    cache.mkdir(parents=True, exist_ok=True)
-    lines = ["v0.7.0"]
-    for name in names:
-        data = (SCRIPTS / name).read_bytes()
-        if fill_cache:
-            (cache / name).write_bytes(data)
-        lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
-    (root / ".okf-drift-version").write_text("\n".join(lines) + "\n")
-    return root / "cache"
 
 
 class LogEntryTests(unittest.TestCase):

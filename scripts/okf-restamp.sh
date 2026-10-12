@@ -1,15 +1,21 @@
 #!/bin/sh
 # okf-restamp.sh — re-stamp drift bindings and write the log line for them.
 #
-#   okf-restamp.sh <doc> <anchor> "<what you read>" [bundle]   one reviewed re-stamp
-#   okf-restamp.sh --format-only [bundle]                      the mechanical sweep
+#   okf-restamp.sh [log options] <doc> <anchor> "<what you read>" [bundle]   one reviewed re-stamp
+#   okf-restamp.sh --format-only [log options] [bundle]                      the mechanical sweep
 #
 # Run from the REPO ROOT (default bundle: knowledge). `<anchor>` is the identity the gate
 # prints (`path#symbol` for a symbol anchor, never the bare path of one).
 #
+# The line goes into the branch's log entry, <bundle>/log/<date>-<slug>-<hex>/log.md,
+# never into the root log.md. okf-log.sh finds or creates the entry (see its header for the
+# rules) and writes it; the log options `--entry <path>`, `--slug <slug>` and `--base <ref>`
+# are passed to it unchanged. When this script runs through the pinned launcher, okf-log.sh
+# is run through it too ($OKF_DRIFT_SHIM), so it is checked against the same pin.
+#
 # REVIEWED: the anchor must be non-fresh in `drift check` right now; this runs
 # `drift link <doc> <anchor> --doc-is-still-accurate` and adds ONE line under today's
-# `## YYYY-MM-DD` heading in <bundle>/log.md naming the doc, the anchor, the last commit
+# `## YYYY-MM-DD` heading in the branch's log entry naming the doc, the anchor, the last commit
 # on the file and what you read. The re-stamp rule is unchanged — never re-stamp what you
 # did not read — but the line that proves it is written here, not composed by hand. A
 # concept you EDITED still gets its prose entry in the log; this line is for "still holds".
@@ -28,7 +34,8 @@
 #     its leading and trailing whitespace is dropped. Nothing inside a line changes; no
 #     line is added, removed, joined, split or moved.
 #
-# The log line is written BEFORE the links, and a failed link is taken back out of it: an
+# The log line is written BEFORE the links, and a failed link is taken back out of it (the
+# entry gets its bytes back, or the folder this run created is removed): an
 # interrupted run can leave a line for an anchor the gate still flags, never a re-stamp
 # with no line.
 #
@@ -53,16 +60,31 @@
 set -u
 die() { echo "okf-restamp: $*" >&2; exit 2; }
 mode=one
-if [ "${1:-}" = --compare ]; then
+# --entry/--slug/--base go to okf-log.sh unchanged; they come before the positionals.
+log_entry=; log_slug=; log_base=
+while :; do
+  case "${1:-}" in
+    --entry|--slug|--base)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 needs a value"
+      case "$1" in --entry) log_entry=$2 ;; --slug) log_slug=$2 ;; *) log_base=$2 ;; esac
+      shift 2 ;;
+    --format-only)
+      [ "$mode" = one ] || die '--format-only given twice'
+      mode=sweep; shift ;;
+    *) break ;;
+  esac
+done
+if [ "$mode" = sweep ]; then
+  [ "$#" -le 1 ] || die 'usage: okf-restamp.sh --format-only [--entry <path>] [--slug <slug>] [--base <ref>] [bundle]'
+  bundle=${1:-knowledge}
+elif [ "${1:-}" = --compare ]; then
+  [ -z "$log_entry$log_slug$log_base" ] || die '--compare takes no --entry, --slug or --base'
   [ "$#" -eq 4 ] || die 'usage: okf-restamp.sh --compare <path-as-bound> <old-file> <new-file>'
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/okf-restamp.XXXXXX") || die 'mktemp failed'
   trap 'rm -rf "$tmp"' EXIT
   mode=compare; note=$2; doc=$3; anchor=$4; bundle=.
-elif [ "${1:-}" = --format-only ]; then
-  mode=sweep; shift
-  bundle=${1:-knowledge}
 else
-  [ "$#" -ge 3 ] || die 'usage: okf-restamp.sh <doc> <anchor> "<what you read>" [bundle] | --format-only [bundle]'
+  [ "$#" -ge 3 ] || die 'usage: okf-restamp.sh [--entry <path>] [--slug <slug>] [--base <ref>] <doc> <anchor> "<what you read>" [bundle] | --format-only [bundle]'
   doc=$1; anchor=$2; note=$3; bundle=${4:-knowledge}
 fi
 if [ "$mode" != compare ]; then
@@ -79,11 +101,16 @@ if [ "$mode" != compare ]; then
 fi
 trap 'exit 2' INT TERM
 
-perl - "$mode" "$bundle" "$tmp" "$(date +%F)" "${OKF_RESTAMP_DEPTH:-40}" "${doc:-}" "${anchor:-}" "${note:-}" <<'PERL'
+# The log entry is written by okf-log.sh: through the pinned launcher when this run came
+# through it (so the writer is fetched and checked against the same pin), else beside us.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+perl - "$mode" "$bundle" "$tmp" "$(date +%F)" "${OKF_RESTAMP_DEPTH:-40}" "${doc:-}" "${anchor:-}" "${note:-}" \
+  "${OKF_DRIFT_SHIM:-}" "$here" "${top:-}" "$log_entry" "$log_slug" "$log_base" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP;
 binmode STDOUT, ':utf8'; binmode STDERR, ':utf8';
-my ($mode, $bundle, $tmp, $today, $depth, $doc, $anchor, $note) = @ARGV;
+my ($mode, $bundle, $tmp, $today, $depth, $doc, $anchor, $note,
+    $shim, $here, $top, $o_entry, $o_slug, $o_base) = @ARGV;
 utf8::decode($_) for $doc, $anchor, $note;
 sub unusable { print STDERR "okf-restamp: @_\n"; exit 2 }
 # It reaches a shell command below; anything but a count is refused, not interpolated.
@@ -124,35 +151,48 @@ sub link_accurate {
   return ($? == 0, $out);
 }
 
-# One line under today's heading, newest-first like the log itself.
-# A `## ` inside a fenced example or an HTML comment is not a heading.
+# The branch's log entry, resolved ONCE per run by `okf-log.sh path` (which prints the
+# base ref it used), then written only through `okf-log.sh add --entry` with that exact
+# path: the restore after a failed link puts back the bytes it had, or removes the folder
+# this run created. okf-log.sh inserts under today's heading, newest first.
+my @LOG = $shim ne '' ? ('sh', $shim, '--repo-root', $top, 'okf-log.sh') : ('sh', "$here/okf-log.sh");
+my ($entry, $entry_before, @entry_new_dirs);
+sub bytes { my $s = shift; utf8::encode($s); $s }
+sub run_log {   # stdout of okf-log.sh; its stderr passes through; its refusal is ours
+  my @args = map { bytes($_) } @_;
+  open my $h, '-|', @LOG, @args or unusable("cannot run okf-log.sh: $!");
+  local $/; my $out = <$h> // ''; close $h;
+  if ($?) { my $c = $? >> 8; exit($c == 1 ? 1 : 2) }
+  utf8::decode($out); $out =~ s/\n\z//;
+  return $out;
+}
+sub resolve_entry {
+  return if defined $entry;
+  my @opt = ((length $o_entry ? ('--entry', $o_entry) : ()),
+             (length $o_slug ? ('--slug', $o_slug) : ()),
+             (length $o_base ? ('--base', $o_base) : ()));
+  $entry = run_log('path', @opt, $bundle);
+  unusable("okf-log.sh printed no entry path") unless length $entry;
+  $entry_before = slurp_raw($entry);
+  (my $dir = $entry) =~ s{/log\.md\z}{};
+  (my $logdir = $dir) =~ s{/[^/]+\z}{};
+  @entry_new_dirs = grep { !-d $_ } ($dir, $logdir);
+}
 sub log_line {
   my $line = shift;
-  my $f = "$bundle/log.md";
-  my $raw = slurp_raw($f) // unusable("$f unreadable");
-  my $t = $raw; utf8::decode($t);
-  my @skip;
-  while ($t =~ /(<!--.*?-->|^[ \t]*```.*?^[ \t]*```[^\n]*$)/smg) { push @skip, [$-[0], $+[0]] }
-  my ($at, $is_today);
-  while ($t =~ /^## ([^\n]*)$/mg) {
-    my ($pos, $h) = ($-[0], $1);
-    next if grep { $pos >= $_->[0] && $pos < $_->[1] } @skip;
-    ($at, $is_today) = ($pos, $h =~ /^\Q$today\E[ \t]*$/ ? 1 : 0);
-    last;
+  resolve_entry();
+  run_log('add', '--entry', $entry, $bundle, $line);
+}
+sub restore_log {
+  if (defined $entry_before) {
+    open my $h, '>:raw', "$entry.tmp" or unusable("$entry.tmp: $!");
+    print $h $entry_before; close $h or unusable("$entry.tmp: $!");
+    rename "$entry.tmp", $entry or unusable("$entry: $!");
+  } else {
+    unlink $entry;
+    rmdir $_ for @entry_new_dirs;   # only folders this run created, and only when empty
   }
-  if (!defined $at)  { $t =~ s/\n*\z/\n\n## $today\n$line\n/ }
-  elsif ($is_today)  { my $eol = index($t, "\n", $at); $eol = length $t if $eol < 0; substr($t, $eol + 1, 0) = "$line\n" }
-  else               { substr($t, $at, 0) = "## $today\n$line\n\n" }
-  spew($f, $t);
-  return $raw;
 }
-sub spew {
-  my ($f, $t) = @_;
-  open my $h, '>:utf8', "$f.tmp" or unusable("$f.tmp: $!");
-  print $h $t; close $h or unusable("$f.tmp: $!");
-  rename "$f.tmp", $f or unusable("$f: $!");
-}
-sub restore_log { my $raw = shift; my $t = $raw; utf8::decode($t); spew("$bundle/log.md", $t) }
 sub rel { my $p = shift; $p =~ s{^\Q$bundle\E/}{}; $p }
 sub blamed {
   my $b = shift;
@@ -181,10 +221,10 @@ if ($mode eq 'one') {
   }
   # The line first: an interrupted run may leave a line with no re-stamp behind it (the
   # gate still flags the anchor), never a re-stamp with no line.
-  my $before = log_line("* STILL ACCURATE, re-stamped `" . rel($want) . "` <- `$anchor` (last commit on the file: " . blamed($hit->[4]) . "): $n");
+  log_line("* STILL ACCURATE, re-stamped `" . rel($want) . "` <- `$anchor` (last commit on the file: " . blamed($hit->[4]) . "): $n");
   my ($ok, $out) = link_accurate($want, $anchor);
-  unless ($ok) { restore_log($before); $out =~ s/\s+$//; print STDERR "okf-restamp: drift link failed: $out\n"; exit 1 }
-  print "re-stamped $want <- $anchor; logged in $bundle/log.md under $today\n";
+  unless ($ok) { restore_log(); $out =~ s/\s+$//; print STDERR "okf-restamp: drift link failed: $out\n"; exit 1 }
+  print "re-stamped $want <- $anchor; logged in $entry under $today\n";
   exit 0;
 }
 
@@ -290,14 +330,14 @@ my $sweep_line = sub {
     join('; ', map { "`" . rel($_->[0]) . "` <- `$_->[1]` ($_->[2], since $_->[3])" } @done));
 };
 if (@done) {
-  my $before = log_line($sweep_line->());
+  log_line($sweep_line->());
   my @linked;
   for my $e (@done) {
     my ($ok, $out) = link_accurate($e->[0], $e->[1]);
     if ($ok) { push @linked, $e } else { $out =~ s/\s+$//; push @read, "$e->[0] <- $e->[1] (drift link failed: $out)" }
   }
   if (@linked != @done) {
-    restore_log($before);
+    restore_log();
     @done = @linked;
     log_line($sweep_line->()) if @done;
   }
@@ -307,6 +347,6 @@ if (@done) {
   print "re-stamped  $_->[0] <- $_->[1]  ($_->[2], signed at $_->[3])\n" for @done;
 }
 print "needs reading  $_\n" for @read;
-printf "%d re-stamped as format-only%s, %d left for reading\n", scalar @done, (@done ? " (one line in $bundle/log.md)" : ''), scalar @read;
+printf "%d re-stamped as format-only%s, %d left for reading\n", scalar @done, (@done ? " (one line in $entry)" : ''), scalar @read;
 exit 0;
 PERL
