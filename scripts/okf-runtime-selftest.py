@@ -1260,6 +1260,16 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("/okf-migrate", sweep.stderr)
         self.assert_nothing_logged()
 
+    def test_restamp_agrees_with_okf_log_on_a_bundle_with_no_root_log(self) -> None:
+        """okf-log.sh alone judges whether the bundle can take a log entry."""
+        self.stale_anchor()
+        (self.root / "knowledge/log.md").unlink()
+        result = self.restamp("read fixture(): the guard the concept names is unchanged")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.entries()), 1)
+        sweep = self.run_script("okf-restamp.sh", "--format-only")
+        self.assertEqual(sweep.returncode, 0, sweep.stdout + sweep.stderr)
+
     def test_restamp_refuses_an_empty_note_and_an_unknown_binding(self) -> None:
         self.stale_anchor()
         short = self.run_script("okf-restamp.sh", "knowledge/concept.md", "src/lib.rs#fixture", "ok")

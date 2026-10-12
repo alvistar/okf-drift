@@ -89,13 +89,6 @@ else
 fi
 if [ "$mode" != compare ]; then
   [ -d "$bundle" ] || die "no bundle at $bundle (run from the repository root)"
-  [ -f "$bundle/log.md" ] || die "$bundle/log.md is missing"
-  # An unmigrated bundle (a root log.md with no frozen-log marker) has no log entries yet:
-  # refused before anything is linked or written. The marker is okf-log.sh's.
-  grep -Eq '^<!-- okf-log frozen [0-9]{4}-[0-9]{2}-[0-9]{2} sha256:[0-9a-f]{64} -->' "$bundle/log.md" || {
-    echo "okf-restamp: $bundle/log.md is not frozen yet, so there is no log entry to write: run /okf-migrate first" >&2
-    exit 1
-  }
   command -v drift >/dev/null 2>&1 || die 'drift not on PATH'
   [ -f drift.lock ] || die 'no drift.lock at the repository root'
   top=$(git rev-parse --show-toplevel 2>/dev/null) || die 'not a git repository'
@@ -187,7 +180,8 @@ sub resolve_entry {
 sub log_line {
   my $line = shift;
   resolve_entry();
-  run_log('add', '--entry', $entry, $bundle, $line);
+  # --slug again, so a --slug entry is written as one (no branch comment).
+  run_log('add', '--entry', $entry, (length $o_slug ? ('--slug', $o_slug) : ()), $bundle, $line);
 }
 sub restore_log {
   if (defined $entry_before) {
@@ -199,6 +193,11 @@ sub restore_log {
     rmdir $_ for @entry_new_dirs;   # only folders this run created, and only when empty
   }
 }
+# Whether the bundle can take a log entry at all (an unmigrated one cannot: refused,
+# naming /okf-migrate) is okf-log.sh's call alone, asked before anything is linked and
+# even when nothing will be settled. The probe names an entry by its form only, so no
+# lookup runs, no branch rule applies and nothing is written.
+run_log('path', '--entry', "$bundle/log/$today-probe-0000/log.md", $bundle);
 sub rel { my $p = shift; $p =~ s{^\Q$bundle\E/}{}; $p }
 sub blamed {
   my $b = shift;
