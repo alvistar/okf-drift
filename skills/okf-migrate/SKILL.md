@@ -138,8 +138,12 @@ python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" --repo-root "$REPO_ROOT" --tag v
 
 `REPO_ROOT` is the absolute target repository root. Use the newest released tag at or
 above v0.15.0 in place of `v0.15.0`. The preview prints a `write …` line per file it
-would change and writes nothing. When it exits 0, show the user the files it names, run
-the same command without `--dry-run`, and show `git diff` on them.
+would change and writes nothing. When it exits 0, show the user, before anything is
+written, what each named file becomes: for `CLAUDE.md`, a diff of its `Knowledge Bundle`
+and `Work Loop` sections against the template's
+(`$PLUGIN_ROOT/skills/okf-setup/templates/CLAUDE-knowledge-section.md`); for the workflow,
+`diff -u` against `$PLUGIN_ROOT/skills/okf-setup/templates/knowledge.yml`; for the pin,
+the new tag. Wait for an OK, then run the same command without `--dry-run`.
 
 When it refuses with `customized … section; merge explicitly` or `customized workflow;
 merge explicitly`, it wrote nothing, the pin included. The repository changed an official

@@ -48,8 +48,8 @@ verdict and never an exit code.
 
 **Read-repair.** When a concept an agent relies on contradicts the code, the code wins:
 the agent fixes the concept with an ordinary `/okf-write` edit if the session writes the
-repository, and says so in its answer otherwise. There is no re-verification field and
-no dedicated log line.
+repository, and says so in its answer otherwise. No field records the check, and the
+branch's log entry records only the edit.
 
 **The gate** (`scripts/okf-check.sh`) is the six steps `okf validate --strict --drift
 --stale` does not do: its own warning list treated as fatal (a dead `code_refs` path is a

@@ -66,9 +66,10 @@ parent=$(dirname "$bundle")
 # The profile says what the bundle describes. `code` (the default, no file) is a software
 # repository: concepts govern code paths and a state snapshot is expected. `wiki` is a
 # bundle that describes no code — a personal or company knowledge base — where `code_refs`
-# is meaningless and a project snapshot does not exist. Declared by `.okf-profile` beside the bundle, one word. Anything else fails closed:
-# a misspelt profile silently falling back to `code` would bury a wiki in warnings, and one
-# falling back to `wiki` would switch off the checks a code repository relies on.
+# is meaningless and a project snapshot does not exist. Declared by `.okf-profile` beside
+# the bundle, one word. Anything else fails closed: a misspelt profile silently falling
+# back to `code` would bury a wiki in warnings, and one falling back to `wiki` would switch
+# off the checks a code repository relies on.
 profile=code
 if [ -f "$parent/.okf-profile" ]; then
   profile=$(tr -d '[:space:]' < "$parent/.okf-profile")
@@ -78,8 +79,8 @@ if [ -f "$parent/.okf-profile" ]; then
   esac
 fi
 # okf's JSON reaches perl through a FILE, never argv. Linux caps a SINGLE argument at
-# MAX_ARG_STRLEN (131072 bytes) independently of ARG_MAX, and a large bundle's report
-# passes that (a drift report on ~48 anchors measured 183806 bytes). macOS has no comparable
+# MAX_ARG_STRLEN (131072 bytes) independently of ARG_MAX, and a large report passes that
+# (measured in 0.6.1 on a JSON report of 183806 bytes). macOS has no comparable
 # per-argument cap, so this only ever fails in Linux CI, as `exec: perl: Argument list too
 # long`, exit 126 — a green local run proves nothing about it.
 #
@@ -89,11 +90,11 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/okf-check.XXXXXX") || { echo "okf-check: cannot
 trap 'rm -rf "$tmp"' EXIT INT TERM
 printf '%s' "$json" > "$tmp/okf.json" || exit 2
 
-perl - "$bundle" "$tmp/okf.json" "$parent" "$okf_status" "$profile" "$shell_warns" "$( [ -f "$parent/drift.lock" ] && echo 1 || echo 0 )" <<'PERL'
+perl - "$bundle" "$tmp/okf.json" "$parent" "$okf_status" "$profile" "$shell_warns" <<'PERL'
 use strict; use warnings; use utf8;
 use JSON::PP; use File::Find; use File::Basename; use Time::Local qw(timegm); use Digest::SHA qw(sha256_hex);
 binmode STDOUT, ':utf8';
-my ($bundle, $json_file, $parent, $okf_status, $profile, $shell_warns, $has_lock) = @ARGV;
+my ($bundle, $json_file, $parent, $okf_status, $profile, $shell_warns) = @ARGV;
 # A wiki is relieved of the code-only expectations: the snapshot and code_refs.
 my $wiki = ($profile // 'code') eq 'wiki';
 # Read as raw bytes and decode explicitly: decode_json expects UTF-8 octets, and a
@@ -108,8 +109,7 @@ sub slurp{ my $f=shift; open my $h,'<:utf8',$f or die "$f: $!"; local $/; <$h> }
 my $ISO = qr/^\d{4}-\d{2}-\d{2}$/;
 my $STATE_ITEM_MAX = 300;
 # The snapshot and its evidence are prose about the project, not about code: they are
-# expected to carry no code_refs, and warning about them every run
-# teaches skimming.
+# expected to carry no code_refs, and warning about them every run teaches skimming.
 my $EXEMPT = qr{^project/state(?:-evidence)?\.md$};
 my (@no_code_refs, @open_questions, @review_due);
 # Review notice. okf --stale fails a concept ON its stale_after date (measured on v0.6.0:
@@ -127,9 +127,9 @@ my $today_days = do { my @t = gmtime; int(timegm(0, 0, 0, $t[3], $t[4], $t[5] + 
 my $OPEN_QUESTION = qr/\[(?:TO VERIFY|DA VERIFICARE)\]/;
 
 # One `warn` line per diagnostic, not one per concept: 29 identical lines are read as
-# noise. The list is
-# capped too: the same names reprinted on every run were ~500 lines across the reference
-# consumers' sessions, read and ignored each time. OKF_VERBOSE=1 prints them all.
+# noise. The list is capped too: the same names reprinted on every run were ~500 lines
+# across the reference consumers' sessions, read and ignored each time. OKF_VERBOSE=1
+# prints them all.
 my $GROUP_MAX = 8;
 sub grouped {
   my ($label, @members) = @_;
@@ -317,8 +317,9 @@ if (-f "$bundle/project/state.md") {
 } elsif (!$wiki) { warnl("project/state.md: absent — the session bootstrap has no snapshot to read") }
 
 # 6. A leftover drift.lock: drift is gone (ADR 0002), and the lock means /okf-migrate
-# has not run here.
-bad("drift.lock found: drift is no longer used, run /okf-migrate") if $has_lock;
+# has not run here. drift kept it at the repository root, where the gate runs; beside
+# the bundle too, for a bundle whose parent is not the root.
+bad("drift.lock found: drift is no longer used, run /okf-migrate") if -f 'drift.lock' || -f "$parent/drift.lock";
 
 grouped("with empty code_refs (okf search --for-path cannot find them)", @no_code_refs);
 grouped("with an open question ([TO VERIFY] / [DA VERIFICARE]) — confirm or remove", @open_questions);

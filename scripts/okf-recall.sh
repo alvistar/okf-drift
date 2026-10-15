@@ -86,7 +86,8 @@ my $hits = eval { decode_json(slurp_raw($search_file)) };
 unusable("okf search produced no valid JSON array") unless ref $hits eq 'ARRAY';
 
 # One read of the concept's frontmatter: status and stale_after as scalars, code_refs as
-# a list (block `- path` items or an inline `[a, b]`).
+# a list (block `- path` items, indented or not, or an inline `[a, b]`). A `#symbol`
+# fragment is cut off: git takes the file as the pathspec.
 sub frontmatter {
   my $f = shift;
   open my $h, '<:utf8', $f or return {};
@@ -99,9 +100,11 @@ sub frontmatter {
       if ($cur eq 'code_refs' && $val =~ /^\[(.*)\]$/) { push @refs, split /\s*,\s*/, $1 }
       elsif (length $val) { $val =~ s/^(["'])(.*)\1$/$2/; $k{$cur} = $val }
     }
-    elsif (($cur // '') eq 'code_refs' && $line =~ /^\s+-\s+(.*?)\s*$/) { push @refs, $1 }
+    elsif (($cur // '') eq 'code_refs' && $line =~ /^\s*-\s+(.*?)\s*$/) { push @refs, $1 }
   }
-  $k{code_refs} = [ grep { length } map { (my $r = $_) =~ s/^(["'])(.*)\1$/$2/; $r } @refs ];
+  my %seen;
+  $k{code_refs} = [ grep { length && !$seen{$_}++ }
+                    map { (my $r = $_) =~ s/^(["'])(.*)\1$/$2/; $r =~ s/#.*//; $r } @refs ];
   return \%k;
 }
 sub git_out {

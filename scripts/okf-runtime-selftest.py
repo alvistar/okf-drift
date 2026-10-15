@@ -190,6 +190,23 @@ class RuntimeTests(unittest.TestCase):
         result = self.run_script("okf-recall.sh")
         self.assertIn(f'1 commit(s) on src/lib/ (last {sha}', result.stdout)
 
+    def test_recall_reads_unindented_code_refs_items(self) -> None:
+        """The setup templates write `code_refs:` items at column zero."""
+        self.concept("architecture/core", status="stable")
+        path = self.bundle / "architecture/core.md"
+        path.write_text(path.read_text().replace("status: stable\n", "status: stable\ncode_refs:\n- src/lib/a.rs\n"))
+        self.two_hits()
+        self.commit("write the concept", {"src/lib/a.rs": "a\n"})
+        sha = self.commit("touch a", {"src/lib/a.rs": "a2\n"})
+        result = self.run_script("okf-recall.sh")
+        self.assertIn(f"1 commit(s) on src/lib/a.rs (last {sha}", result.stdout)
+
+    def test_recall_counts_a_code_ref_with_a_symbol_fragment_on_its_file(self) -> None:
+        self.hint_fixture("src/lib/a.rs#run")
+        sha = self.commit("touch a", {"src/lib/a.rs": "a2\n"})
+        result = self.run_script("okf-recall.sh")
+        self.assertIn(f"1 commit(s) on src/lib/a.rs (last {sha}", result.stdout)
+
     def test_recall_shows_no_change_hint_without_code_refs(self) -> None:
         self.hint_fixture()
         self.commit("touch a", {"src/lib/a.rs": "a2\n"})
@@ -460,6 +477,14 @@ class RuntimeTests(unittest.TestCase):
                 (self.root / "drift.lock").write_text("version = 1\n")
                 out = self.assert_gate_fails("FAIL  drift.lock found: drift is no longer used, run /okf-migrate")
                 self.assertNotIn("okf gate passed", out)
+
+    def test_a_leftover_drift_lock_at_the_root_fails_a_nested_bundle(self) -> None:
+        (self.root / "docs").mkdir()
+        shutil.move(str(self.bundle), self.root / "docs/knowledge")
+        (self.root / "drift.lock").write_text("version = 1\n")
+        result = self.run_script("okf-check.sh", "docs/knowledge")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("drift.lock found", result.stdout)
 
     def test_a_gate_without_drift_lock_passes_with_no_drift_on_path(self) -> None:
         self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",

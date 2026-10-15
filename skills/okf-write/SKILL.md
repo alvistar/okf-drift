@@ -141,8 +141,8 @@ the writing rule above.
 When a concept you relied on this session — opened and used its content — says one thing
 and the code says another, **the code wins**. If this session already writes the
 repository, fix the concept here as a surgical edit and log it with `okf-log.sh add` like
-any other edit: what the concept said, what the code says, where. There is no separate
-log line and no field to stamp. In a session that writes nothing, do not start writing to
+any other edit: what the concept said, what the code says, where. The log entry gets no
+other record of it, and no field is stamped. In a session that writes nothing, do not start writing to
 fix it: say in the answer which concept and which code disagree.
 
 A concept that only appeared in a result list, and one with no visible contradiction,
