@@ -7,6 +7,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [0.15.0] - 2026-10-15
+
+A drift signature changes whenever the bound code changes, but a function can change
+without what it does changing: on the reference consumer 62% of signature changes were a
+re-stamp alone, and freshness-checked recall never returned a STALE concept in 49 calls.
+This release removes drift. The code is the source of truth; the bundle holds what the
+code does not say. ADR 0002 records the choice and its measurements.
+
+### Removed
+
+- **drift.** The gate no longer runs `drift check`; its coverage warning ("no tracked
+  target") and `OKF_REQUIRE_TRACKING` are gone with it. `okf validate --drift`, okf's own
+  check for a dead `code_refs` path, stays.
+- `okf-restamp.sh`, `okf-lock-merge.py` and `okf-drift-bootstrap.sh`, and the re-stamp
+  rule in `/okf-write`. A release's `SHA256SUMS` no longer has to carry the bootstrap.
+
+### Added
+
+- **Change hint.** `okf-recall.sh` prints, under a hit whose `code_refs` were touched by
+  commits after the concept's last commit, how many and the last one. It is counted from
+  the commit, not from `last_updated`, which cannot order two commits of one day. It
+  obliges nobody to do anything.
+- **Read-repair.** When a concept an agent relies on contradicts the code, the code wins;
+  the agent fixes the concept with an ordinary `/okf-write` edit if it is writing the
+  repository, and says so in its answer otherwise.
+- **Writing rule** for every concept: never restate what the code says (signatures,
+  defaults, step lists, numbers, field lists); name where it lives and say why.
+- The gate fails while a `drift.lock` is left: `drift.lock found: drift is no longer used,
+  run /okf-migrate`.
+- `/okf-migrate` explains moving a repository off drift: delete `drift.lock`, update the CI
+  workflow and the `CLAUDE.md` sections (through `okf-integrate.py`, which now accepts the
+  v0.14.0 templates as official), re-pin, and review the concepts against the writing rule.
+
+### Changed
+
+- Recall prints two signals per hit, `status · review`; the tracking signal and STALE are
+  gone.
+
 ## [0.14.0] - 2026-10-12
 
 Every PR wrote the bundle's `log.md`, so merging one PR conflicted every other open PR:

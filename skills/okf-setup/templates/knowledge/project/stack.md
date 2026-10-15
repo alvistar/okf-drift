@@ -23,8 +23,9 @@ stale_after: {{STALE_6M}}
      Replace every annotation comment with content from this codebase, then delete it. -->
 
 ## Core Technologies
-<!-- Primary language, framework, runtime — with the version where it matters.
-     Example: - **Python 3.11** — primary language; - **FastAPI** — web framework, async by default -->
+<!-- Primary language, framework, runtime. The manifest holds the exact versions: name
+     the manifest, and a version only where it constrains what can be done.
+     Example: - **Python** (pyproject.toml) — primary language; - **FastAPI** — web framework, async by default -->
 
 ## Key Libraries
 <!-- Libraries central to how this project works, where the agent must know "we use

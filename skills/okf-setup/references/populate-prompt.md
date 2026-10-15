@@ -7,7 +7,7 @@ repository; the agent writes the concepts directly and finishes with the gate.
 Hand-written documentation already in the repo (a README, `docs/`, an ADR directory)
 is **referenced, not duplicated**: the concept summarises and links, and lists the
 source under `sources:`. Say so explicitly when you hand over the prompt, or the agent
-will paraphrase the README into `architecture.md` and the two will drift apart.
+will paraphrase the README into `architecture.md` and the two will diverge.
 
 ---
 
@@ -33,7 +33,15 @@ PASS 1 — Context concepts.
 Replace every annotation comment in the four context concepts with content from
 THIS codebase, and delete the comment — the gate fails on a comment left behind,
 and search indexes comment text. Follow each annotation's guidance on what
-belongs there. Use actual names and commands. Do not pad: a section with one
+belongs there. Use actual names.
+The writing rule, for every concept in every pass: the code is the source of
+truth, so a concept holds what the code does NOT say — why, invariants, traps,
+conventions, how to behave, and where to look (`code_refs` and the names of
+the files and symbols to read). It never restates what the code says:
+signatures, defaults, step lists, numbers, field lists, versions read from a
+manifest. Name where such a fact lives instead. A fact that must be quoted from
+the code is a dated observation ("on <today>, <file> retries 3 times").
+Do not pad: a section with one
 true item has one item; a section with nothing true yet says so in one line
 ("None recorded yet."). Reserve "[TO DETERMINE]" for a fact you could not
 establish, and add one line on what would establish it.
@@ -41,20 +49,17 @@ establish, and add one line on what would establish it.
   goes in the category index row, verbatim.
 - `tags:` 4-8 lowercase words a task description would contain when this is
   the concept to load.
-- `code_refs:` repo-relative paths this concept GOVERNS — the ones
-  `okf search --for-path` should answer with it. They may be any governed paths;
-  only code paths get a drift binding. Write the file path here, never
-  `path#Symbol`; a symbol anchor belongs in `drift.lock` via `drift link`.
-  Use narrow directories or boundary files, not `src/` on everything. Every path
-  must exist.
-- A standing claim whose truth lives in a NON-code path — a workflow trigger, a
-  Kconfig value, a fixture's shape — takes no automatic binding: hand-link that
-  path with `drift link` and accept that a reformat will alarm, or write the
-  claim as a dated observation instead.
+- `code_refs:` repo-relative paths this concept GOVERNS — where a reader
+  should look, and the ones `okf search --for-path` should answer with it.
+  File or directory paths only, never `path#Symbol` (okf reads it as a missing
+  path); name the symbol in the prose. Use narrow directories or boundary files,
+  not `src/` on everything: recall shows a change hint for every commit under
+  them. Every path must exist.
 - `sources:` the docs or files the content came from, each as
   `- resource: <repo-relative path or URL>` — okf --strict rejects a bare string.
 - `last_updated:` today; keep the `stale_after:` the scaffold set.
-- stack says WHAT and under which constraints; the WHY goes to decisions/.
+- stack says WHAT and under which constraints, pointing at the manifest for
+  versions; the WHY goes to decisions/.
 - Existing documentation: summarise and link, never copy.
 
 If a domain is deep enough that architecture.md would go long or shallow, add
@@ -83,7 +88,9 @@ PASS 3 — Playbooks.
 Using the format at the top of playbooks/index.md, write 3-5 playbooks: the 1-2
 tasks a developer does most often, the 1-2 integrations with the least obvious
 gotchas, 1 debug playbook for the most common failure boundary. Real paths,
-real commands, real verify steps from what you read. Each links to the concept
+real commands, real verify steps from what you read; where a step list already
+lives in a script or a Makefile target, name it and say when and why to run it
+rather than copying its steps. Each links to the concept
 it depends on and has a row in playbooks/index.md with the description
 verbatim. No more than that — the Work Loop adds playbooks from real work.
 

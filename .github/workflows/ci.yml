@@ -75,25 +75,21 @@ jobs:
         with:
           go-version: '1.26'
 
-      # The same two pinned installs the CI template hands to a consumer repo.
-      - name: okf v0.6.0 and drift v0.10.1, pinned
+      # The same pinned okf the CI template hands to a consumer repo.
+      - name: okf v0.6.0, pinned
         run: |
           go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0
-          curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version v0.10.1
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - run: okf version && drift --version
+      - run: okf version
 
       # The stubbed selftests prove the scripts' own logic; they cannot prove that the
-      # REAL parsers still emit what those stubs pretend. This drives one scratch repo
-      # through the whole loop with the pinned okf and the pinned drift: the three recall
-      # signals, a deprecated concept with an expired review date, a moved SYMBOL anchor
-      # marked STALE, the gate's printed re-stamp command EXECUTED (okf-restamp.sh, with its
-      # log line), the lock holding one binding afterwards — the binding it already had, not
-      # a second whole-file one — and the format-only sweep settling a reindented C file
-      # while leaving a Rust trailing comma (a token change) and a real C change for reading.
-      - name: recall's three signals and the gate's repair, through the real tools
+      # REAL okf still emits what those stubs pretend. This drives one scratch repo through
+      # the loop with the pinned okf: recall's two signals, a deprecated concept with an
+      # expired review date, the change hint after a commit under a concept's code_refs
+      # (the gate stays green: a hint is not a failure), and a leftover drift.lock failing
+      # the gate with the name of /okf-migrate.
+      - name: recall's signals and change hint, and the gate, through the real okf
         run: |
           set -eu
           W="${GITHUB_WORKSPACE:-$PWD}"
@@ -104,12 +100,7 @@ jobs:
           mkdir -p src knowledge/architecture knowledge/playbooks knowledge/project
           cat > src/lib.rs <<'RS'
           pub fn admit_reusable(x: u32) -> u32 {
-              // the check the concept describes
               x + 1
-          }
-
-          pub fn unrelated(y: u32) -> u32 {
-              y
           }
           RS
 
@@ -143,7 +134,7 @@ jobs:
           ---
           # Core
 
-          `admit_reusable` enforces the ceiling.
+          Admission enforces a ceiling: look in `src/lib.rs` for where.
 
           ## Related
 
@@ -204,125 +195,51 @@ jobs:
           MD
 
           git add -A && git commit -qm "scratch bundle"
-          # The scratch commit is what origin/HEAD names, and the work happens on a branch:
-          # the re-stamps below write that branch's log entry, never the root log.md.
-          git update-ref refs/remotes/origin/main HEAD
-          git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
-          git checkout -qb ci/restamp
-          root_log=$(cat knowledge/log.md)
-
-          # ONE deliberate SYMBOL binding. `path` (src/lib.rs) and `identity`
-          # (src/lib.rs#admit_reusable) differ here, which is the whole point of the printed
-          # re-stamp command asserted below.
-          drift link knowledge/architecture/core.md 'src/lib.rs#admit_reusable'
 
           say() { printf '\n== %s ==\n' "$1"; }
           fail() { echo "::error::$1"; exit 1; }
           has() { printf '%s\n' "$2" | grep -qF "$1"; }
 
-          say "recall on a clean tree prints three independent signals per hit"
+          say "recall on an untouched tree prints status and review, and no change hint"
           out=$(sh "$W/scripts/okf-recall.sh" "admission ceiling" knowledge)
           printf '%s\n' "$out"
-          has '1 target unchanged · no status · review current' "$out" \
-            || fail "tracking/lifecycle/review signals missing for the bound concept"
-          has 'no tracked target · deprecated · review expired 2026-02-01' "$out" \
-            || fail "signals missing for the deprecated, unbound, expired concept"
-          has '"targets unchanged" means the code under the anchors did not move.' "$out" \
-            || fail "the explanatory paragraph did not print"
-          if has 'fresh hit' "$out"; then fail "the header still calls its hits fresh"; fi
+          has 'no status · review current' "$out" || fail "signals missing for the core concept"
+          has 'deprecated · review expired 2026-02-01' "$out" \
+            || fail "signals missing for the deprecated, expired concept"
+          if has 'code changed since' "$out"; then fail "a change hint on code nobody moved"; fi
 
           # `okf validate --stale` treats an expired `stale_after` as a finding, and this gate treats
           # okf's warnings as fatal — so the same bundle cannot both demonstrate `review expired` and
           # be green. Move the date forward now that recall has been asserted against it.
           say "bump the expired review date so the gate can be green"
           perl -pi -e 's/^stale_after: 2026-02-01$/stale_after: 2099-02-01/' knowledge/playbooks/superseded-way.md
+          git commit -qam "review the superseded way"
 
-          say "the gate is green before anything moves"
+          say "the gate is green"
           gate=$(sh "$W/scripts/okf-check.sh" knowledge) || { printf '%s\n' "$gate"; fail "the gate was not green on an untouched bundle"; }
           printf '%s\n' "$gate"
           has 'ok    knowledge:' "$gate" || fail "the gate printed no ok line"
-          has '1 concept(s) with no tracked target (no drift anchor; nothing checks them): playbooks/superseded-way.md' "$gate" \
-            || fail "the coverage warning is missing or names the wrong concepts"
           has '1 concept(s) with empty code_refs (okf search --for-path cannot find them): playbooks/superseded-way.md' "$gate" \
             || fail "the discoverability warning is missing or names the wrong concepts"
-          if has 'project/state.md' "$gate"; then fail "the state snapshot is exempt from both lists"; fi
+          if has 'project/state.md' "$gate"; then fail "the state snapshot is exempt from the code_refs list"; fi
 
-          say "move the anchored symbol: recall must mark it STALE"
-          perl -pi -e 's/    x \+ 1/    x + 2/' src/lib.rs
+          say "commit under the concept's code_refs: recall shows a change hint, the gate stays green"
+          perl -pi -e 's/x \+ 1/x + 2/' src/lib.rs
+          git commit -qam "raise the ceiling"
           out=$(sh "$W/scripts/okf-recall.sh" "admission ceiling" knowledge)
           printf '%s\n' "$out"
-          has 'STALE: code moved after it was written' "$out" || fail "a moved anchor was not marked STALE"
-          has 'src/lib.rs#admit_reusable  [changed_after_baseline]' "$out" \
-            || fail "the stale hit did not name the anchor identity"
-          has 'last commit touching this file (not necessarily the cause):' "$out" \
-            || fail "blame is not labelled as the last commit touching the file"
+          has 'code changed since this concept: 1 commit(s) on src/lib.rs' "$out" || fail "no change hint after a commit under code_refs"
+          has '"raise the ceiling"' "$out" || fail "the hint does not name the last commit"
+          has 'the code wins' "$out" || fail "the read-repair note did not print"
+          sh "$W/scripts/okf-check.sh" knowledge >/dev/null || fail "a change hint turned the gate red"
 
-          say "the gate fails and prints a re-stamp command naming the exact binding"
-          gate=$(sh "$W/scripts/okf-check.sh" knowledge) && fail "the gate passed over a moved anchor"
-          printf '%s\n' "$gate"
-          has "okf-restamp.sh 'knowledge/architecture/core.md' 'src/lib.rs#admit_reusable' '<what you read>'" "$gate" \
-            || fail "the printed re-stamp command does not name the symbol identity"
-          if has "okf-restamp.sh 'knowledge/architecture/core.md' 'src/lib.rs' " "$gate"; then
-            fail "the gate printed a whole-file repair for a symbol anchor"
-          fi
-          has 'drifted from src/lib.rs#admit_reusable' "$gate" || fail "the drifted-from line lost the identity"
-
-          say "execute exactly what it printed, with a note"
-          cmd=$(printf '%s\n' "$gate" | sed -n "s/^ *read the concept against the code; if it holds: okf-restamp.sh \(.*\) '<what you read>'.*/\1/p" | head -1)
-          [ -n "$cmd" ] || fail "could not extract the printed command"
-          echo "+ okf-restamp.sh $cmd 'read admit_reusable: the ceiling check still holds'"
-          eval "sh '$W/scripts/okf-restamp.sh' $cmd 'read admit_reusable: the ceiling check still holds'"
-          set -- knowledge/log/*-restamp-*/log.md
-          [ "$#" = 1 ] && [ -f "$1" ] || { ls -R knowledge; fail "expected one log entry for the branch, found: $*"; }
-          entry=$1
-          grep -qF '* STILL ACCURATE, re-stamped `architecture/core.md` <- `src/lib.rs#admit_reusable`' "$entry" \
-            || { cat "$entry"; fail "the re-stamp wrote no line in the log entry"; }
-          [ "$(cat knowledge/log.md)" = "$root_log" ] || { cat knowledge/log.md; fail "the re-stamp wrote the root log.md"; }
-
-          say "the gate is green again, and the lock holds exactly one binding for that doc"
-          gate=$(sh "$W/scripts/okf-check.sh" knowledge) || { printf '%s\n' "$gate"; fail "the printed command did not restore a green gate"; }
-          printf '%s\n' "$gate" | tail -3
-          n=$(grep -c '^doc = "knowledge/architecture/core.md"$' drift.lock)
-          [ "$n" = "1" ] || { cat drift.lock; fail "expected 1 binding for the doc, found $n"; }
-          grep -qF 'target = "src/lib.rs#admit_reusable' drift.lock || { cat drift.lock; fail "the re-stamped binding is not the symbol one"; }
-          if grep -qE '^target = "src/lib\.rs"$' drift.lock; then cat drift.lock; fail "the repair added a whole-file binding"; fi
-
-          say "OKF_REQUIRE_TRACKING makes coverage fatal for the paths it names, and only those"
-          if OKF_REQUIRE_TRACKING='playbooks/*' sh "$W/scripts/okf-check.sh" knowledge >/dev/null 2>&1; then
-            fail "OKF_REQUIRE_TRACKING did not make an untracked concept fatal"
-          fi
-          OKF_REQUIRE_TRACKING='architecture/*' sh "$W/scripts/okf-check.sh" knowledge >/dev/null \
-            || fail "OKF_REQUIRE_TRACKING fired on a glob that matches only a tracked concept"
-
-          say "the sweep settles a reindented C file, and leaves token changes for reading"
-          printf 'int ceiling(void) {\n\treturn 8;\n}\n' > src/ceiling.c
-          drift link knowledge/architecture/core.md src/ceiling.c
-          git add -A && git commit -qm "re-stamped; a C file bound"
-          printf 'int ceiling(void) {\n    return 8;  \n}\n' > src/ceiling.c
-          perl -pi -e 's/admit_reusable\(x: u32\)/admit_reusable(x: u32,)/' src/lib.rs
-          git commit -qam "clang-format and rustfmt"
-          sh "$W/scripts/okf-check.sh" knowledge >/dev/null && fail "drift did not flag the two changes"
-          out=$(sh "$W/scripts/okf-restamp.sh" --format-only knowledge)
-          printf '%s\n' "$out"
-          has '1 re-stamped as format-only' "$out" || fail "the sweep did not settle a reindent"
-          has 're-stamped  knowledge/architecture/core.md <- src/ceiling.c' "$out" || fail "the wrong anchor was settled"
-          has 'needs reading  knowledge/architecture/core.md <- src/lib.rs#admit_reusable (a language the sweep never settles)' "$out" \
-            || fail "a Rust token change was settled without reading"
-          set -- knowledge/log/*/log.md
-          [ "$#" = 1 ] && [ "$1" = "$entry" ] || fail "the sweep did not reuse the branch's entry: $*"
-          grep -qF '* FORMAT-ONLY, re-stamped mechanically' "$entry" || { cat "$entry"; fail "the sweep wrote no line in the log entry"; }
-          [ "$(cat knowledge/log.md)" = "$root_log" ] || { cat knowledge/log.md; fail "the sweep wrote the root log.md"; }
-          git add -A && git commit -qm "swept"
-          perl -pi -e 's/return 8;/return 9;/' src/ceiling.c
-          git commit -qam "a real change"
-          out=$(sh "$W/scripts/okf-restamp.sh" --format-only knowledge)
-          printf '%s\n' "$out"
-          has '0 re-stamped as format-only' "$out" || fail "the sweep re-stamped a real change"
-          has 'needs reading  knowledge/architecture/core.md <- src/ceiling.c' "$out" \
-            || fail "the sweep did not list the real change for reading"
+          say "a leftover drift.lock fails the gate, naming /okf-migrate"
+          printf 'version = 1\n' > drift.lock
+          gate=$(sh "$W/scripts/okf-check.sh" knowledge) && fail "the gate passed with a drift.lock"
+          has 'drift.lock found: drift is no longer used, run /okf-migrate' "$gate" || { printf '%s\n' "$gate"; fail "the drift.lock failure does not name /okf-migrate"; }
 
           echo
-          echo "ok — real okf and real drift agree with the stubbed selftests"
+          echo "ok — the real okf agrees with the stubbed selftests"
 
       # Four content-pin properties, against a real tag so the fetch is real. (a) and (b)
       # FAIL against the 0.5.1 shim, which validated a download only by "first line starts
@@ -334,68 +251,6 @@ jobs:
       # The offline launcher suite above checks explicit development override, failed
       # downloads, pin generation and actual consumer CI bootstrap with fixture releases.
       # This does not depend on publishing the very version being tested.
-
-      # Regression, 0.6.1. The gate used to hand `drift check`'s JSON to perl as an
-      # ARGUMENT. Linux caps a single argument at MAX_ARG_STRLEN — 131072 bytes, 32 pages —
-      # independently of ARG_MAX, so a large enough bundle killed the gate with
-      # `exec: perl: Argument list too long`, exit 126. macOS has no comparable cap, so
-      # every developer machine was green and the first CI run in a consumer repo was red.
-      # A stub drift is the point here, not a shortcut: the trigger is the SIZE of that one
-      # argument, and reproducing it from a real bundle would need hundreds of anchors.
-      - name: a >131KB drift report does not blow the argument limit
-        run: |
-          set -eu
-          repo=$(mktemp -d)
-          scripts/okf-scaffold.sh --name "ArgLimit" "$repo" >/dev/null
-          # Pad with docs OUTSIDE the bundle: step 6 skips them, so this measures the
-          # argument size and nothing else. One real in-bundle doc keeps $checked non-zero.
-          python3 - "$repo/drift-big.json" <<'PY'
-          import json, sys
-          docs = [{"path": "knowledge/index.md", "result": "fresh", "anchors": [], "links": []}]
-          docs += [{"path": f"pad/{i:06d}.md", "result": "fresh", "anchors": [], "links": []}
-                   for i in range(4000)]
-          blob = json.dumps({"schema_version": "drift.check.v1",
-                             "summary": {"result": "pass", "docs_total": len(docs)},
-                             "docs": docs})
-          assert len(blob) > 131072, f"padding too small: {len(blob)} bytes"
-          open(sys.argv[1], "w").write(blob)
-          print(f"drift payload: {len(blob)} bytes (limit is 131072)")
-          PY
-          mkdir -p "$repo/stub"
-          printf '#!/bin/sh\n[ "$1" = "--version" ] && { echo "drift 0.10.1"; exit 0; }\ncat "%s/drift-big.json"\n' "$repo" > "$repo/stub/drift"
-          chmod +x "$repo/stub/drift"
-          : > "$repo/drift.lock"
-          out=$( (cd "$repo" && PATH="$repo/stub:$PATH" "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge) 2>&1 || true )
-          case "$out" in
-            *"Argument list too long"*) echo "::error::the argument limit regressed: $out"; exit 1 ;;
-          esac
-          echo "$out" | tail -2
-          echo "ok — the gate survived a $(wc -c < "$repo/drift-big.json")-byte drift report"
-
-      # Regression, 0.6.1. Step 6 filtered drift's paths against $bundle. drift reports them
-      # relative to $parent, so an absolute bundle path matched nothing: every doc was
-      # skipped and the gate printed "0 doc(s) ... fresh" and exited 0 over a stale bundle.
-      # Steps 1-5 kept working, which is what made it silent.
-      - name: an absolute bundle path still drift-checks, and a mismatch is fatal
-        run: |
-          set -eu
-          repo=$(mktemp -d)
-          scripts/okf-scaffold.sh --name "AbsPath" "$repo" >/dev/null
-          mkdir -p "$repo/stub"
-          # drift reporting only docs OUTSIDE the bundle is the positive control for the
-          # no-op guard: without it, "nothing matched" would print as "fresh".
-          cat > "$repo/stub/drift" <<'STUB'
-          #!/bin/sh
-          [ "$1" = "--version" ] && { echo "drift 0.10.1"; exit 0; }
-          printf '%s' '{"schema_version":"drift.check.v1","summary":{"result":"pass","docs_total":1},"docs":[{"path":"elsewhere/x.md","result":"fresh","anchors":[],"links":[]}]}'
-          STUB
-          chmod +x "$repo/stub/drift"
-          : > "$repo/drift.lock"
-          out=$( (cd "$repo" && PATH="$repo/stub:$PATH" "$GITHUB_WORKSPACE/scripts/okf-check.sh" "$repo/knowledge") 2>&1 || true )
-          case "$out" in
-            *"matched none of drift"*) echo "ok — a path mismatch fails instead of printing 0 doc(s) fresh" ;;
-            *) echo "::error::the no-op guard did not fire on an absolute path: $out"; exit 1 ;;
-          esac
 
       - name: scaffold validates clean, and the gate fails it
         run: |
@@ -440,18 +295,13 @@ jobs:
           out=$(cd "$wiki" && "$GITHUB_WORKSPACE/scripts/okf-check.sh" knowledge)
           echo "$out"
           case "$out" in
-            *"warn  "*) echo "::error::a populated wiki drew warnings (drift, state or code_refs leaked into the wiki profile)"; exit 1 ;;
-            *"step 6 not applicable (wiki profile"*) echo "ok — wiki gate green with no drift, no snapshot, no code_refs" ;;
+            *"warn  "*) echo "::error::a populated wiki drew warnings (state or code_refs leaked into the wiki profile)"; exit 1 ;;
+            *"ok    knowledge:"*) echo "ok — wiki gate green with no snapshot and no code_refs" ;;
             *) echo "::error::unexpected wiki gate output"; exit 1 ;;
           esac
           rec=$(cd "$wiki" && "$GITHUB_WORKSPACE/scripts/okf-recall.sh" "owner" knowledge)
           echo "$rec"
           case "$rec" in
-            *"not drift-tracked (wiki)"*) echo "ok — wiki recall through the real okf, without drift" ;;
+            *"1 hit(s)"*"no status · no review date"*) echo "ok — wiki recall through the real okf" ;;
             *) echo "::error::wiki recall did not serve the concept"; exit 1 ;;
           esac
-
-      # okf-lock-merge.py against the pinned drift: each case a real conflicted `git merge`, then a real `git rebase`.
-      # The flag makes the class fail, not skip, if drift is ever missing from this step.
-      - name: okf-lock-merge resolves real drift.lock conflicts
-        run: OKF_SELFTEST_REAL_DRIFT=1 python3 scripts/okf-runtime-selftest.py LockMergeTests LockRebaseTests

@@ -35,9 +35,9 @@ last_updated: {{DATE}}
        return { success: false, error: 'User not found' }   // not: throw new Error(...) -->
 
 ## Verify Checklist
-- [ ] The knowledge gate ran with drift and is green — at the START of the work as a
-      baseline, and now. A code change can stale a concept without touching `knowledge/`;
-      that directory is never "out of scope" for the gate.
+- [ ] The knowledge gate is green — at the START of the work as a baseline, and now.
+      Every concept this work proved wrong is fixed (read-repair); `knowledge/` is never
+      "out of scope" for the gate.
 
 <!-- The checks most likely to catch a mistake IN THIS CODEBASE — the ones a reviewer
      here actually makes. CLAUDE.md tells the agent to run this list before presenting

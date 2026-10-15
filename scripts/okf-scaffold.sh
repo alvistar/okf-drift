@@ -67,9 +67,9 @@ if [ -n "$declared" ] && [ "$declared" != "$profile" ]; then
   exit 1
 fi
 if [ "$profile" = wiki ]; then
-  for marker in drift.lock .okf-drift-version knowledge/project/state.md; do
+  for marker in .okf-drift-version knowledge/project/state.md; do
     if [ -e "$target/$marker" ]; then
-      echo "refusing: $target/$marker says this is a code repository; a wiki profile would switch off its drift, snapshot and code_refs warnings" >&2
+      echo "refusing: $target/$marker says this is a code repository; a wiki profile would switch off its snapshot and code_refs warnings" >&2
       exit 1
     fi
   done
@@ -141,7 +141,7 @@ if [ "$profile" = wiki ]; then
   echo "Next:"
   echo "  1. Add the categories this knowledge base needs (see knowledge/reference/index.md)."
   echo "  2. Write the first concepts; the gate FAILS on a bundle with none."
-  echo "  3. Run the gate: okf-drift:okf-runtime in gate mode (pin >= v0.14.0 with okf-pin.sh)"
+  echo "  3. Run the gate: okf-drift:okf-runtime in gate mode (pin >= v0.15.0 with okf-pin.sh)"
   echo "  4. Add a Knowledge base section to CLAUDE.md: see /okf-setup, Profile: wiki."
   exit 0
 fi

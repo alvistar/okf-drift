@@ -14,8 +14,8 @@
 # the pin and is EXEMPT from the hash check by design — the file being edited cannot match.
 set -eu
 die() { echo "okf-shim: $*" >&2; exit 2; }
-# The script it runs reaches its sibling scripts through this same launcher, so each is
-# fetched and verified against the same pin (okf-restamp.sh -> okf-log.sh).
+# A script it runs can reach a sibling script through this same launcher
+# ($OKF_DRIFT_SHIM), so each is fetched and verified against the same pin.
 # Builtins only: it runs before anything is known about PATH.
 case "$0" in */*) self_dir=${0%/*} ;; *) self_dir=. ;; esac
 OKF_DRIFT_SHIM=$(CDPATH= cd -- "${self_dir:-/}" && pwd)/${0##*/} || die "cannot locate $0"

@@ -23,8 +23,8 @@ awk '
   NF != 2 || length($1) != 64 || $1 ~ /[^0-9a-f]/ || $2 !~ /^okf-[a-z0-9-]+\.(sh|py)$/ { bad=1 }
   { if (seen[$2]++) bad=1 }
   END { if (bad || !seen["okf-shim.sh"] || !seen["okf-check.sh"] ||
-            !seen["okf-recall.sh"] || !seen["okf-drift-bootstrap.sh"]) exit 1 }
-' "$tmp" || die "SHA256SUMS for $tag needs unique valid hashes including shim, check, recall and drift-bootstrap"
+            !seen["okf-recall.sh"]) exit 1 }
+' "$tmp" || die "SHA256SUMS for $tag needs unique valid hashes including shim, check and recall"
 # Stage alongside the destination so a failed download/validation never truncates its pin.
 staged=$(mktemp "$root/.okf-drift-version.XXXXXX") || die "cannot stage pin in $root"
 trap 'rm -f "$tmp" "$staged"' EXIT

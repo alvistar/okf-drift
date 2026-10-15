@@ -33,7 +33,7 @@ done
 cp "$FIXTURE_RELEASE/${url##*/}" "$out"
 ''', self.bin)
         self.script("gh", "#!/bin/sh\nexit 1\n", self.bin)
-        for name in ("okf-check.sh", "okf-recall.sh", "okf-drift-bootstrap.sh"):
+        for name in ("okf-check.sh", "okf-recall.sh"):
             self.script(name, '#!/bin/sh\nprintf "%s\\n" "$PWD" "$@"\nexit "${FIXTURE_STATUS:-0}"\n')
         (self.release / "okf-shim.sh").write_bytes((SOURCE / "scripts/okf-shim.sh").read_bytes())
         self.pin()
@@ -256,7 +256,7 @@ class Launcher(Fixture):
     def test_pin_rejects_missing_duplicate_or_malformed_required_hash(self):
         sums = (self.release / "SHA256SUMS").read_text()
         before = (self.repo / ".okf-drift-version").read_bytes()
-        for name in ("okf-check.sh", "okf-recall.sh", "okf-shim.sh", "okf-drift-bootstrap.sh"):
+        for name in ("okf-check.sh", "okf-recall.sh", "okf-shim.sh"):
             line = next(x for x in sums.splitlines() if x.endswith("  " + name))
             for replacement in ("", line + "\n" + line, "bad  " + name):
                 with self.subTest(name=name, replacement=replacement):
@@ -293,7 +293,6 @@ class Integration(Fixture):
         (self.repo / "CLAUDE.md").write_text("# Identity\nRead docs/HANDOVER.md first.\n\n" + old + "\n## Other\nKeep this.\n")
         (self.repo / "knowledge").mkdir()
         (self.repo / "knowledge/index.md").write_text('Historical command: scripts/okf-recall.sh "terms"\n')
-        (self.repo / "drift.lock").write_text('version = 1\n')
 
     def snapshot(self):
         return {str(p.relative_to(self.repo)): ("symlink", os.readlink(p)) if p.is_symlink() else p.read_bytes()
@@ -332,7 +331,7 @@ class Integration(Fixture):
         result = self.integrate()
         self.assertEqual(result.returncode, 0, result.stderr)
         after = self.snapshot()
-        for name in ("knowledge/index.md", "drift.lock", "scripts/mine.sh", ".okf-drift-version"):
+        for name in ("knowledge/index.md", "scripts/mine.sh", ".okf-drift-version"):
             self.assertEqual(before[name], after[name])
         self.assertIn("knowledge/index.md", result.stderr)
         self.assertIn("First read docs/HANDOVER.md", (self.repo / "CLAUDE.md").read_text())
@@ -447,7 +446,7 @@ class Integration(Fixture):
 
     def test_preflight_rejects_symlinks_including_parent_directories(self):
         self.legacy()
-        for name in ("scripts/okf-check.sh", "scripts/okf-shim.sh", "CLAUDE.md", ".okf-drift-version", "drift.lock"):
+        for name in ("scripts/okf-check.sh", "scripts/okf-shim.sh", "CLAUDE.md", ".okf-drift-version"):
             path = self.repo / name
             original = path.read_bytes()
             external = self.base / "external"
@@ -481,12 +480,6 @@ class Integration(Fixture):
             self.assertIn("code_refs", result.stderr)
             self.assertEqual(before, self.snapshot())
         concept.unlink()
-        (self.repo / "drift.lock").write_text('version = 1\n[[bindings]]\ndoc="knowledge/index.md"\ntarget="scripts/okf-shim.sh"\nsig="a"\n')
-        before = self.snapshot()
-        result = self.integrate()
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("binding", result.stderr)
-        self.assertEqual(before, self.snapshot())
 
     def test_code_ref_alias_to_deletion_candidate_is_protected(self):
         self.legacy()

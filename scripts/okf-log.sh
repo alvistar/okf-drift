@@ -153,8 +153,8 @@ if (defined $opt{entry}) {
   ($entry = $opt{entry}) =~ s{\A(?:\./)+}{};
   refuse("--entry must be $bundle/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md (got '$opt{entry}')")
     unless $entry =~ m{\A\Q$bundle\E/log/$NAME/log\.md\z};
-  # A new entry named after the current branch (okf-restamp.sh resolves it with `path`,
-  # then writes it with --entry) records the branch, as discovery would have.
+  # A new entry named after the current branch (a caller resolves it with `path`, then
+  # writes it with --entry) records the branch, as discovery would have.
   if (!-e $entry && !defined $opt{slug} && (git('rev-parse', '--is-inside-work-tree') // '') eq 'true') {
     my $b = git('symbolic-ref', '-q', '--short', 'HEAD');
     my ($s) = $entry =~ m{/log/$NAME/log\.md\z} ? ($2) : ();
