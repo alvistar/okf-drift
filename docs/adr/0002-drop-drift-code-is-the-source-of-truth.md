@@ -1,0 +1,14 @@
+# Drop drift: the code is the source of truth, and a wrong concept is fixed when it is read
+
+A drift signature changes whenever the bound code changes, but a function can change without what it does changing, so the alarm mostly asked for a re-stamp, not a fix. Measured on the reference consumer (alvistar/ai-review, history of `drift.lock`, 2026-10-15): of 107 signature changes, 41 (38%) came with an edit to the concept in the same commit and 66 (62%) were a re-stamp alone; across 116 Claude Code sessions on margins the gate reported drift ~158 times in ~42 sessions, and freshness-checked recall ran 49 times and never returned a STALE concept. So we remove drift entirely and keep no deterministic freshness gate. The code is the source of truth; the bundle holds what the code does not say (why, invariants, traps, conventions, how to behave, where to look). A concept never restates what the code already says (signatures, defaults, step lists, numbers, field lists). Recall shows a **change hint** beside each hit (commits on its `code_refs` since `last_updated`), computed by the script and obliging no one. When an agent relying on a concept finds the code says otherwise, the code wins and the concept is corrected as an ordinary `/okf-write` edit (**read-repair**); in a read-only session the agent reports the contradiction instead.
+
+## Considered Options
+
+- **Replace drift with the git blob hash** (`git hash-object` per `code_refs` path, an exact move found as the only file with the same blob): drops the drift binary and its resolver bugs, keeps a red gate, but keeps the noise, since a blob changes on any edit, as a drift signature does on most.
+- **Drift as a non-blocking CI notice**: no merge is blocked, but every PR still reports concepts that are almost always still true, which teaches readers to ignore it.
+- **A `verified_at` field and a mandatory read-repair log line**: makes the hint exact after a cosmetic edit, at the cost of bookkeeping an LLM must remember on every read; rejected because the rule against restating code makes a concept that silently goes wrong rare, and bookkeeping is what the re-stamp rule already proved costly.
+- **A gate check for over-specific concepts**: any heuristic would be another noisy alarm; the rule is a writing rule only.
+
+## Consequences
+
+ADR 0001's paragraph on `drift.lock` and `okf-lock-merge` no longer applies. A consumer bundle must run `/okf-migrate`, which deletes `drift.lock`, guides the CI and `CLAUDE.md` section update, and guides a review of the existing concepts against the writing rule; the gate fails while `drift.lock` exists. The hint counts from `last_updated`, which `okf-tidy.sh` sets on any edit, so a cosmetic edit hides earlier code changes from the hint; accepted. `stale_after` and its gate are unchanged: a review date a human set is a different signal and outside this decision.
