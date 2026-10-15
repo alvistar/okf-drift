@@ -1,6 +1,5 @@
 ---
 name: okf-write
-disable-model-invocation: true
 description: |
   Record into an OKF knowledge bundle — the Grow step: write the decision, the playbook
   or the surgical concept edit, correct a concept the code contradicts (read-repair),
@@ -8,7 +7,8 @@ description: |
   where to look; one line per change in the branch's log entry (okf-log.sh add);
   okf-tidy.sh keeps index rows and last_updated; pass the gate.
 
-  MANUAL TRIGGER ONLY: invoke only when the user types /okf-write.
+  Model-invocable: the Grow step of the Work Loop and read-repair load it on their own.
+  It writes local files and never commits or pushes by itself.
 
   Trigger on: "/okf-write", "record this decision", "write a playbook", "update the
   knowledge bundle", "the concept is out of date", "the code contradicts the concept".

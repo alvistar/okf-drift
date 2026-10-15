@@ -81,8 +81,8 @@ path.
 
 This skill only runs gate/recall. It never pins, installs/converts integration,
 scaffolds or edits knowledge — `okf-tidy.sh` and `okf-log.sh` belong to `/okf-write`,
-deleting `drift.lock` to `/okf-migrate`. The four
-existing setup/migrate/read/write skills retain their manual triggers.
+deleting `drift.lock` to `/okf-migrate`. `/okf-write` is model-invocable: load it for
+the Grow step and for read-repair. setup, migrate and read keep their manual triggers.
 
 If this skill or its launcher is unavailable, report the missing plugin explicitly.
 The standalone alternative is the `pinned runtime gate` shell block in the
