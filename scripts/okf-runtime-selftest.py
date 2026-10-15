@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline regressions for gate/recall process boundaries, paths and JSON transport.
 
-Run with python3 scripts/okf-runtime-selftest.py. Fixtures replace only okf/drift;
+Run with python3 scripts/okf-runtime-selftest.py. Fixtures replace only okf;
 real shell and Perl execute the scripts under test. No network or shared cache.
 """
 from __future__ import annotations
@@ -80,17 +80,16 @@ class RuntimeTests(unittest.TestCase):
             "# State\n\n**Working:**\n- Fixture.\n\n"
             "**Not yet built:**\n- Nothing.\n\n**Known issues:**\n- None.\n"
         )
-        (self.root / "drift.lock").write_text("{}")
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
         self.stub = self.root / "bin"
         self.stub.mkdir()
         for name, text in {
             "okf": '#!/bin/sh\ncase "$1" in\nversion) echo "okf v0.6.0";;\nvalidate) cat "$FIXTURE/validate.json"; exit "${VALIDATE_EXIT:-0}";;\nsearch) cat "$FIXTURE/search.json"; exit "${SEARCH_EXIT:-0}";;\nesac\n',
-            "drift": '#!/bin/sh\ncase "$1" in\n--version) echo "drift ${DRIFT_VERSION:-v0.10.1}"; exit 0;;\nesac\ncat "$FIXTURE/drift.json"\nexit "${DRIFT_EXIT:-0}"\n',
         }.items():
             path = self.stub / name
             path.write_text(text)
             path.chmod(0o755)
-        self.env = dict(os.environ, FIXTURE=str(self.root), TMPDIR=str(self.root),
+        self.env = dict(os.environ, FIXTURE=str(self.root), TMPDIR=str(self.root), **GIT_ID,
                         PATH=str(self.stub) + os.pathsep + os.environ["PATH"])
         self.env.pop("OKF_DRIFT_ROOT", None)
         if os.environ.get("OKF_SELFTEST_PINNED") == "1":
@@ -100,21 +99,16 @@ class RuntimeTests(unittest.TestCase):
             cache.mkdir(parents=True)
             self.env["XDG_CACHE_HOME"] = str(self.root / "cache")
             lines = ["v0.7.0"]
-            for name in ("okf-check.sh", "okf-recall.sh", "okf-drift-bootstrap.sh",
-                         "okf-restamp.sh", "okf-tidy.sh"):
+            for name in ("okf-check.sh", "okf-recall.sh", "okf-tidy.sh"):
                 data = (SCRIPTS / name).read_bytes()
                 (cache / name).write_bytes(data)
                 lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
             (self.root / ".okf-drift-version").write_text("\n".join(lines) + "\n")
         self.payload("validate", {"gate_passed": True, "is_conformant": True})
         self.payload("search", [{"concept_id": "project/state", "description": "Fixture state.", "score": 1}])
-        self.verdict("fresh")
 
     def payload(self, name: str, value: object) -> None:
         (self.root / f"{name}.json").write_text(json.dumps(value))
-
-    def verdict(self, result: str) -> None:
-        self.payload("drift", {"docs": [{"path": "knowledge/project/state.md", "result": result, "anchors": [], "links": []}]})
 
     def run_script(self, script: str, bundle: str = "knowledge") -> subprocess.CompletedProcess[str]:
         args = [str(SCRIPTS / script)]
@@ -132,9 +126,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn("no concept", result.stdout)
 
     def concept(self, rel: str, *, status: str | None = None,
-                stale_after: str | None = None) -> None:
+                stale_after: str | None = None, code_refs: tuple[str, ...] = ()) -> None:
         """A second fixture concept, written only where a test needs one. It is deliberately
-        NOT in setUp: the gate requires an index row and a drift verdict for every concept,
+        NOT in setUp: the gate requires an index row for every concept,
         and recall requires neither."""
         path = self.bundle / f"{rel}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -144,65 +138,73 @@ class RuntimeTests(unittest.TestCase):
             lines.append(f"status: {status}")
         if stale_after is not None:
             lines.append(f"stale_after: {stale_after}")
+        if code_refs:
+            lines.append("code_refs:")
+            lines.extend(f"  - {ref}" for ref in code_refs)
         path.write_text("---\n" + "\n".join(lines) + "\n---\n# Second\n\nBody.\n")
 
-    def two_hits(self, anchors: list[object]) -> None:
+    def two_hits(self) -> None:
         self.payload("search", [
             {"concept_id": "project/state", "description": "Fixture state.", "score": 2},
             {"concept_id": "architecture/core", "description": "Second fixture.", "score": 1},
         ])
-        self.payload("drift", {"docs": [
-            {"path": "knowledge/project/state.md", "result": "fresh",
-             "anchors": anchors, "links": []},
-            {"path": "knowledge/architecture/core.md", "result": "fresh",
-             "anchors": [], "links": []},
-        ]})
 
-    def anchor(self, symbol: str) -> dict:
-        return {"identity": f"src/lib.rs#{symbol}", "kind": "symbol", "path": "src/lib.rs",
-                "symbol": symbol, "result": "fresh", "reason": None, "blame": None}
+    def commit(self, message: str, files: dict[str, str]) -> str:
+        """Write `files` (repo-relative path => text), commit everything, return the short sha."""
+        for name, text in files.items():
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True, env=self.env)
+        subprocess.run(["git", "commit", "-qm", message], cwd=self.root, check=True, env=self.env)
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=self.root, env=self.env,
+                              check=True, text=True, capture_output=True).stdout.strip()
 
-    def test_recall_prints_tracking_lifecycle_and_review_per_hit(self) -> None:
-        self.concept("architecture/core", status="deprecated", stale_after="2026-01-01")
-        self.two_hits([self.anchor("a"), self.anchor("b")])
+    def hint_fixture(self, *code_refs: str) -> None:
+        self.concept("architecture/core", status="stable", code_refs=code_refs)
+        self.two_hits()
+        self.commit("write the concept", {"src/lib/a.rs": "a\n", "src/lib/b.rs": "b\n"})
+
+    def test_recall_shows_no_change_hint_when_the_code_did_not_move(self) -> None:
+        self.hint_fixture("src/lib/a.rs")
+        self.commit("unrelated", {"src/lib/b.rs": "b2\n"})
         result = self.run_script("okf-recall.sh")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('2 hit(s) for "fixture" in knowledge', result.stdout)
-        self.assertIn("2 targets unchanged · no status · no review date", result.stdout)
-        self.assertIn("no tracked target · deprecated · review expired 2026-01-01",
-                      result.stdout)
-        self.assertIn('"targets unchanged" means the code under the anchors did not move.',
-                      result.stdout)
+        self.assertNotIn("code changed since", result.stdout)
+        self.assertNotIn("drift", result.stdout)
 
-    def test_recall_counts_one_anchor_in_the_singular_and_reads_a_future_review(self) -> None:
-        self.concept("architecture/core", status="stable", stale_after="2099-01-01")
-        self.two_hits([self.anchor("a")])
-        result = self.run_script("okf-recall.sh")
-        self.assertIn("1 target unchanged · no status · no review date", result.stdout)
-        self.assertIn("no tracked target · stable · review current", result.stdout)
-
-    def test_recall_marks_a_deprecated_concept_whose_code_moved_stale(self) -> None:
-        """Staleness takes the tracking signal's place; the lifecycle signal still shows."""
-        self.concept("architecture/core", status="deprecated")
-        self.payload("search", [
-            {"concept_id": "architecture/core", "description": "Second fixture.", "score": 1},
-        ])
-        self.payload("drift", {"docs": [{
-            "path": "knowledge/architecture/core.md", "result": "stale",
-            "anchors": [{"identity": "src/lib.rs#a", "kind": "symbol", "path": "src/lib.rs",
-                         "symbol": "a", "result": "stale",
-                         "reason": {"code": "changed_after_baseline", "message": "m"},
-                         "blame": {}}],
-            "links": []}]})
-        self.env["DRIFT_EXIT"] = "1"
+    def test_recall_counts_the_commits_on_code_refs_since_the_concepts_last_commit(self) -> None:
+        self.hint_fixture("src/lib/a.rs")
+        self.commit("first", {"src/lib/a.rs": "a2\n"})
+        sha = self.commit("second change", {"src/lib/a.rs": "a3\n"})
         result = self.run_script("okf-recall.sh")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("1 hit(s)", result.stdout)
-        self.assertIn("— 1 STALE", result.stdout)
-        self.assertIn("STALE: code moved after it was written · deprecated ·", result.stdout)
-        self.assertIn("src/lib.rs#a  [changed_after_baseline]", result.stdout)
-        self.assertNotIn("WITHHELD", result.stdout)
-        self.assertNotIn('"targets unchanged" means', result.stdout)
+        self.assertIn(f'code changed since this concept: 2 commit(s) on src/lib/a.rs (last {sha} '
+                      f'{TODAY} "second change")', result.stdout)
+        self.assertIn("1 hit(s) with a change hint", result.stdout)
+        self.assertIn("the code wins", result.stdout)
+
+    def test_recall_counts_commits_under_a_directory_code_ref(self) -> None:
+        self.hint_fixture("src/lib/")
+        sha = self.commit("touch b", {"src/lib/b.rs": "b2\n"})
+        result = self.run_script("okf-recall.sh")
+        self.assertIn(f'1 commit(s) on src/lib/ (last {sha}', result.stdout)
+
+    def test_recall_shows_no_change_hint_without_code_refs(self) -> None:
+        self.hint_fixture()
+        self.commit("touch a", {"src/lib/a.rs": "a2\n"})
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("code changed since", result.stdout)
+
+    def test_recall_outside_git_still_searches(self) -> None:
+        shutil.rmtree(self.root / ".git")
+        self.concept("architecture/core", status="stable", code_refs=("src/lib/a.rs",))
+        self.two_hits()
+        result = self.run_script("okf-recall.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("2 hit(s)", result.stdout)
+        self.assertNotIn("code changed since", result.stdout)
 
     def days_from_today(self, days: int) -> str:
         # UTC, like okf and the scripts: a local date would disagree for part of every day.
@@ -216,18 +218,18 @@ class RuntimeTests(unittest.TestCase):
             with self.subTest(days=days):
                 date = self.days_from_today(days)
                 self.concept("architecture/core", status="stable", stale_after=date)
-                self.two_hits([self.anchor("a")])
+                self.two_hits()
                 result = self.run_script("okf-recall.sh")
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 expected = label if label == "review current" else f"{label} {date}"
-                self.assertIn(f"no tracked target · stable · {expected}\n", result.stdout)
+                self.assertIn(f"stable · {expected}\n", result.stdout)
 
     def test_recall_names_an_invalid_review_date(self) -> None:
         # Value: protects=an impossible stale_after is named, not hidden as "no review date"; fails_when=day_number errors fall back silently; why_new=only valid dates were tested; seam=none
         for date in ("2026-13-01", "0999-01-01"):
             with self.subTest(date=date):
                 self.concept("architecture/core", status="stable", stale_after=date)
-                self.two_hits([self.anchor("a")])
+                self.two_hits()
                 result = self.run_script("okf-recall.sh")
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn(f"review date invalid ({date})", result.stdout)
@@ -248,7 +250,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_recall_searches_the_project_scope_only(self) -> None:
         """okf v0.5.0+ searches ~/.okf, /etc/okf and vendor bundles by default; their ids
-        have no file in the bundle and no drift verdict."""
+        have no file in the bundle."""
         log = self.root / "okf-args.log"
         okf = self.stub / "okf"
         plain = okf.read_text()
@@ -306,10 +308,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn("leaves its parent directory", result.stdout)
 
     def gate_bundle(self) -> None:
-        """Four concepts that separate the two diagnostics. Coverage comes from drift's
-        report, discoverability from `code_refs`, and the pairs deliberately disagree:
-        `architecture/core` has neither, `playbooks/thing` has code_refs but no anchor,
-        `playbooks/bound` has both, and `project/state` is exempt from both."""
+        """Three concepts with and without `code_refs`; `project/state` is exempt."""
         rows = {
             "architecture/core": ("Core fixture.", []),
             "playbooks/thing": ("Thing fixture.", ["src/lib.rs"]),
@@ -329,35 +328,17 @@ class RuntimeTests(unittest.TestCase):
                 f"- [{rel}](/{rel}.md) — {desc}\n"
                 for rel, (desc, _) in rows.items() if rel.startswith(directory + "/")
             ))
-        anchor = {"identity": "src/lib.rs#a", "kind": "symbol", "path": "src/lib.rs",
-                  "symbol": "a", "result": "fresh", "reason": None, "blame": None}
-        self.payload("drift", {"docs": [
-            {"path": "knowledge/project/state.md", "result": "fresh",
-             "anchors": [anchor], "links": []},
-            {"path": "knowledge/architecture/core.md", "result": "fresh",
-             "anchors": [], "links": []},
-            {"path": "knowledge/playbooks/thing.md", "result": "fresh",
-             "anchors": [], "links": []},
-            {"path": "knowledge/playbooks/bound.md", "result": "fresh",
-             "anchors": [anchor], "links": []},
-        ]})
 
-    def test_gate_groups_coverage_and_discoverability_separately(self) -> None:
+    def test_gate_groups_empty_code_refs_in_one_line(self) -> None:
         self.gate_bundle()
         result = self.run_script("okf-check.sh")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        # One line per diagnostic, wrapped at ~100 chars with a continuation indent.
-        self.assertIn(
-            "warn  2 concept(s) with no tracked target (no drift anchor; nothing checks "
-            "them): architecture/core.md,\n        playbooks/thing.md\n",
-            result.stdout,
-        )
         self.assertIn(
             "warn  1 concept(s) with empty code_refs (okf search --for-path cannot find "
             "them): architecture/core.md",
             result.stdout,
         )
-        # A concept that has both is in neither list; the exempt snapshot is in neither.
+        # A concept with code_refs is not listed; neither is the exempt snapshot.
         self.assertNotIn("playbooks/bound.md", result.stdout)
         self.assertNotIn("project/state.md", result.stdout)
         # And the old per-concept line is gone.
@@ -372,10 +353,6 @@ class RuntimeTests(unittest.TestCase):
             "---\ntype: Reference\ntitle: Evidence\ndescription: Fixture evidence.\n"
             "last_updated: 2026-09-16\ncode_refs: []\n---\n# Evidence\n\nBody.\n"
         )
-        self.payload("drift", {"docs": [
-            {"path": f"knowledge/project/{name}.md", "result": "fresh", "anchors": [], "links": []}
-            for name in ("state", "state-evidence")
-        ]})
         result = self.run_script("okf-check.sh")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("state-evidence.md", result.stdout)
@@ -391,75 +368,10 @@ class RuntimeTests(unittest.TestCase):
                 line = "project/state.md: 1 item(s) over 300 characters"
                 (self.assertIn if warned else self.assertNotIn)(line, result.stdout)
 
-    def test_require_tracking_is_fatal_only_for_the_matching_glob(self) -> None:
-        self.gate_bundle()
-        self.env["OKF_REQUIRE_TRACKING"] = "architecture/*"
-        result = self.run_script("okf-check.sh")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(
-            "FAIL  architecture/core.md: no tracked target, and "
-            "OKF_REQUIRE_TRACKING='architecture/*' makes that fatal for this path",
-            result.stdout,
-        )
-        self.assertNotIn("FAIL  playbooks/thing.md", result.stdout)
-        self.assertIn("2 concept(s) with no tracked target", result.stdout)
-        # `*` stops at a `/`, as it does in the shell: a bare `*` matches no concept in a
-        # bundle whose concepts all live in a category directory.
-        self.env["OKF_REQUIRE_TRACKING"] = "*"
-        bare = self.run_script("okf-check.sh")
-        self.assertEqual(bare.returncode, 0, bare.stdout + bare.stderr)
-        # `**` does cross one.
-        self.env["OKF_REQUIRE_TRACKING"] = "**"
-        deep = self.run_script("okf-check.sh")
-        self.assertEqual(deep.returncode, 1, deep.stdout + deep.stderr)
-
-    def test_require_tracking_unset_leaves_coverage_a_warning(self) -> None:
-        self.gate_bundle()
-        self.env.pop("OKF_REQUIRE_TRACKING", None)
-        result = self.run_script("okf-check.sh")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("no tracked target, and OKF_REQUIRE_TRACKING", result.stdout)
-
-    @unittest.skipIf(os.environ.get("OKF_SELFTEST_PINNED") == "1",
-                     ".okf-drift-version is the launcher's own input in pinned mode")
-    def test_a_repo_that_adopted_drift_fails_when_drift_is_absent(self) -> None:
-        """A green gate must mean the detector ran. Without this the worker who has no
-        drift gets two green local runs and a red CI."""
-        pin = self.root / ".okf-drift-version"
-        if not pin.exists():
-            pin.write_text("v0.9.0\n")
-        (self.stub / "drift").unlink()
-        # Keep the system tools the scripts need; drop every directory that could hold a
-        # real drift (~/.local/bin, GOPATH/bin).
-        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
-                                            "/usr/sbin", "/sbin"])
-        result = self.run_script("okf-check.sh")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("FAIL  this repository adopted drift", result.stdout)
-        self.assertNotIn("okf gate passed", result.stdout)
-
-    @unittest.skipIf(os.environ.get("OKF_SELFTEST_PINNED") == "1",
-                     ".okf-drift-version is the launcher's own input in pinned mode")
-    def test_a_repo_that_never_adopted_drift_still_only_warns(self) -> None:
-        (self.root / ".okf-drift-version").unlink(missing_ok=True)
-        (self.stub / "drift").unlink()
-        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
-                                            "/usr/sbin", "/sbin"])
-        result = self.run_script("okf-check.sh")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("warn  drift not on PATH", result.stdout)
-        self.assertNotIn("FAIL", result.stdout)
-        # Coverage is unknowable without the report, so it is not guessed at.
-        self.assertNotIn("no tracked target", result.stdout)
-
     def wiki(self) -> None:
-        """A wiki bundle: `.okf-profile` says wiki, no drift.lock, no drift binary, no
-        project snapshot, and one reference concept with no code_refs at all."""
+        """A wiki bundle: `.okf-profile` says wiki, no project snapshot, and one
+        reference concept with no code_refs at all."""
         (self.root / ".okf-profile").write_text("wiki\n")
-        (self.root / "drift.lock").unlink()
-        (self.stub / "drift").unlink()
-        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
-                                            "/usr/sbin", "/sbin"])
         shutil.rmtree(self.bundle / "project")
         (self.bundle / "reference").mkdir()
         (self.bundle / "reference/index.md").write_text(
@@ -470,30 +382,20 @@ class RuntimeTests(unittest.TestCase):
         self.payload("search", [{"concept_id": "reference/identity",
                                  "description": "Who I am.", "score": 1}])
 
-    def test_wiki_gate_needs_no_drift_snapshot_or_code_refs(self) -> None:
+    def test_wiki_gate_needs_no_snapshot_or_code_refs(self) -> None:
         self.wiki()
         result = self.run_script("okf-check.sh")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("warn  ", result.stdout)
         self.assertIn("passed with no warnings", result.stdout)
-        self.assertIn("step 6 not applicable (wiki profile, no drift.lock)", result.stdout)
 
-    def test_wiki_recall_serves_hits_as_not_drift_tracked(self) -> None:
+    def test_wiki_recall_serves_hits_with_status_and_review(self) -> None:
         self.wiki()
         result = self.run_script("okf-recall.sh")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("1 hit(s)", result.stdout)
-        self.assertIn("not drift-tracked (wiki) · no status · review current", result.stdout)
-        self.assertNotIn("targets unchanged", result.stdout)
-
-    def test_wiki_with_a_drift_lock_still_marks_stale(self) -> None:
-        # A wiki that hand-linked a concept adopted drift for it: the join comes back.
-        (self.root / ".okf-profile").write_text("wiki\n")
-        self.verdict("stale")
-        result = self.run_script("okf-recall.sh")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("STALE: code moved after it was written", result.stdout)
-        self.assertNotIn("not drift-tracked", result.stdout)
+        self.assertIn("no status · review current", result.stdout)
+        self.assertNotIn("commit(s) on", result.stdout)
 
     def test_unknown_profile_fails_closed(self) -> None:
         (self.root / ".okf-profile").write_text("wikki\n")
@@ -517,25 +419,6 @@ class RuntimeTests(unittest.TestCase):
         result = self.run_script("okf-check.sh")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("FAIL  no concept in knowledge yet", result.stdout)
-
-    def test_wiki_gate_with_a_drift_lock_fails_on_stale(self) -> None:
-        (self.root / ".okf-profile").write_text("wiki\n")
-        self.verdict("stale")
-        result = self.run_script("okf-check.sh")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertNotIn("not applicable", result.stdout)
-
-    @unittest.skipIf(os.environ.get("OKF_SELFTEST_PINNED") == "1",
-                     "removes the pin the launcher needs; the unpinned run covers it")
-    def test_wiki_with_a_lock_but_no_drift_does_not_claim_not_applicable(self) -> None:
-        (self.root / ".okf-profile").write_text("wiki\n")
-        (self.root / ".okf-drift-version").unlink(missing_ok=True)
-        (self.stub / "drift").unlink()
-        self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
-                                            "/usr/sbin", "/sbin"])
-        result = self.run_script("okf-check.sh")
-        self.assertIn("step 6 did not run (drift not on PATH)", result.stdout)
-        self.assertNotIn("not applicable", result.stdout)
 
     def test_open_question_inside_a_fence_is_an_example_not_a_question(self) -> None:
         state = self.bundle / "project/state.md"
@@ -569,21 +452,21 @@ class RuntimeTests(unittest.TestCase):
         result = self.run_script("okf-check.sh")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_a_conflicted_drift_lock_fails_naming_okf_lock_merge(self) -> None:
-        (self.root / "drift.lock").write_text(
-            'version = 1\n\n<<<<<<< HEAD\n[[bindings]]\ndoc = "a"\n=======\n'
-            '[[bindings]]\ndoc = "b"\n>>>>>>> main\n')
-        out = self.assert_gate_fails("drift.lock", "conflict", "okf-lock-merge.py")
-        self.assertNotIn("okf gate passed", out)
+    def test_a_leftover_drift_lock_fails_naming_okf_migrate_in_both_profiles(self) -> None:
+        for profile in ("code", "wiki"):
+            with self.subTest(profile=profile):
+                if profile == "wiki":
+                    self.wiki()
+                (self.root / "drift.lock").write_text("version = 1\n")
+                out = self.assert_gate_fails("FAIL  drift.lock found: drift is no longer used, run /okf-migrate")
+                self.assertNotIn("okf gate passed", out)
 
-    def test_a_conflicted_drift_lock_names_okf_lock_merge_even_without_drift(self) -> None:
-        (self.root / "drift.lock").write_text(
-            'version = 1\n\n<<<<<<< HEAD\n[[bindings]]\ndoc = "a"\n=======\n'
-            '[[bindings]]\ndoc = "b"\n>>>>>>> main\n')
-        (self.stub / "drift").unlink()
+    def test_a_gate_without_drift_lock_passes_with_no_drift_on_path(self) -> None:
         self.env["PATH"] = os.pathsep.join([str(self.stub), "/usr/bin", "/bin",
                                             "/usr/sbin", "/sbin"])
-        self.assert_gate_fails("drift.lock", "conflict", "okf-lock-merge.py")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("drift", result.stdout)
 
     def test_an_unmigrated_bundle_fails_naming_okf_migrate_in_both_profiles(self) -> None:
         for profile in ("code", "wiki"):
@@ -650,7 +533,6 @@ class RuntimeTests(unittest.TestCase):
         cases = {
             "wiki over a code profile": (("--profile", "wiki"), {".okf-profile": "code\n"}),
             "code over a wiki profile": ((), {".okf-profile": "wiki\n"}),
-            "wiki into a repo with a drift.lock": (("--profile", "wiki"), {"drift.lock": ""}),
             "wiki into a repo with a pin": (("--profile", "wiki"), {".okf-drift-version": "v0.7.0\n"}),
         }
         for label, (args, files) in cases.items():
@@ -719,132 +601,19 @@ class RuntimeTests(unittest.TestCase):
                 after = {p: p.read_bytes() for p in (target / "knowledge").rglob("*.md")}
                 self.assertEqual(after, before)
 
-    def workflow(self, name: str, drift_version: str) -> None:
-        """The consumer's own gate workflow, as /okf-setup installs it (`.yml`) or as a
-        repository whose every other workflow is `.yaml` renames it."""
-        path = self.root / ".github/workflows" / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            "      - name: okf v0.6.0 and drift, pinned\n"
-            "        run: |\n"
-            "          go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0\n"
-            f"          curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version {drift_version}\n"
-        )
-
-    def test_drift_version_mismatch_is_fatal_under_either_workflow_extension(self) -> None:
-        """The pin is read from `knowledge.yml` OR `knowledge.yaml`. With a single
-        hardcoded name, renaming the workflow to the repository's own convention disabled
-        this check in silence — the gate stayed green with the two detectors disagreeing."""
-        for name in ("knowledge.yml", "knowledge.yaml"):
-            with self.subTest(workflow=name):
-                self.setUp()
-                self.workflow(name, "v0.10.1")
-                self.env["DRIFT_VERSION"] = "v0.9.9"
-                result = self.run_script("okf-check.sh")
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn("FAIL  drift on PATH is 'v0.9.9'", result.stdout)
-                # The message names the file that was actually read, not a guess.
-                self.assertIn(f".github/workflows/{name} pins 'v0.10.1'", result.stdout)
-                self.assertNotIn("okf gate passed", result.stdout)
-
-    def test_drift_version_agreement_leaves_the_gate_green(self) -> None:
-        for name in ("knowledge.yml", "knowledge.yaml"):
-            with self.subTest(workflow=name):
-                self.setUp()
-                self.workflow(name, "v0.10.1")
-                self.env["DRIFT_VERSION"] = "v0.10.1"
-                result = self.run_script("okf-check.sh")
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertNotIn("different detectors", result.stdout)
-
-    def test_gate_and_recall_accept_fresh_verdict(self) -> None:
-        for script in ("okf-check.sh", "okf-recall.sh"):
-            with self.subTest(script=script):
-                result = self.run_script(script)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_gate_rejects_empty_drift_after_success_or_failure(self) -> None:
-        (self.root / "drift.json").write_text("")
-        for code in ("0", "7"):
-            self.env["DRIFT_EXIT"] = code
-            with self.subTest(code=code):
-                result = self.run_script("okf-check.sh")
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-
-    def test_gate_rejects_malformed_drift_json(self) -> None:
-        (self.root / "drift.json").write_text("garbage")
-        result = self.run_script("okf-check.sh")
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("drift check produced no JSON", result.stdout)
-
-    def test_gate_rejects_nonzero_tools_even_with_fresh_json(self) -> None:
-        for variable in ("DRIFT_EXIT", "VALIDATE_EXIT"):
-            self.env[variable] = "7"
-            with self.subTest(variable=variable):
-                self.assert_unusable(self.run_script("okf-check.sh"))
-            del self.env[variable]
-
-    def test_gate_reports_stale_json_even_with_nonzero_status(self) -> None:
-        self.verdict("stale")
-        self.env["DRIFT_EXIT"] = "1"
-        result = self.run_script("okf-check.sh")
-        self.assert_unusable(result)
-        self.assertIn("drift result 'stale'", result.stdout)
-
-    def test_gate_accepts_nonfresh_drift_outside_bundle(self) -> None:
-        self.payload("drift", {"docs": [
-            {"path": "knowledge/project/state.md", "result": "fresh", "anchors": [], "links": []},
-            {"path": "docs/outside.md", "result": "broken", "anchors": [], "links": []},
-        ]})
-        self.env["DRIFT_EXIT"] = "1"
-        result = self.run_script("okf-check.sh")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(
-            "note  drift reports 1 non-fresh doc(s) outside knowledge; not gated here",
-            result.stdout,
-        )
-
-    def test_gate_rejects_nonzero_drift_with_all_fresh_docs(self) -> None:
-        self.verdict("fresh")
-        self.env["DRIFT_EXIT"] = "1"
-        result = self.run_script("okf-check.sh")
-        self.assert_unusable(result)
-        self.assertIn("drift check exited 1", result.stdout)
-
-    def test_recall_marks_stale_for_equivalent_paths(self) -> None:
-        self.verdict("stale")
-        self.env["DRIFT_EXIT"] = "1"
-        for bundle in ("knowledge", "./knowledge", "knowledge/", str(self.bundle)):
-            with self.subTest(bundle=bundle):
-                result = self.run_script("okf-recall.sh", bundle)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn("1 hit(s) for \"fixture\" in", result.stdout)
-                self.assertIn("— 1 STALE", result.stdout)
-                self.assertNotIn("targets unchanged", result.stdout)
-
-    def test_recall_labels_a_dead_link_broken_not_stale(self) -> None:
-        self.payload("drift", {"docs": [{"path": "knowledge/project/state.md", "result": "broken",
-                                         "anchors": [], "links": [{"target": "gone.md", "line": 3,
-                                                                    "result": "broken"}]}]})
-        self.env["DRIFT_EXIT"] = "1"
-        result = self.run_script("okf-recall.sh")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("BROKEN LINK: it points at a file that does not exist", result.stdout)
-        self.assertIn("broken link at line 3: gone.md", result.stdout)
-        self.assertNotIn("STALE: code moved", result.stdout)
+    def test_gate_rejects_a_nonzero_okf_validate(self) -> None:
+        self.env["VALIDATE_EXIT"] = "7"
+        self.assert_unusable(self.run_script("okf-check.sh"))
 
     def test_gate_caps_a_long_warning_list_unless_verbose(self) -> None:
-        # Value: protects=the coverage list stays 8 names + a count; fails_when=the cap or OKF_VERBOSE breaks; why_new=no test had >8 concepts; seam=none
+        # Value: protects=a grouped list stays 8 names + a count; fails_when=the cap or OKF_VERBOSE breaks; why_new=no test had >8 concepts; seam=none
         rows = []
-        docs = [{"path": "knowledge/project/state.md", "result": "fresh", "anchors": [], "links": []}]
         for i in range(10):
             self.concept(f"architecture/c{i:02d}")
             rows.append(f"- [Second](/architecture/c{i:02d}.md) — Second fixture.")
-            docs.append({"path": f"knowledge/architecture/c{i:02d}.md", "result": "fresh", "anchors": [], "links": []})
         (self.bundle / "architecture/index.md").write_text("\n".join(rows) + "\n")
-        self.payload("drift", {"docs": docs})
         capped = self.run_script("okf-check.sh")
-        self.assertIn("10 concept(s) with no tracked target", capped.stdout)
+        self.assertIn("10 concept(s) with empty code_refs", capped.stdout)
         self.assertIn("… and 2 more (OKF_VERBOSE=1 lists them)", capped.stdout)
         self.assertNotIn("architecture/c09.md", capped.stdout)
         self.env["OKF_VERBOSE"] = "1"
@@ -852,153 +621,18 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("architecture/c09.md", full.stdout)
         self.assertNotIn("more (OKF_VERBOSE=1", full.stdout)
 
-    def test_gate_suggests_the_sweep_once_for_several_drifted_anchors(self) -> None:
-        # Value: protects=one sweep hint when >1 anchor drifted; fails_when=the count or threshold breaks; why_new=only the single-anchor case was tested; seam=none
-        stale = lambda name: {"identity": f"src/{name}.c", "path": f"src/{name}.c", "result": "stale",
-                              "reason": {"code": "changed_after_baseline", "message": "m"}, "blame": {}}
-        self.payload("drift", {"docs": [{"path": "knowledge/project/state.md", "result": "stale",
-                                         "anchors": [stale("a"), stale("b")], "links": []}]})
-        self.env["DRIFT_EXIT"] = "1"
-        result = self.run_script("okf-check.sh")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(result.stdout.count("okf-restamp.sh --format-only"), 1)
-        self.assertIn("note  2 anchor(s) drifted", result.stdout)
-
-    def test_recall_without_drift_searches_and_says_so(self) -> None:
-        """No binary, or no lock: a warning and a labelled search, not exit 2."""
-        no_drift = self.root / "nodrift"
-        no_drift.mkdir()
-        os.symlink(self.stub / "okf", no_drift / "okf")
-        for case in ("binary", "lock"):
-            with self.subTest(case=case):
-                env = dict(self.env)
-                if case == "binary":
-                    env["PATH"] = str(no_drift) + os.pathsep + "/usr/bin:/bin"
-                else:
-                    (self.root / "drift.lock").rename(self.root / "drift.lock.off")
-                saved, self.env = self.env, env
-                try:
-                    result = self.run_script("okf-recall.sh")
-                finally:
-                    self.env = saved
-                    if case == "lock":
-                        (self.root / "drift.lock.off").rename(self.root / "drift.lock")
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn("warn  drift did not run (", result.stdout)
-                self.assertIn("1 hit(s)", result.stdout)
-                self.assertIn("drift not run · no status", result.stdout)
-
-    def test_recall_with_a_failing_drift_is_still_unusable(self) -> None:
-        self.env["DRIFT_EXIT"] = "3"
-        self.assert_unusable(self.run_script("okf-recall.sh"))
-
-    def stale_symbol(self, blame: object = None) -> None:
-        """A doc whose ONLY stale anchor is a symbol binding. `path` and `identity` differ
-        here on purpose: a repair printed from `path` binds the whole file and leaves the
-        symbol anchor exactly as stale as it was."""
-        self.payload("drift", {"docs": [{
-            "path": "knowledge/project/state.md",
-            "result": "stale",
-            "anchors": [{
-                "identity": "src/lib.rs#admit_reusable",
-                "raw": "src/lib.rs#admit_reusable@sig:1d22599b721b091a",
-                "kind": "symbol",
-                "path": "src/lib.rs",
-                "symbol": "admit_reusable",
-                "provenance": {"kind": "sig", "value": "1d22599b721b091a"},
-                "result": "stale",
-                "reason": {"code": "changed_after_baseline", "message": "content changed"},
-                "blame": blame if blame is not None else {
-                    "author": "Alessandro Viganò",
-                    "commit": "0123456789abcdef0123456789abcdef01234567",
-                    "date": "2026-09-16T20:18:31+02:00",
-                    "subject": "chore: reformat, unrelated",
-                },
-            }],
-            "links": [],
-        }]})
-        self.env["DRIFT_EXIT"] = "1"
-
-    def test_gate_restamp_command_names_the_symbol_binding_not_the_file(self) -> None:
-        self.stale_symbol()
-        result = self.run_script("okf-check.sh")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(
-            "okf-restamp.sh 'knowledge/project/state.md' 'src/lib.rs#admit_reusable' "
-            "'<what you read>'",
-            result.stdout,
-        )
-        self.assertNotIn("okf-restamp.sh 'knowledge/project/state.md' 'src/lib.rs' ", result.stdout)
-        # One drifted anchor needs no sweep hint; it is for a reformat's many.
-        self.assertNotIn("--format-only", result.stdout)
-        self.assertIn("drifted from src/lib.rs#admit_reusable", result.stdout)
-
-    def test_gate_labels_blame_as_the_last_commit_touching_the_file(self) -> None:
-        self.stale_symbol()
-        result = self.run_script("okf-check.sh")
-        self.assertIn(
-            "last commit touching this file (not necessarily the cause): 01234567 "
-            "2026-09-16 chore: reformat, unrelated (Alessandro Viganò)",
-            result.stdout,
-        )
-        self.assertNotIn("blame: 01234567", result.stdout)
-
-    def test_recall_withheld_names_the_identity_and_labels_blame(self) -> None:
-        self.stale_symbol()
-        result = self.run_script("okf-recall.sh")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("src/lib.rs#admit_reusable  [changed_after_baseline]", result.stdout)
-        self.assertIn(
-            "last commit touching this file (not necessarily the cause): 01234567 "
-            "2026-09-16 chore: reformat, unrelated (Alessandro Viganò)",
-            result.stdout,
-        )
-
-    def test_uncommitted_change_keeps_its_own_wording_in_both_scripts(self) -> None:
-        self.stale_symbol(blame={})
-        for script in ("okf-check.sh", "okf-recall.sh"):
-            with self.subTest(script=script):
-                result = self.run_script(script)
-                self.assertIn("(uncommitted change — nothing to blame yet)", result.stdout)
-
-    def test_gate_rejects_partial_report_even_when_an_index_matched(self) -> None:
-        self.payload("drift", {"docs": [{"path": "knowledge/index.md", "result": "fresh"}]})
-        result = self.run_script("okf-check.sh")
-        self.assert_unusable(result)
-        self.assertIn("no drift verdict", result.stdout)
-
-    def test_gate_rejects_missing_or_unknown_verdict(self) -> None:
-        for result in (None, "surprise"):
-            self.payload("drift", {"docs": [{"path": "knowledge/project/state.md", "result": result}]})
-            with self.subTest(result=result):
-                self.assert_unusable(self.run_script("okf-check.sh"))
-
-    def test_recall_rejects_missing_or_unknown_verdict(self) -> None:
-        for docs in ([], [{"path": "knowledge/project/state.md"}],
-                     [{"path": "knowledge/project/state.md", "result": "surprise"}]):
-            with self.subTest(docs=docs):
-                self.payload("drift", {"docs": docs})
-                self.assert_unusable(self.run_script("okf-recall.sh"))
-
     def test_recall_rejects_search_failure_even_with_valid_results(self) -> None:
         self.env["SEARCH_EXIT"] = "3"
         self.assert_unusable(self.run_script("okf-recall.sh"))
         (self.root / "search.json").write_text("")
         self.assert_unusable(self.run_script("okf-recall.sh"))
 
-    def test_recall_rejects_malformed_search_and_drift(self) -> None:
-        for name in ("search", "drift"):
-            path = self.root / f"{name}.json"
-            original = path.read_text()
-            for blob in ("", "garbage", "null", "{}", "42"):
-                with self.subTest(name=name, blob=blob):
-                    path.write_text(blob)
-                    self.assert_unusable(self.run_script("okf-recall.sh"))
-            path.write_text(original)
-
-    def test_recall_rejects_failed_drift_with_fresh_json(self) -> None:
-        self.env["DRIFT_EXIT"] = "7"
-        self.assert_unusable(self.run_script("okf-recall.sh"))
+    def test_recall_rejects_malformed_search(self) -> None:
+        path = self.root / "search.json"
+        for blob in ("", "garbage", "null", "{}", "42"):
+            with self.subTest(blob=blob):
+                path.write_text(blob)
+                self.assert_unusable(self.run_script("okf-recall.sh"))
 
     def test_recall_accepts_genuine_empty_search(self) -> None:
         self.payload("search", [])
@@ -1014,7 +648,6 @@ class RuntimeTests(unittest.TestCase):
         guard = self.stub / "perl"
         guard.write_text('#!/bin/sh\nfor arg do\n[ "${#arg}" -lt 131072 ] || exit 126\ndone\nexec ' + shlex.quote(perl) + ' "$@"\n')
         guard.chmod(0o755)
-        self.payload("drift", {"docs": [{"path": "knowledge/project/state.md", "result": "fresh", "padding": "x" * 300000}]})
         self.payload("search", [{"concept_id": "project/state", "description": "x" * 300000, "score": 1}])
         for script in ("okf-check.sh", "okf-recall.sh"):
             with self.subTest(script=script):
@@ -1024,9 +657,9 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(list(self.root.glob("okf-recall.*")), [])
 
 
-class BootstrapTests(unittest.TestCase):
+class TidyTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory(prefix="okf-bootstrap-")
+        self.tmp = tempfile.TemporaryDirectory(prefix="okf-tidy-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         subprocess.run(["git", "init", "-q"], cwd=self.root, check=True,
@@ -1048,27 +681,11 @@ class BootstrapTests(unittest.TestCase):
             "last_updated: 2026-09-16\n"
             "code_refs:\n"
             "  - src/lib.rs\n"
-            "  - scripts/build.mjs\n"
-            "  - VERSION\n"
-            "  - package.json\n"
-            "  - .github/workflows/ci.yml\n"
-            "  - README.md\n"
-            "  - docs/\n"
             "---\n"
             "# Fixture\n\nA fixture concept.\n"
         )
-        for relative, content in {
-            "src/lib.rs": "pub fn fixture() {}\n",
-            "scripts/build.mjs": "export const fixture = true;\n",
-            "VERSION": "0.7.0\n",
-            "package.json": "{}\n",
-            ".github/workflows/ci.yml": "name: fixture\n",
-            "README.md": "# Fixture\n",
-            "docs/notes.md": "# Notes\n",
-        }.items():
-            path = self.root / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
+        (self.root / "src").mkdir()
+        (self.root / "src/lib.rs").write_text("pub fn fixture() {}\n")
 
         self.stub = self.root / "bin"
         self.stub.mkdir()
@@ -1080,45 +697,13 @@ class BootstrapTests(unittest.TestCase):
             '*) exit 2 ;;\n'
             'esac\n'
         )
-        (self.stub / "drift").write_text(
-            '#!/bin/sh\n'
-            'set -eu\n'
-            'case "${1:-}" in\n'
-            'link)\n'
-            '  shift\n'
-            '  if [ -n "${DRIFT_LINK_FAIL:-}" ]; then echo "link refused by the stub" >&2; exit 1; fi\n'
-            '  printf "%s\\n" "$*" >> "$DRIFT_LINK_LOG"\n'
-            '  if [ ! -f "$DRIFT_LOCK" ]; then printf "version = 1\\n" > "$DRIFT_LOCK"; fi\n'
-            '  {\n'
-            '    printf "\\n[[bindings]]\\ndoc = \\"%s\\"\\ntarget = \\"%s\\"\\nsig = \\"fixture\\"\\n" "$1" "$2"\n'
-            '  } >> "$DRIFT_LOCK"\n'
-            '  ;;\n'
-            'check) cat "$DRIFT_CHECK_JSON" ;;\n'
-            '*) exit 2 ;;\n'
-            'esac\n'
-        )
-        for path in (self.stub / "okf", self.stub / "drift"):
-            path.chmod(0o755)
+        (self.stub / "okf").chmod(0o755)
 
         self.validate_json = self.root / "validate.json"
         self.validate_json.write_text(json.dumps({"gate_passed": True, "is_conformant": True}))
-        self.drift_check_json = self.root / "drift-check.json"
-        self.drift_check_json.write_text(json.dumps({
-            "docs": [{
-                "path": "knowledge/concept.md",
-                "result": "fresh",
-                "anchors": [],
-                "links": [],
-            }]
-        }))
-        self.link_log = self.root / "drift-links.log"
-        self.link_log.write_text("")
         self.env = dict(
             os.environ,
             OKF_VALIDATE_JSON=str(self.validate_json),
-            DRIFT_CHECK_JSON=str(self.drift_check_json),
-            DRIFT_LINK_LOG=str(self.link_log),
-            DRIFT_LOCK=str(self.root / "drift.lock"),
             PATH=str(self.stub) + os.pathsep + os.environ["PATH"],
             TMPDIR=str(self.root),
             **GIT_ID,
@@ -1127,8 +712,7 @@ class BootstrapTests(unittest.TestCase):
         self.env.pop("OKF_DRIFT_SHIM", None)
         if os.environ.get("OKF_SELFTEST_PINNED") == "1":
             self.env["XDG_CACHE_HOME"] = str(pin_scripts(self.root, (
-                "okf-check.sh", "okf-recall.sh", "okf-drift-bootstrap.sh",
-                "okf-restamp.sh", "okf-tidy.sh", "okf-log.sh")))
+                "okf-check.sh", "okf-recall.sh", "okf-tidy.sh", "okf-log.sh")))
         subprocess.run(["git", "add", "."], cwd=self.root, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -1139,268 +723,6 @@ class BootstrapTests(unittest.TestCase):
             command = [str(SCRIPTS / script)]
         return subprocess.run(command + list(args), cwd=self.root, env=self.env,
                               text=True, capture_output=True)
-
-    def test_bootstrap_binds_code_only_and_gate_accepts_unbound_paths(self) -> None:
-        """The gate half runs against a stub `drift check` that answers `fresh`: it proves
-        okf-check.sh never cross-checks code_refs against drift.lock, not that real drift
-        reports an unbound doc as fresh (measured in okf-quirks.md, and by hand)."""
-        result = self.run_script("okf-drift-bootstrap.sh", "knowledge")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(
-            self.link_log.read_text().splitlines(),
-            ["knowledge/concept.md src/lib.rs", "knowledge/concept.md scripts/build.mjs"],
-        )
-        lock = (self.root / "drift.lock").read_text()
-        self.assertNotIn('target = "VERSION"', lock)
-        self.assertIn("not-code knowledge/concept.md -> VERSION", result.stdout)
-        self.assertIn("skip  knowledge/concept.md -> docs/", result.stdout)
-        self.assertNotIn("FAIL  knowledge/concept.md -> docs/", result.stdout)
-        self.assertIn("5 not-code", result.stdout)
-
-        gate = self.run_script("okf-check.sh", "knowledge")
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        self.assertIn("ok    knowledge:", gate.stdout)
-
-        lock_path = self.root / "drift.lock"
-        lock_path.write_text(
-            lock_path.read_text()
-            + '\n[[bindings]]\n'
-            'doc = "knowledge/concept.md"\n'
-            'target = "VERSION"\n'
-            'sig = "fixture"\n'
-        )
-        held = self.run_script("okf-drift-bootstrap.sh", "knowledge")
-        self.assertEqual(held.returncode, 0, held.stdout + held.stderr)
-        # A hand binding on a non-code path is a deliberate content anchor: the bootstrap
-        # reports it and keeps it, and no longer prints an unlink command beside it.
-        self.assertIn("held-non-code knowledge/concept.md -> VERSION (deliberate content anchor — kept)",
-                      held.stdout)
-        self.assertNotIn("drift unlink", held.stdout)
-
-    def test_bootstrap_treats_symbol_binding_as_covering_file(self) -> None:
-        (self.root / "drift.lock").write_text(
-            'version = 1\n\n[[bindings]]\n'
-            'doc = "knowledge/concept.md"\n'
-            'target = "src/lib.rs#fixture"\n'
-            'sig = "fixture"\n'
-        )
-        result = self.run_script("okf-drift-bootstrap.sh", "knowledge")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("knowledge/concept.md src/lib.rs", self.link_log.read_text())
-        self.assertIn(
-            "skip  knowledge/concept.md -> src/lib.rs "
-            "(symbol binding(s) present in drift.lock)",
-            result.stdout,
-        )
-
-    def test_bootstrap_rejects_symbol_code_ref(self) -> None:
-        concept = self.root / "knowledge/concept.md"
-        concept.write_text(concept.read_text().replace("  - src/lib.rs\n", "  - src/lib.rs#fixture\n"))
-        result = self.run_script("okf-drift-bootstrap.sh", "knowledge")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(
-            "FAIL  knowledge/concept.md -> src/lib.rs#fixture "
-            "(#Symbol belongs in drift.lock via drift link, not in code_refs — list the file here)",
-            result.stdout,
-        )
-        self.assertNotIn("knowledge/concept.md src/lib.rs#fixture", self.link_log.read_text())
-
-
-    def test_bootstrap_leaves_shell_scripts_unbound(self) -> None:
-        concept = self.root / "knowledge/concept.md"
-        concept.write_text(concept.read_text().replace("  - VERSION\n", "  - VERSION\n  - scripts/build.sh\n"))
-        (self.root / "scripts/build.sh").write_text("#!/bin/sh\necho build\n")
-        subprocess.run(["git", "add", "."], cwd=self.root, check=True)
-        result = self.run_script("okf-drift-bootstrap.sh", "knowledge")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("scripts/build.sh", self.link_log.read_text())
-        self.assertIn("not-code knowledge/concept.md -> scripts/build.sh (high-churn script: "
-                      "hand-link only if the concept describes its logic)", result.stdout)
-
-    HISTORY = "# Log\n\n## 2026-01-01\n* older entry\n"
-    STILL = ("* STILL ACCURATE, re-stamped `concept.md` <- `src/lib.rs#fixture` (last commit on the file: "
-             '01234567 "tighten it"): ')
-
-    def git(self, *args: str) -> None:
-        subprocess.run(["git", *args], cwd=self.root, env=self.env, check=True, capture_output=True)
-
-    def stale_anchor(self, branch: str = "alice/restamp") -> None:
-        """A stale symbol anchor, committed on `main` (= origin/HEAD), on a work branch."""
-        self.drift_check_json.write_text(json.dumps({"docs": [{
-            "path": "knowledge/concept.md", "result": "stale", "links": [],
-            "anchors": [{"identity": "src/lib.rs#fixture", "path": "src/lib.rs", "result": "stale",
-                         "reason": {"code": "changed_after_baseline", "message": "m"},
-                         "blame": {"commit": "0123456789abcdef", "subject": "tighten it"}}],
-        }]}))
-        (self.root / "knowledge/log.md").write_text(self.HISTORY)
-        split_log(self.root)
-        self.frozen = (self.root / "knowledge/log.md").read_text()
-        (self.root / "drift.lock").write_text('version = 1\n\n[[bindings]]\ndoc = "knowledge/concept.md"\n'
-                                              'target = "src/lib.rs#fixture"\nsig = "fixture"\n')
-        self.git("add", ".")
-        self.git("commit", "-qm", "base")
-        self.git("branch", "-M", "main")
-        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
-        self.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-        self.git("checkout", "-qb", branch)
-
-    def entries(self) -> dict[str, str]:
-        return {str(p.relative_to(self.root)): p.read_text()
-                for p in sorted((self.root / "knowledge").glob("log/*/log.md"))}
-
-    def restamp(self, note: str, *opts: str) -> subprocess.CompletedProcess[str]:
-        return self.run_script("okf-restamp.sh", *opts, "knowledge/concept.md", "src/lib.rs#fixture", note)
-
-    def assert_nothing_logged(self) -> None:
-        self.assertEqual(self.entries(), {})
-        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
-
-    def test_restamp_refuses_an_unmigrated_bundle_and_names_okf_migrate(self) -> None:
-        self.stale_anchor()
-        (self.root / "knowledge/log.md").write_text(self.HISTORY)
-        self.frozen = self.HISTORY
-        result = self.restamp("read fixture(): the guard the concept names is unchanged")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("/okf-migrate", result.stderr)
-        self.assert_nothing_logged()
-        self.assertFalse(self.link_log.exists() and self.link_log.read_text().strip())
-        sweep = self.run_script("okf-restamp.sh", "--format-only")
-        self.assertEqual(sweep.returncode, 1, sweep.stdout + sweep.stderr)
-        self.assertIn("/okf-migrate", sweep.stderr)
-        self.assert_nothing_logged()
-
-    def test_restamp_agrees_with_okf_log_on_a_bundle_with_no_root_log(self) -> None:
-        """okf-log.sh alone judges whether the bundle can take a log entry."""
-        self.stale_anchor()
-        (self.root / "knowledge/log.md").unlink()
-        result = self.restamp("read fixture(): the guard the concept names is unchanged")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(len(self.entries()), 1)
-        sweep = self.run_script("okf-restamp.sh", "--format-only")
-        self.assertEqual(sweep.returncode, 0, sweep.stdout + sweep.stderr)
-
-    def test_restamp_refuses_an_empty_note_and_an_unknown_binding(self) -> None:
-        self.stale_anchor()
-        short = self.run_script("okf-restamp.sh", "knowledge/concept.md", "src/lib.rs#fixture", "ok")
-        self.assertEqual(short.returncode, 1, short.stdout + short.stderr)
-        self.assertIn("say what you read", short.stderr)
-        unknown = self.run_script("okf-restamp.sh", "knowledge/concept.md", "src/lib.rs",
-                                  "read the whole file against the concept")
-        self.assertEqual(unknown.returncode, 1, unknown.stdout + unknown.stderr)
-        self.assertIn("path#symbol for a symbol anchor", unknown.stderr)
-        self.assertEqual(self.link_log.read_text(), "")
-        self.assert_nothing_logged()
-
-    def test_restamp_links_and_writes_its_line_into_the_branch_entry(self) -> None:
-        self.stale_anchor()
-        result = self.restamp("read fixture(): the guard the concept names is unchanged")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(self.link_log.read_text().splitlines(),
-                         ["knowledge/concept.md src/lib.rs#fixture --doc-is-still-accurate"])
-        [(entry, text)] = self.entries().items()
-        self.assertEqual(re.fullmatch(ENTRY_RE, entry).groups()[:2], (TODAY, "restamp"))
-        tag = "<!-- okf-log branch: alice/restamp -->\n"
-        self.assertEqual(text, f"{tag}## {TODAY}\n{self.STILL}read fixture(): the guard the concept names is unchanged\n")
-        self.assertIn(entry, result.stdout)
-        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
-        again = self.restamp("read fixture() a second time: still the same guard")
-        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
-        self.assertEqual(self.entries(), {entry: f"{tag}## {TODAY}\n{self.STILL}read fixture() a second time: "
-                                                 f"still the same guard\n{self.STILL}read fixture(): the guard "
-                                                 "the concept names is unchanged\n"})
-        self.assertEqual((self.root / "knowledge/log.md").read_text(), self.frozen)
-
-    def test_restamp_of_a_fresh_anchor_changes_nothing(self) -> None:
-        # Value: protects=no link and no line in the log entry for a fresh anchor; fails_when=the fresh branch falls through to drift link; why_new=only stale anchors were tested; seam=none
-        self.stale_anchor()
-        data = json.loads(self.drift_check_json.read_text())
-        data["docs"][0]["result"] = "fresh"
-        data["docs"][0]["anchors"][0]["result"] = "fresh"
-        self.drift_check_json.write_text(json.dumps(data))
-        result = self.restamp("read fixture(): nothing moved at all")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("is fresh; nothing to re-stamp, nothing logged", result.stdout)
-        self.assertEqual(self.link_log.read_text(), "")
-        self.assert_nothing_logged()
-
-    def test_restamp_passes_entry_and_slug_through(self) -> None:
-        self.stale_anchor()
-        chosen = self.root / "knowledge/log/2026-01-02-other-abcd/log.md"
-        chosen.parent.mkdir(parents=True)
-        chosen.write_text("## 2026-01-02\n* x\n")
-        result = self.restamp("read fixture(): the guard still holds",
-                              "--entry", str(chosen.relative_to(self.root)))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(chosen.read_text(), f"## {TODAY}\n{self.STILL}read fixture(): the guard still holds\n\n"
-                                             "## 2026-01-02\n* x\n")
-        self.assertEqual(list(self.entries()), ["knowledge/log/2026-01-02-other-abcd/log.md"])
-        self.git("checkout", "-q", "--detach")
-        slugged = self.restamp("read fixture(): the guard holds on a detached head", "--slug", "hotfix")
-        self.assertEqual(slugged.returncode, 0, slugged.stdout + slugged.stderr)
-        [new] = [e for e in self.entries() if "-other-" not in e]
-        self.assertEqual(re.fullmatch(ENTRY_RE, new).group(2), "hotfix")
-
-    def test_restamp_on_a_detached_head_without_slug_refuses_and_writes_nothing(self) -> None:
-        self.stale_anchor()
-        self.git("checkout", "-q", "--detach")
-        result = self.restamp("read fixture(): the guard the concept names is unchanged")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("detached", result.stderr)
-        self.assertIn("--slug", result.stderr)
-        self.assertEqual(self.link_log.read_text(), "")
-        self.assert_nothing_logged()
-
-    def test_a_failed_link_restores_the_entry_or_removes_the_new_folder(self) -> None:
-        self.stale_anchor()
-        self.env["DRIFT_LINK_FAIL"] = "1"
-        first = self.restamp("read fixture(): the guard the concept names is unchanged")
-        self.assertEqual(first.returncode, 1, first.stdout + first.stderr)
-        self.assertIn("drift link failed", first.stderr)
-        self.assertEqual([p.name for p in (self.root / "knowledge").glob("log/*")], [])
-        self.assert_nothing_logged()
-        del self.env["DRIFT_LINK_FAIL"]
-        ok = self.restamp("read fixture(): the guard the concept names is unchanged")
-        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
-        before = {p: (self.root / p).read_bytes() for p in self.entries()}
-        self.assertEqual(len(before), 1)
-        self.env["DRIFT_LINK_FAIL"] = "1"
-        failed = self.restamp("read fixture() again: still unchanged, but the link fails")
-        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
-        self.assertEqual({p: (self.root / p).read_bytes() for p in self.entries()}, before)
-
-    def test_restamp_through_the_launcher_fetches_and_verifies_okf_log(self) -> None:
-        """An empty cache: the pinned launcher fetches okf-restamp.sh and, for its log
-        line, okf-log.sh, each checked against the pin; a damaged cached okf-log.sh fails."""
-        self.stale_anchor()
-        cache = Path(self.tmp.name) / "empty-cache"
-        pin_root = Path(tempfile.mkdtemp(prefix="pin-", dir=self.tmp.name))
-        pin_scripts(pin_root, ("okf-restamp.sh", "okf-log.sh"), fill_cache=False)
-        shutil.copy(pin_root / ".okf-drift-version", self.root / ".okf-drift-version")
-        (self.stub / "curl").write_text(
-            '#!/bin/sh\n'
-            'out=; url=\n'
-            'while [ "$#" -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -*) shift;; *) url=$1; shift;; esac; done\n'
-            f'cp "{SCRIPTS}/$(basename "$url")" "$out"\n'
-        )
-        (self.stub / "curl").chmod(0o755)
-        env = dict(self.env, XDG_CACHE_HOME=str(cache))
-        shim = ["sh", str(SCRIPTS / "okf-shim.sh"), "--repo-root", str(self.root), "okf-restamp.sh",
-                "knowledge/concept.md", "src/lib.rs#fixture"]
-
-        def run(note: str) -> subprocess.CompletedProcess[str]:
-            return subprocess.run(shim + [note], cwd=self.root, env=env, text=True, capture_output=True)
-
-        result = run("read fixture(): the guard the concept names is unchanged")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        cached = cache / "okf-drift/v0.7.0/okf-log.sh"
-        self.assertEqual(cached.read_bytes(), (SCRIPTS / "okf-log.sh").read_bytes())
-        [(entry, before)] = self.entries().items()
-        cached.write_bytes(cached.read_bytes() + b"# damaged\n")
-        damaged = run("read fixture() again: the cached writer is damaged")
-        self.assertNotEqual(damaged.returncode, 0, damaged.stdout + damaged.stderr)
-        self.assertIn("is damaged", damaged.stderr)
-        self.assertEqual(self.entries(), {entry: before})
-        self.assertEqual(len(self.link_log.read_text().splitlines()), 1)
 
     def test_tidy_handles_spaces_and_non_ascii_names(self) -> None:
         # Value: protects=dates and rows for café.md, no repeated row for a spaced name; fails_when=git status quoting or byte paths return; why_new=fixture names were ASCII; seam=none
@@ -1753,603 +1075,6 @@ class LogEntryTests(unittest.TestCase):
         self.history = "# Log\n"
         self.assert_refused(self.log("add", "knowledge", "* x"), "/okf-migrate")
 
-
-class FormatOnlyTests(unittest.TestCase):
-    """The sweep's verdict, through `okf-restamp.sh --compare`: no repository, no drift.
-    Every MUST_DIFFER pair changes meaning while looking like formatting, and an earlier
-    draft that normalised whitespace, trailing commas and import order re-stamped each one
-    without anyone reading it (an independent review built them against real drift)."""
-
-    MUST_DIFFER = [
-        ('c1', 'x.c', 'int f(int x, int y) {\n  return x-- - y;\n}\n', 'int f(int x, int y) {\n  return x - --y;\n}\n'),
-        ('c2', 'x.c', 'void h(void) {\n  // TODO\n  free(p);\n}\n', 'void h(void) {\n  // TODO free(p);\n}\n'),
-        ('c3', 'x.c', 'const char *s = "a,)";\n', 'const char *s = "a)";\n'),
-        ('c4', 'x.c', '#define FOO 1\n#include "cfg.h"\n', '#include "cfg.h"\n#define FOO 1\n'),
-        ('c5', 'x.c', '#ifdef _WIN32\n#include <windows.h>\n#endif\n', '#include <windows.h>\n#ifdef _WIN32\n#endif\n'),
-        ('c6', 'x.c', '#define F(x) (x)\n', '#define F (x) (x)\n'),
-        ('c7', 'x.c', '#define A 1\nint b = A;\n', '#define A 1 int b = A;\n'),
-        ('j1', 'x.js', 'function f(a, b) {\n  return a + ++b;\n}\n', 'function f(a, b) {\n  return a++ + b;\n}\n'),
-        ('j2', 'x.js', 'function f(x) {\n  return x;\n}\n', 'function f(x) {\n  return\n  x;\n}\n'),
-        ('j3', 'x.js', 'const a = [1,];\n', 'const a = [1];\n'),
-        ('j4', 'x.js', 'const a = [,];\n', 'const a = [];\n'),
-        ('j5', 'x.js', 'let s = `a ${b}  c`;\n', 'let s = `a ${b} c`;\n'),
-        ('j6', 'x.js', 'let s = `${ "`" }  c`;\n', 'let s = `${ "`" } c`;\n'),
-        ('p1', 'x.py', 'def f(x):\n    return (x,)\n', 'def f(x):\n    return (x)\n'),
-        ('p2', 'x.py', 'from a import x\nfrom b import x\n\ndef f():\n    return x\n', 'from b import x\nfrom a import x\n\ndef f():\n    return x\n'),
-        ('p3', 'x.py', 'import os\nos = 3\n', 'os = 3\nimport os\n'),
-        ('p4', 'x.py', 'def f(a, b):\n    return g(a,  # c\n             b,\n    )\n', 'def f(a, b):\n    return g(a,  # c b,\n    )\n'),
-        ('r1', 'x.rs', 'fn g(s: &\'static str) { h("it\'s  here") }\n', 'fn g(s: &\'static str) { h("it\'s here") }\n'),
-        ('r2', 'x.rs', 'use x::{p::{a, b, c}, d};\nfn f() {}\n', 'use x::{p::{a, c}, b, d};\nfn f() {}\n'),
-        ('r3', 'x.rs', 'fn f(x: u32) -> (u32,) {\n    (x,)\n}\n', 'fn f(x: u32) -> (u32,) {\n    (x)\n}\n'),
-        ('r4', 'x.rs', 'fn f() -> &\'static str {\n    r#"a " b  c"#\n}\n', 'fn f() -> &\'static str {\n    r#"a " b c"#\n}\n'),
-        ('t1', 'x.ts', 'import Foo = Bar.Baz\nexport const r = sub(a, b)\nexport const s = "x"\n', 'import Foo = Bar.Baz\nexport const r = sub(b, a)\nexport const s = "x"\n'),
-        ('t2', 'x.js', 'import.meta.hot\nexport const r = sub(a, b)\nexport const s = "x"\n', 'import.meta.hot\nexport const r = sub(b, a)\nexport const s = "x"\n'),
-        ("c-intra-line", "x.c", "int f() {\n\treturn 1;\n}\n", "int f()   {\n\treturn 1;\n}\n"),
-        ("c-continuation", "x.c", "#define S \"a\\\n  b\"\n", "#define S \"a\\\n    b\"\n"),
-        ("swift-multiline-string", "x.swift", 'let s = """\n  a\n  """\n', 'let s = """\n    a\n  """\n'),
-        ("cpp-raw-string", "x.cpp", 'auto s = R"(\n  a\n)";\n', 'auto s = R"(\n    a\n)";\n'),
-        ("shell-indentation", "x.sh", "if true; then\n  echo a\nfi\n", "if true; then\n    echo a\nfi\n"),
-        ("yaml-indentation", "x.yml", "a:\n  b: 1\n", "a:\nb: 1\n"),
-        ("rust-reindent-is-not-ours", "x.rs", "fn f() {\n  g();\n}\n", "fn f() {\n    g();\n}\n"),
-        ("csharp-interpolated-verbatim", "x.cs", 'var s = @$"a\n  {b}\n";\n', 'var s = @$"a\n    {b}\n";\n'),
-        ("csharp-verbatim-interpolated", "x.cs", 'var s = $@"a\n  {b}\n";\n', 'var s = $@"a\n    {b}\n";\n'),
-        ("scala-braceless-indentation", "x.scala", "def f =\n  g()\n  h()\n", "def f =\n  g()\nh()\n"),
-        ("blank-line-before-block", "x.swift", "foo(x)\n{ y }\n", "foo(x)\n\n{ y }\n"),
-        ("c-blank-line-added", "x.c", "int a;\nint b;\n", "int a;\n\nint b;\n"),
-    ]
-    MAY_SETTLE = [
-        ("c-reindent", "x.c", "int f() {\n\treturn 1;\n}\n", "int f() {\n    return 1;\n}\n"),
-        ("c-trailing-whitespace", "src/a.h", "int a;\n\nint b;\n", "int a;   \n\t\nint b;\t\n"),
-        ("swift-reindent", "x.swift", "func f() {\n  g()\n}\n", "func f() {\n    g()\n}\n"),
-    ]
-
-    def compare(self, path: str, old: str, new: str) -> str:
-        with tempfile.TemporaryDirectory(prefix="okf-compare-") as tmp:
-            a, b = Path(tmp) / "old", Path(tmp) / "new"
-            a.write_text(old)
-            b.write_text(new)
-            result = subprocess.run(["sh", str(SCRIPTS / "okf-restamp.sh"), "--compare", path, str(a), str(b)],
-                                    text=True, capture_output=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            return result.stdout.strip()
-
-    def test_meaning_changes_are_never_settled(self) -> None:
-        for name, path, old, new in self.MUST_DIFFER:
-            with self.subTest(name=name):
-                self.assertEqual(self.compare(path, old, new), "differs")
-
-    def test_layout_changes_in_raw_hashed_languages_are_settled(self) -> None:
-        for name, path, old, new in self.MAY_SETTLE:
-            with self.subTest(name=name):
-                self.assertEqual(self.compare(path, old, new),
-                                 "format-only: indentation or trailing whitespace")
-
-
-# Kept beside the one class that uses them, so the import block above stays untouched.
-import re  # noqa: E402
-import sys  # noqa: E402
-
-
-@unittest.skipUnless(os.environ.get("OKF_SELFTEST_REAL_DRIFT") == "1",
-                     "real-drift tests; set OKF_SELFTEST_REAL_DRIFT=1")
-class LockMergeTests(unittest.TestCase):
-    """okf-lock-merge.py against the REAL drift, each case a real conflicted `git merge main`.
-
-    The branch always holds two commits: the first binds docs/d.md (it never conflicts),
-    the second is the scenario. The oracle for "serialized as drift does" is drift itself:
-    drift rewrites the whole lock on any link, so re-linking a fresh binding must leave the
-    merged bytes unchanged.
-    """
-
-    MAIN = "main"      # how the script names the side the result starts from
-    BRANCH = "branch"  # how it names the side whose changes it applies
-    FIRST = ("docs/d.md", "src/b.rs")
-
-    def setUp(self) -> None:
-        if shutil.which("drift") is None:
-            self.fail("OKF_SELFTEST_REAL_DRIFT=1 but drift is not on PATH; install the pinned drift")
-        self.tmp = tempfile.TemporaryDirectory(prefix="okf-lockmerge-")
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
-        self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
-                        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t", TMPDIR=str(self.root),
-                        GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
-        self.git("init", "-q", "-b", "main")
-        self.write("src/a.rs", "".join(f"fn a{i}() {{ {i} }}\n" for i in range(12)))
-        self.write("src/b.rs", "fn b() {}\n")
-        self.write("src/c.rs", "fn c() {}\n")
-        self.write("src/m.rs", "fn m() {}\n")
-        self.write("src/n.rs", "fn n() {}\n")
-        for doc in ("docs/a.md", "docs/c.md", "docs/m.md", "docs/z.md"):
-            self.write(doc, f"# {doc}\n")
-        self.drift("link", "docs/a.md", "src/a.rs")
-        self.drift("link", "docs/c.md", "src/c.rs")
-        self.drift("link", "docs/z.md", "src/b.rs")
-        self.commit("base")
-        self.git("checkout", "-q", "-b", "feature")
-        self.write(self.FIRST[0], "# d\n")
-        self.drift("link", *self.FIRST)
-        self.commit("feature binds d")
-
-    # --- fixture plumbing -------------------------------------------------------------
-    def git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["git", *args], cwd=self.root, env=self.env, text=True,
-                              capture_output=True, check=check)
-
-    def drift(self, *args: str) -> None:
-        result = subprocess.run(["drift", *args], cwd=self.root, env=self.env, text=True,
-                                capture_output=True)
-        self.assertEqual(result.returncode, 0, f"drift {args}: {result.stdout}{result.stderr}")
-
-    def write(self, relative: str, text: str) -> None:
-        path = self.root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
-
-    def commit(self, message: str) -> None:
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", message)
-
-    def lock(self) -> str:
-        return (self.root / "drift.lock").read_text()
-
-    def on_main(self) -> None:
-        self.git("checkout", "-q", "main")
-
-    def on_feature(self) -> None:
-        self.git("checkout", "-q", "feature")
-
-    def unmerged(self) -> str:
-        return self.git("diff", "--name-only", "--diff-filter=U").stdout
-
-    def start(self) -> subprocess.CompletedProcess[str]:
-        return self.git("merge", "-q", "--no-edit", "main", check=False)
-
-    def conclude(self) -> subprocess.CompletedProcess[str]:
-        return self.git("commit", "-q", "--no-edit", check=False)
-
-    def integrate_main(self) -> None:
-        """From the branch, bring main in; the lock must come out conflicted."""
-        self.on_feature()
-        started = self.start()
-        self.assertNotEqual(started.returncode, 0, "the fixture did not conflict")
-        self.assertIn("drift.lock", self.unmerged())
-
-    def finish(self) -> None:
-        """Settle any other conflicted path on stage 3 and conclude the operation: the
-        committed lock must be the one okf-lock-merge.py wrote, with the branch's first
-        commit still in it."""
-        resolved = self.lock()
-        for path in self.unmerged().split():
-            self.git("checkout", "--theirs", "--", path)
-            self.git("add", "--", path)
-        concluded = self.conclude()
-        self.assertEqual(concluded.returncode, 0, concluded.stdout + concluded.stderr)
-        self.assertEqual(self.git("status", "--porcelain").stdout, "")
-        self.assertEqual(self.git("show", "HEAD:drift.lock").stdout, resolved)
-        self.assertIn(self.FIRST, self.blocks())
-
-    def resolve(self, path: str | None = None) -> subprocess.CompletedProcess[str]:
-        env = dict(self.env)
-        if path is not None:
-            env["PATH"] = path
-        return subprocess.run([sys.executable, str(SCRIPTS / "okf-lock-merge.py")], cwd=self.root,
-                              env=env, text=True, capture_output=True)
-
-    def blocks(self) -> dict[tuple[str, str], str]:
-        found = {}
-        for block in self.lock().split("\n\n")[1:]:
-            doc = re.search(r'^doc = "(.*)"$', block, re.M).group(1)
-            target = re.search(r'^target = "(.*)"$', block, re.M).group(1)
-            found[(doc, target)] = block
-        return found
-
-    def assert_resolved(self, result: subprocess.CompletedProcess[str]) -> None:
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("drift.lock", self.unmerged())
-        self.assertNotIn("<<<<<<<", self.lock())
-
-    def assert_drift_serialization(self, doc: str, target: str) -> None:
-        before = self.lock()
-        self.drift("link", doc, target, "--doc-is-still-accurate")
-        self.assertEqual(self.lock(), before)
-
-    def check(self) -> dict[str, str]:
-        out = subprocess.run(["drift", "check", "--format", "json"], cwd=self.root, env=self.env,
-                             text=True, capture_output=True)
-        return {doc["path"]: doc["result"] for doc in json.loads(out.stdout)["docs"]}
-
-    # --- scenarios --------------------------------------------------------------------
-    def test_two_docs_added_at_the_same_sorted_position(self) -> None:
-        self.on_main()
-        self.drift("link", "docs/m.md", "src/m.rs")
-        self.write("NOTES", "main\n")
-        self.commit("main binds m")
-        self.on_feature()
-        self.write("docs/n.md", "# n\n")
-        self.drift("link", "docs/n.md", "src/n.rs")
-        self.write("NOTES", "feature\n")
-        self.commit("feature binds n")
-        self.integrate_main()
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertEqual(set(self.blocks()), {
-            ("docs/a.md", "src/a.rs"), ("docs/c.md", "src/c.rs"), ("docs/m.md", "src/m.rs"),
-            ("docs/n.md", "src/n.rs"), ("docs/z.md", "src/b.rs"), self.FIRST})
-        self.assertRegex(result.stdout, r"added\s+docs/n\.md -> src/n\.rs")
-        self.assertRegex(result.stdout, r"still unmerged:\n\s+NOTES\n")
-        self.assertIn("run the gate", result.stdout)
-        self.assertEqual(self.unmerged(), "NOTES\n")
-        self.assertEqual(set(self.check().values()), {"fresh"})
-        self.assert_drift_serialization("docs/n.md", "src/n.rs")
-        self.finish()
-
-    def edit_a(self, line: int) -> None:
-        text = (self.root / "src/a.rs").read_text().splitlines(keepends=True)
-        text[line] = f"fn a{line}() {{ {line} + 1 }}\n"
-        self.write("src/a.rs", "".join(text))
-
-    def restamp(self, doc: str, target: str) -> None:
-        self.drift("link", doc, target, "--doc-is-still-accurate")
-
-    MAIN_TAIL = ("docs/zm.md", "src/m.rs")
-    BRANCH_TAIL = ("docs/zn.md", "src/n.rs")
-
-    def main_appends(self, *, edit_a: bool = False, restamp_a: bool = False) -> None:
-        """On main: bind a doc that sorts last, and optionally change src/a.rs on its last
-        line (far from the branch's edit on line 0, so src/a.rs merges cleanly)."""
-        self.on_main()
-        self.write(self.MAIN_TAIL[0], "# zm\n")
-        self.drift("link", *self.MAIN_TAIL)
-        if edit_a:
-            self.edit_a(11)
-        if restamp_a:
-            self.restamp("docs/a.md", "src/a.rs")
-        self.commit("main")
-        self.on_feature()
-
-    def branch_appends(self) -> None:
-        """On the branch: bind another doc that sorts last. Two appends at the end of the
-        lock always conflict, far from the block the scenario changes, so git's alignment
-        of that change cannot dissolve the conflict."""
-        self.write(self.BRANCH_TAIL[0], "# zn\n")
-        self.drift("link", *self.BRANCH_TAIL)
-
-    def test_the_branch_removes_a_binding(self) -> None:
-        self.main_appends()
-        self.drift("unlink", "docs/c.md", "src/c.rs")
-        self.branch_appends()
-        self.commit("feature unbinds c")
-        self.integrate_main()
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertEqual(set(self.blocks()), {
-            ("docs/a.md", "src/a.rs"), ("docs/z.md", "src/b.rs"), self.MAIN_TAIL, self.BRANCH_TAIL,
-            self.FIRST})
-        self.assertRegex(result.stdout, r"removed\s+docs/c\.md -> src/c\.rs")
-        self.assert_drift_serialization(*self.MAIN_TAIL)
-        self.finish()
-
-    def test_a_restamp_whose_target_main_left_alone_comes_out_fresh(self) -> None:
-        self.main_appends()
-        self.write("src/c.rs", "fn c() { 1 }\n")
-        self.restamp("docs/c.md", "src/c.rs")
-        self.branch_appends()
-        self.commit("feature re-stamps c")
-        branch_block = self.blocks()[("docs/c.md", "src/c.rs")]
-        self.integrate_main()
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertEqual(self.blocks()[("docs/c.md", "src/c.rs")], branch_block)
-        self.assertRegex(result.stdout, r"modified\s+docs/c\.md -> src/c\.rs")
-        self.assertIn("no stale binding", result.stdout)
-        self.assertEqual(set(self.check().values()), {"fresh"})
-        self.finish()
-
-    def test_a_restamp_whose_target_main_changed_comes_out_stale(self) -> None:
-        self.main_appends(edit_a=True)
-        self.edit_a(0)
-        self.restamp("docs/a.md", "src/a.rs")
-        self.branch_appends()
-        self.commit("feature re-stamps a")
-        branch_block = self.blocks()[("docs/a.md", "src/a.rs")]
-        self.integrate_main()
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertEqual(self.blocks()[("docs/a.md", "src/a.rs")], branch_block)
-        self.assertRegex(result.stdout, r"stale\s+docs/a\.md -> src/a\.rs")
-        self.assertEqual(self.check()["docs/a.md"], "stale")
-        self.finish()
-
-    def test_both_sides_resign_the_same_binding(self) -> None:
-        self.main_appends(edit_a=True, restamp_a=True)
-        self.edit_a(0)
-        self.restamp("docs/a.md", "src/a.rs")
-        self.commit("feature re-stamps a")
-        branch_block = self.blocks()[("docs/a.md", "src/a.rs")]
-        self.integrate_main()
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertEqual(self.blocks()[("docs/a.md", "src/a.rs")], branch_block)
-        self.assertIn(self.MAIN_TAIL, self.blocks())
-        self.assertRegex(result.stdout, r"modified\s+docs/a\.md -> src/a\.rs")
-        self.assertEqual(self.check()["docs/a.md"], "stale")
-        self.finish()
-
-    def test_removed_on_the_branch_and_changed_on_main_is_dropped(self) -> None:
-        self.main_appends(edit_a=True, restamp_a=True)
-        self.drift("unlink", "docs/a.md", "src/a.rs")
-        self.commit("feature unbinds a")
-        self.integrate_main()
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertNotIn(("docs/a.md", "src/a.rs"), self.blocks())
-        self.assertIn(self.MAIN_TAIL, self.blocks())
-        self.assertIn(f"docs/a.md -> src/a.rs: removed on {self.BRANCH}, changed on {self.MAIN}: dropped",
-                      result.stdout)
-        self.finish()
-
-    def test_removed_on_main_and_changed_on_the_branch_is_dropped(self) -> None:
-        self.on_main()
-        self.drift("unlink", "docs/a.md", "src/a.rs")
-        self.commit("main unbinds a")
-        self.on_feature()
-        self.edit_a(0)
-        self.restamp("docs/a.md", "src/a.rs")
-        self.commit("feature re-stamps a")
-        self.integrate_main()
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertEqual(set(self.blocks()), {("docs/c.md", "src/c.rs"), ("docs/z.md", "src/b.rs"),
-                                             self.FIRST})
-        self.assertIn(f"docs/a.md -> src/a.rs: removed on {self.MAIN}, changed on {self.BRANCH}: dropped",
-                      result.stdout)
-        self.finish()
-
-    def test_a_change_to_metadata_only(self) -> None:
-        self.main_appends()
-        self.branch_appends()
-        lock = self.lock().replace('doc = "docs/c.md"\ntarget = "src/c.rs"\n',
-                                   'doc = "docs/c.md"\ntarget = "src/c.rs"\nnote = "kept"\n')
-        self.write("drift.lock", lock)
-        self.commit("feature annotates c")
-        branch_block = self.blocks()[("docs/c.md", "src/c.rs")]
-        self.integrate_main()
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertEqual(self.blocks()[("docs/c.md", "src/c.rs")], branch_block)
-        self.assertIn('note = "kept"', branch_block)
-        self.assertRegex(result.stdout, r"modified\s+docs/c\.md -> src/c\.rs")
-        self.assert_drift_serialization("docs/c.md", "src/c.rs")
-        self.finish()
-
-    def test_a_lock_written_by_drift_round_trips_byte_identical(self) -> None:
-        self.main_appends()
-        self.branch_appends()
-        self.write("docs/x y.md", "# x y\n")
-        for target in ("src/a.rs", "src/b.rs", "src/c.rs"):
-            self.drift("link", "docs/x y.md", target)
-        self.drift("link", "docs/c.md", "src/b.rs")
-        self.commit("feature binds x y")
-        self.integrate_main()
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertIn(("docs/x y.md", "src/b.rs"), self.blocks())
-        self.assertEqual(len(self.blocks()), 10)
-        self.assert_drift_serialization("docs/x y.md", "src/b.rs")
-        self.assert_drift_serialization("docs/c.md", "src/b.rs")
-        self.finish()
-
-    # --- refusals: nothing written, nothing staged ------------------------------------
-    def assert_refused(self, result: subprocess.CompletedProcess[str], reason: str,
-                       before: bytes, unmerged: str, code: int = 1) -> None:
-        """Exit 1 = refused, 2 = unusable (the repo-wide convention); nothing written."""
-        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
-        self.assertIn(reason, result.stderr)
-        self.assertEqual((self.root / "drift.lock").read_bytes(), before)
-        self.assertEqual(self.unmerged(), unmerged)
-
-    def conflicted(self, edit_branch_lock=None) -> tuple[bytes, str]:
-        self.main_appends()
-        self.branch_appends()
-        if edit_branch_lock is not None:
-            self.write("drift.lock", edit_branch_lock(self.lock()))
-        self.commit("feature")
-        self.integrate_main()
-        return (self.root / "drift.lock").read_bytes(), self.unmerged()
-
-    def test_refuses_outside_a_merge(self) -> None:
-        before = (self.root / "drift.lock").read_bytes()
-        self.assert_refused(self.resolve(), "no merge or rebase in progress", before, "")
-
-    def test_refuses_a_merge_whose_lock_has_no_conflict(self) -> None:
-        self.on_main()
-        self.write("src/b.rs", "fn b() { 1 }\n")
-        self.commit("main changes b")
-        self.on_feature()
-        self.write("src/b.rs", "fn b() { 2 }\n")
-        self.commit("feature changes b")
-        self.start()
-        self.assertEqual(self.unmerged(), "src/b.rs\n")
-        before = (self.root / "drift.lock").read_bytes()
-        self.assert_refused(self.resolve(), "drift.lock has no conflict", before, "src/b.rs\n")
-
-    def test_refuses_a_lock_that_is_not_version_1(self) -> None:
-        before, unmerged = self.conflicted(lambda lock: lock.replace("version = 1\n", "version = 2\n", 1))
-        self.assert_refused(self.resolve(), "`version = 2`", before, unmerged)
-
-    def test_refuses_a_duplicate_binding(self) -> None:
-        def duplicate(lock: str) -> str:
-            return lock + "\n" + self.blocks()[("docs/a.md", "src/a.rs")].rstrip("\n") + "\n"
-        before, unmerged = self.conflicted(duplicate)
-        self.assert_refused(self.resolve(), "binds docs/a.md -> src/a.rs twice", before, unmerged)
-
-    def test_refuses_when_a_side_deleted_the_lock(self) -> None:
-        self.main_appends()
-        self.git("rm", "-q", "drift.lock")
-        self.commit("feature deletes the lock")
-        started = self.start()
-        self.assertNotEqual(started.returncode, 0)
-        self.assertEqual(self.unmerged(), "drift.lock\n")
-        before = (self.root / "drift.lock").read_bytes()
-        self.assert_refused(self.resolve(), f"drift.lock was deleted on {self.BRANCH}", before, "drift.lock\n")
-
-    def test_refuses_when_drift_is_missing(self) -> None:
-        before, unmerged = self.conflicted()
-        only_git = self.root / "only-git"
-        only_git.mkdir()
-        (only_git / "git").symlink_to(shutil.which("git"))
-        self.assert_refused(self.resolve(path=str(only_git)), "drift is not on PATH", before, unmerged,
-                            code=2)
-
-    def test_a_drift_crash_or_unreadable_json_restores_the_lock(self) -> None:
-        before, unmerged = self.conflicted()
-        self.assertIn(b"<<<<<<<", before)
-        for name, behaviour in (("crash", "kill -SEGV $$"),
-                                ("unreadable", "echo 'not json'; exit 1"),
-                                ("other schema", "echo '{\"docs\": []}'")):
-            with self.subTest(name=name):
-                fake = self.root / f"fake-{name.replace(' ', '-')}"
-                fake.mkdir()
-                (fake / "drift").write_text(
-                    '#!/bin/sh\n[ "$1" = "--version" ] && { echo "drift v0.10.1"; exit 0; }\n'
-                    f"{behaviour}\n")
-                (fake / "drift").chmod(0o755)
-                result = self.resolve(path=str(fake) + os.pathsep + self.env["PATH"])
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertIn("drift.lock restored", result.stderr)
-                self.assertEqual((self.root / "drift.lock").read_bytes(), before)
-                self.assertEqual(self.unmerged(), unmerged)
-
-
-@unittest.skipUnless(os.environ.get("OKF_SELFTEST_REAL_DRIFT") == "1",
-                     "real-drift tests; set OKF_SELFTEST_REAL_DRIFT=1")
-class LockRebaseTests(LockMergeTests):
-    """The same scenario matrix and refusals under `git rebase main`, a commit replay:
-    stage 2 is the result rebased so far and stage 3 the commit being replayed. The branch's
-    first commit may stop on the lock too; it is settled with okf-lock-merge.py like any
-    other stop, so every case also proves the rules hold commit after commit."""
-
-    MAIN = "the rebased result"
-    BRANCH = "the replayed commit"
-
-    def rebasing(self) -> bool:
-        path = Path(self.git("rev-parse", "--git-path", "rebase-merge").stdout.strip())
-        return (path if path.is_absolute() else self.root / path).exists()
-
-    def start(self) -> subprocess.CompletedProcess[str]:
-        tip = self.git("rev-parse", "feature").stdout.strip()
-        started = self.git("rebase", "main", check=False)
-        while (started.returncode != 0 and self.rebasing()
-               and self.git("rev-parse", "REBASE_HEAD").stdout.strip() != tip):
-            self.assertIn("drift.lock", self.unmerged(), started.stdout + started.stderr)
-            self.assert_resolved(self.resolve())
-            for path in self.unmerged().split():
-                self.git("checkout", "--theirs", "--", path)
-                self.git("add", "--", path)
-            started = self.conclude()
-        return started
-
-    def conclude(self) -> subprocess.CompletedProcess[str]:
-        return self.git("-c", "core.editor=true", "rebase", "--continue", check=False)
-
-    def test_a_replay_says_its_result_is_per_commit(self) -> None:
-        self.main_appends(edit_a=True, restamp_a=True)
-        self.drift("unlink", "docs/a.md", "src/a.rs")
-        self.commit("feature unbinds a")
-        self.integrate_main()
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertIn("drift.lock resolved (replay", result.stdout)
-        self.assertIn("per commit", result.stdout)
-        self.assertIn("feature unbinds a", result.stdout)
-        self.assertIn("docs/a.md -> src/a.rs: removed on the replayed commit, "
-                      "changed on the rebased result: dropped", result.stdout)
-        self.finish()
-        self.assertNotIn(("docs/a.md", "src/a.rs"), self.blocks())
-        self.assertIn(self.MAIN_TAIL, self.blocks())
-
-    def test_the_apply_backend_is_a_replay_too(self) -> None:
-        self.main_appends()
-        self.branch_appends()
-        self.commit("feature binds zn")
-        self.git("rebase", "--apply", "main", check=False)
-        self.assertIn("drift.lock", self.unmerged())
-        result = self.resolve()
-        self.assert_resolved(result)
-        self.assertIn("per commit", result.stdout)
-        self.assertEqual(set(self.blocks()), {
-            ("docs/a.md", "src/a.rs"), ("docs/c.md", "src/c.rs"), ("docs/z.md", "src/b.rs"),
-            self.FIRST, self.MAIN_TAIL, self.BRANCH_TAIL})
-        continued = self.git("-c", "core.editor=true", "rebase", "--continue", check=False)
-        self.assertEqual(continued.returncode, 0, continued.stdout + continued.stderr)
-        self.assertEqual(self.git("status", "--porcelain").stdout, "")
-
-    # --- refused operations: nothing written, nothing staged --------------------------
-    def stopped(self) -> tuple[bytes, str]:
-        unmerged = self.unmerged()
-        self.assertIn("drift.lock", unmerged)
-        return (self.root / "drift.lock").read_bytes(), unmerged
-
-    def test_refuses_a_merge_recreated_by_rebase_merges(self) -> None:
-        self.git("checkout", "-q", "-b", "side")
-        self.write("docs/zs.md", "# zs\n")
-        self.drift("link", "docs/zs.md", "src/m.rs")
-        self.commit("side binds zs")
-        self.on_feature()
-        self.branch_appends()
-        self.commit("feature binds zn")
-        self.assertNotEqual(self.git("merge", "-q", "--no-edit", "side", check=False).returncode, 0)
-        self.git("checkout", "--ours", "--", "drift.lock")
-        self.drift("link", "docs/zs.md", "src/m.rs")
-        self.commit("merge side")
-        self.on_main()
-        self.write("NOTES", "main\n")
-        self.commit("main notes")
-        self.on_feature()
-        self.assertNotEqual(self.git("rebase", "--rebase-merges", "main", check=False).returncode, 0)
-        before, unmerged = self.stopped()
-        self.assert_refused(self.resolve(), "--rebase-merges", before, unmerged)
-
-    def test_refuses_git_am(self) -> None:
-        self.main_appends()
-        self.branch_appends()
-        self.commit("feature binds zn")
-        patch = self.git("format-patch", "-1", "--stdout").stdout
-        self.on_main()
-        (self.root / "zn.patch").write_text(patch)
-        self.assertNotEqual(self.git("am", "--3way", "zn.patch", check=False).returncode, 0)
-        (self.root / "zn.patch").unlink()
-        before, unmerged = self.stopped()
-        self.assert_refused(self.resolve(), "git am", before, unmerged)
-
-    def test_refuses_an_autostash_conflict(self) -> None:
-        self.main_appends()
-        self.branch_appends()
-        self.git("rebase", "--autostash", "main", check=False)
-        before, unmerged = self.stopped()
-        self.assert_refused(self.resolve(), "autostash", before, unmerged)
-
-    def test_refuses_a_cherry_pick(self) -> None:
-        self.main_appends()
-        self.branch_appends()
-        self.commit("feature binds zn")
-        self.on_main()
-        self.assertNotEqual(self.git("cherry-pick", "feature", check=False).returncode, 0)
-        before, unmerged = self.stopped()
-        self.assert_refused(self.resolve(), "cherry-pick", before, unmerged)
-
-    def test_refuses_a_revert(self) -> None:
-        self.write("src/c.rs", "fn c() { 1 }\n")
-        self.restamp("docs/c.md", "src/c.rs")
-        self.commit("feature re-stamps c")
-        first = self.git("rev-parse", "HEAD").stdout.strip()
-        self.write("src/c.rs", "fn c() { 2 }\n")
-        self.restamp("docs/c.md", "src/c.rs")
-        self.commit("feature re-stamps c again")
-        self.assertNotEqual(self.git("revert", "--no-edit", first, check=False).returncode, 0)
-        before, unmerged = self.stopped()
-        self.assert_refused(self.resolve(), "revert", before, unmerged)
 
 
 if __name__ == "__main__":

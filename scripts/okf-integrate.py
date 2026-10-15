@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Install/convert only OKF integration. Python 3.11+, no third-party imports; plugin-local, never copied.
 
-No scaffold, binding or bundle writes. Preflight all candidates before staging a pin or
+No scaffold or bundle writes. Preflight all candidates before staging a pin or
 changing anything. Unknown integrations require a human merge, not a guessed migration.
 """
 import argparse
@@ -29,6 +29,7 @@ WORKFLOWS = {
     "c9cfd3865f4886360e6c3b0259c4a6906f9d616606fcc16016a0e63c9da333a3",  # v0.6.0-v0.6.2
     "bb19190ef4d0f91ad149f33a1c75aa56f3595312b9bd060512c3e42f663195f0",  # v0.7.0-v0.12.0 (okf v0.3.0)
     "a6ce4bd268e5cd2eb32a31aed2a13459815e573c20d6160614e55ced5cdf949c",  # v0.13.0 (okf v0.6.0)
+    "ff135fbc1ec08608a2ac1bf453ef4e96a69575c0a82457419dcb081e84394bc3",  # v0.14.0, the last with drift
 }
 # Accepted official template digests; the current template text is compared separately.
 # Each entry names the releases whose template body digests to it, measured from the
@@ -40,6 +41,7 @@ SECTIONS = {
         "372e7ee23c7fe542a3808c6724fd590df150a9d4c77037739a8da4303edefe8d",  # v0.7.0-v0.8.2
         "16fa3ecb217b7c0ef288c9f3f143ea4dd3addf15541e119756122fda7823ffc5",  # v0.9.0-v0.11.0
         "bb2ec783b4be0f157651e18d7b9e850e865d53060c37caa54eedc6b5204da104",  # v0.12.0-v0.13.0
+        "d730317603070736efb58a738281fe9cba3bab28548e90f32c7e51dae113118f",  # v0.14.0
     },
     "Work Loop": {
         "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.4.0-v0.6.2
@@ -49,6 +51,7 @@ SECTIONS = {
         "460a6d6b3a957bdd92917b1d350fe5ac5921ef36393af99e3adae9044e01d3e3",  # v0.9.2
         "00ddca47f3cf18f6aeafa01529d2cfaf4c52320770f92ade354bebf0fedf688f",  # v0.10.0-v0.11.0
         "cd754f2955590c540f67fef9692ace3d52e43d50cbe938a56058bc1cb8208506",  # v0.12.0-v0.13.0
+        "0e3c29e38020e39200b187dc6c25c15cb5f60fc5396bf4c9be181b8f2ee28c4e",  # v0.14.0
     },
 }
 LEGACY = [f"scripts/{name}.sh" for name in ("okf-check", "okf-recall", "okf-shim")]
@@ -117,17 +120,17 @@ def validate_pin(data):
         if not match or match[2] in hashes:
             raise ValueError(".okf-drift-version: malformed or duplicate digest")
         hashes[match[2]] = match[1]
-    for name in ("okf-shim.sh", "okf-check.sh", "okf-recall.sh", "okf-drift-bootstrap.sh"):
+    for name in ("okf-shim.sh", "okf-check.sh", "okf-recall.sh"):
         if name not in hashes:
             raise ValueError(f".okf-drift-version: missing digest for {name}")
 
 
 def protects(target, removed, root):
     if not isinstance(target, str):
-        raise ValueError("non-string code_ref/binding target")
+        raise ValueError("non-string code_ref")
     path = target.split("#", 1)[0]
     # Includes directory code_refs, glob targets, dotted paths and absolute paths.
-    # Resolve aliases too: deleting the real script would break a binding to its symlink.
+    # Resolve aliases too: deleting the real script would break a code_ref to its symlink.
     normalized = os.path.relpath((root / path).resolve(), root)
     return any(normalized == "." or name == normalized or name.startswith(normalized + "/")
                or fnmatch.fnmatchcase(name, normalized) for name in removed)
@@ -136,7 +139,7 @@ def protects(target, removed, root):
 def code_refs(front):
     """Read code_refs from frontmatter text with the bundle's own line rule.
 
-    The bootstrap and the gate parse frontmatter line by line, and okf accepts values a
+    The gate parses frontmatter line by line, and okf accepts values a
     strict YAML parser rejects -- a description whose value starts with an unquoted
     backtick, for one, which 12 concepts on the reference consumer carry. Only code_refs
     is needed here, so read it the same way rather than parsing the whole mapping.
@@ -163,7 +166,7 @@ def code_refs(front):
     return refs
 
 
-def check_bindings(root, removed):
+def check_code_refs(root, removed):
     bundle = root / "knowledge"
     if bundle.is_symlink():
         raise ValueError(f"{bundle}: symlink; cannot verify deletion safety")
@@ -181,16 +184,6 @@ def check_bindings(root, removed):
                 raise ValueError(f"{file}: code_refs binds a deletion candidate; migration refused")
         if any(name in text for name in LEGACY):
             print(f"okf-integrate: historical operational reference in {file}; left untouched, CLAUDE.md is authoritative", file=sys.stderr)
-    lock = regular(root, "drift.lock")
-    if lock is not None:
-        bindings = tomllib.loads(lock.decode()).get("bindings", [])
-        if not isinstance(bindings, list):
-            raise ValueError("drift.lock: malformed bindings")
-        for binding in bindings:
-            if not isinstance(binding, dict) or "target" not in binding:
-                raise ValueError("drift.lock: malformed binding target")
-            if protects(binding["target"], removed, root):
-                raise ValueError("drift.lock: binding targets a deletion candidate; migration refused")
 
 
 def workflow_name(root):
@@ -228,7 +221,7 @@ def integrate(root, tag, dry_run):
     if old_workflow is not None and old_workflow != workflow and digest(old_workflow) not in WORKFLOWS:
         raise ValueError(f"{root / gate}: customized workflow; merge explicitly")
     changes[gate] = workflow
-    check_bindings(root, removed)
+    check_code_refs(root, removed)
     # Pin generation is staged only AFTER every consumer candidate passed preflight.
     if tag:
         with tempfile.TemporaryDirectory(prefix="okf-pin-stage-") as stage:
@@ -263,7 +256,7 @@ def integrate(root, tag, dry_run):
                 staged.unlink(missing_ok=True)
     for name in removed:
         (root / name).unlink()
-    print("okf-integrate: integration current; knowledge/ and drift.lock untouched")
+    print("okf-integrate: integration current; knowledge/ untouched")
 
 
 def main():
