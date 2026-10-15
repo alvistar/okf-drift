@@ -21,12 +21,19 @@
 #   1. `--entry <path>` wins (it must be <bundle>/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md).
 #   2. Otherwise the base is `--base <ref>`, or `origin/HEAD`; the ref used is printed.
 #   3. Candidates are the entries the branch added since the merge-base with the base,
-#      committed, staged or untracked, whose slug is the branch's slug.
-#      An entry that records its branch (`<!-- okf-log branch: <full name> -->` above its
-#      first heading) is a candidate only on that exact branch, so `bob/fix` stacked on
-#      `alice/fix` gets its own; one without the comment is matched by slug alone.
+#      committed, staged or untracked. An entry that records its branch
+#      (`<!-- okf-log branch: <full name> -->` above its first heading) is a candidate only
+#      on that exact branch, whatever its slug, so `bob/fix` stacked on `alice/fix` gets its
+#      own. One that records a former name of this branch (a `git branch -m` its reflog
+#      shows) is a candidate too, and `add` rewrites the comment to the current name. One
+#      without the comment is matched by its slug, the branch's slug. With `--slug`, every
+#      candidate must have that slug.
 #   4. None: a new entry. One: that one. More: refused, pass --entry.
 #      A new entry named from the branch (no --slug) records the branch in that comment.
+#      Refused instead (no --slug): no candidate, but the branch added an entry that records
+#      a branch no ref names any more (a rename the reflog does not show). Pass
+#      `--entry <path>` to keep writing there (it then records the current branch), or
+#      `--slug <slug>` for a new entry.
 # Refused without `--slug`: a detached HEAD, the default branch, no git repository. Always
 # refused: a missing base ref, shallow history (missing history is not "no entry yet").
 # With `--slug` and no usable history (no repository, no base ref, a shallow clone) the
@@ -147,8 +154,24 @@ sub branch_of {   # the full branch name an entry's branch comment records, or u
   $t =~ s/^## .*//ms;   # only what sits above the first heading
   return $t =~ /^<!-- okf-log branch: (\S+) -->[ \t]*\r?$/m ? $1 : undef;
 }
+sub former_names {   # the names a branch had before a `git branch -m`, from its reflog
+  my $b = shift; my %f;
+  for (split /\n/, git('reflog', 'show', '--format=%gs', "refs/heads/$b") // '') {
+    $f{$1} = 1 if m{\ABranch: renamed refs/heads/(\S+) to refs/heads/\S+\z};
+  }
+  delete $f{$b};
+  return \%f;
+}
+sub live_branches {   # every branch name a local or remote-tracking ref still carries
+  my %l;
+  for (split /\n/, git('for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes') // '') {
+    $l{$1} = 1 if m{\Arefs/(?:heads|remotes/[^/]+)/(.+)\z};
+  }
+  return \%l;
+}
 
 my ($entry, $branch_tag);   # $branch_tag: the branch a NEW entry records, when the branch named it
+my $retag;                  # [old, new]: rewrite an existing entry's branch comment on `add`
 if (defined $opt{entry}) {
   ($entry = $opt{entry}) =~ s{\A(?:\./)+}{};
   refuse("--entry must be $bundle/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md (got '$opt{entry}')")
@@ -159,6 +182,13 @@ if (defined $opt{entry}) {
     my $b = git('symbolic-ref', '-q', '--short', 'HEAD');
     my ($s) = $entry =~ m{/log/$NAME/log\.md\z} ? ($2) : ();
     $branch_tag = $b if defined $b && defined $s && slugify((split m{/}, $b)[-1]) eq $s;
+  }
+  # An existing entry of a branch that was renamed, adopted with --entry, records the new name.
+  if (-f $entry && !defined $opt{slug} && (git('rev-parse', '--is-inside-work-tree') // '') eq 'true') {
+    my $b = git('symbolic-ref', '-q', '--short', 'HEAD');
+    my $was = branch_of($entry);
+    $retag = [$was, $b] if defined $b && defined $was && $was ne $b
+                        && (former_names($b)->{$was} || !live_branches()->{$was});
   }
 } else {
   my $slug;
@@ -211,7 +241,7 @@ if (defined $opt{entry}) {
   # stacked on `alice/fix` never reuses alice's entry. One without the comment (the setup
   # entry, a --slug entry, an older writer's) is matched by its slug.
   my $mine = sub { my $b = branch_of(shift); !defined $b || (defined $branch && $b eq $branch) };
-  my @cand;
+  my (@cand, @gone, %was, $former, $live);
   if (defined $mb && !defined $why_not) {
     print STDERR "okf-log: base $base (merge-base " . substr($mb, 0, 8) . ")\n";
     my %seen;
@@ -222,9 +252,15 @@ if (defined $opt{entry}) {
       for (split /\n/, $out) {
         next unless m{(?:\A|/)log/($NAME)/log\.md\z};
         my ($name, $s) = ($1, $3);
-        next unless $s eq $slug;
         my $p = "$bundle/log/$name/log.md";
-        push @cand, $p if -f $p && !$seen{$p}++ && $mine->($p);
+        next unless -f $p && !$seen{$p}++;
+        my $b = branch_of($p);
+        if (!defined $b || defined $opt{slug}) { push @cand, $p if $s eq $slug && $mine->($p); next }
+        if ($b eq $branch) { push @cand, $p; next }
+        $former //= former_names($branch);
+        if ($former->{$b}) { push @cand, $p; $was{$p} = $b; next }
+        $live //= live_branches();
+        push @gone, [$p, $b] unless $live->{$b};
       }
     }
   } else {
@@ -237,6 +273,15 @@ if (defined $opt{entry}) {
     refuse("more than one entry could be this branch's: " . join(', ', sort @cand) . "; pass --entry <path>");
   } elsif (@cand) {
     $entry = $cand[0];
+    if (defined $was{$entry}) {
+      $retag = [$was{$entry}, $branch];
+      print STDERR "okf-log: $entry belongs to $was{$entry}, this branch's former name\n";
+    }
+  } elsif (@gone) {
+    refuse("this branch has no entry of its own, but it added "
+         . join(', ', map { "$_->[0] (branch $_->[1], which no ref names any more)" } @gone)
+         . ". If the branch was renamed, pass --entry <path> to keep writing there (it then records "
+         . "$branch); pass --slug <slug> for a new entry");
   } else {
     for (1 .. 64) {
       my $hex;
@@ -261,6 +306,7 @@ if (-e $entry) {
   $t = '';
 }
 my $tag = !length($t) && defined $branch_tag ? "<!-- okf-log branch: $branch_tag -->\n" : '';
+$t =~ s/^<!-- okf-log branch: \Q$retag->[0]\E -->/<!-- okf-log branch: $retag->[1] -->/m if $retag;
 my @skip;
 while ($t =~ /(<!--.*?-->|^[ \t]*```.*?^[ \t]*```[^\n]*$)/smg) { push @skip, [$-[0], $+[0]] }
 my ($at, $is_today);

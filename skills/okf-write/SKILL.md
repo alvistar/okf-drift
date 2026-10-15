@@ -51,7 +51,9 @@ okf-log.sh add knowledge '* <what changed in the bundle, and why>'
 
 It prints the base ref it compared against. On a detached HEAD or the default branch it
 refuses: pass `--slug <slug>`. When it finds more than one candidate, it refuses and asks
-for `--entry <path>`. A bundle whose root `log.md` has no marker is not split yet: run
+for `--entry <path>`. After a `git branch -m` it keeps the entry the old name added and
+records the new name; when the reflog no longer shows the rename, it refuses and names the
+entry: pass `--entry <that path>` to keep it, or `--slug <slug>` for a new one. A bundle whose root `log.md` has no marker is not split yet: run
 `/okf-migrate` first.
 
 ## Step 0 — What actually changed?

@@ -913,6 +913,62 @@ class LogEntryTests(unittest.TestCase):
         self.assertEqual((self.root / bob).read_text(),
                          f"<!-- okf-log branch: bob/fix -->\n## {TODAY}\n* bob two\n* bob one\n")
 
+    def test_a_renamed_branch_keeps_its_entry_and_records_the_new_name(self) -> None:
+        self.add("* before")
+        self.git("add", ".")
+        self.git("commit", "-qm", "entry")
+        [entry] = self.entries()
+        self.git("branch", "-m", "alice/parser")
+        out = self.add("* after")
+        self.assertEqual(self.entries(), [entry])
+        self.assertIn("alice/fix", out)
+        self.assertEqual((self.root / entry).read_text(),
+                         f"<!-- okf-log branch: alice/parser -->\n## {TODAY}\n* after\n* before\n")
+        self.add("* later")
+        self.assertEqual(self.entries(), [entry])
+
+    def test_an_entry_recording_this_branch_is_reused_whatever_its_slug(self) -> None:
+        self.add("* one")
+        self.git("add", ".")
+        self.git("commit", "-qm", "entry")
+        [entry] = self.entries()
+        self.git("checkout", "-qb", "carol/other")
+        self.git("branch", "-D", "alice/fix")
+        path = self.root / entry
+        path.write_text(path.read_text().replace("alice/fix", "carol/other"))
+        self.add("* two")
+        self.assertEqual(self.entries(), [entry])
+        self.assertIn("* two\n* one\n", path.read_text())
+
+    def test_an_entry_of_a_branch_that_is_gone_refuses_until_entry_adopts_it(self) -> None:
+        self.add("* one")
+        self.git("add", ".")
+        self.git("commit", "-qm", "entry")
+        [entry] = self.entries()
+        before = (self.root / entry).read_text()
+        self.git("checkout", "-qb", "carol/other")
+        self.git("branch", "-D", "alice/fix")   # a rename the reflog no longer shows
+        result = self.log("add", "knowledge", "* two")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for needle in (entry, "alice/fix", "--entry", "--slug"):
+            self.assertIn(needle, result.stderr)
+        self.assertEqual(self.entries(), [entry])
+        self.assertEqual((self.root / entry).read_text(), before)
+        self.add("* two", "--entry", entry)
+        self.add("* three")
+        self.assertEqual(self.entries(), [entry])
+        self.assertEqual((self.root / entry).read_text(),
+                         f"<!-- okf-log branch: carol/other -->\n## {TODAY}\n* three\n* two\n* one\n")
+
+    def test_a_new_slug_skips_the_gone_branch_check(self) -> None:
+        self.add("* one")
+        self.git("add", ".")
+        self.git("commit", "-qm", "entry")
+        self.git("checkout", "-qb", "carol/other")
+        self.git("branch", "-D", "alice/fix")
+        self.add("* two", "--slug", "other")
+        self.assertEqual(len(self.entries()), 2)
+
     def test_an_entry_without_a_branch_comment_is_matched_by_slug(self) -> None:
         self.add("* one", "--slug", "fix")
         [entry] = self.entries()

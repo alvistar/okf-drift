@@ -7,6 +7,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [0.16.1] - 2026-10-15
+
+### Fixed
+
+- **A renamed branch keeps its one log entry** (#25). `okf-log.sh add` matched an
+  entry by its folder slug before its `okf-log branch:` comment, so after a
+  `git branch -m` it created a second entry in silence. Now an entry whose comment records
+  this branch is reused whatever its slug, one that records a former name in the branch's
+  reflog is reused and re-tagged with the new name, and one that records a branch no ref
+  names any more makes `add` refuse with its path: `--entry <path>` keeps it (and
+  re-tags it), `--slug <slug>` starts a new one.
+
 ## [0.16.0] - 2026-10-15
 
 ### Changed
