@@ -78,8 +78,9 @@ because GitHub still reports the PR as conflicting). Since 0.14.0:
   with the same `## YYYY-MM-DD` headings, newest first. The one writer is
   `okf-log.sh add`: `/okf-write` and the scaffold both go through it. It
   reuses the entry this branch already added (compared against `origin/HEAD`, or
-  `--base`), and refuses rather than guess on a detached HEAD, the default branch, more
-  than one candidate or a shallow clone (`--slug` and `--entry` settle it). okf treats the
+  `--base`), also after a branch rename, and refuses rather than guess on a detached HEAD,
+  the default branch, more than one candidate, an entry of a branch that is gone, or a
+  shallow clone (`--slug` and `--entry` settle it). okf treats the
   nested `log.md` as reserved, so an entry is never a concept or a search hit; the gate
   checks its headings.
 - **`/okf-migrate`** moves an existing bundle to this layout. New bundles from
