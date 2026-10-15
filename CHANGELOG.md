@@ -7,6 +7,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [0.16.0] - 2026-10-15
+
+### Changed
+
+- **`/okf-write` is model-invocable.** The `CLAUDE.md` Grow step and read-repair tell the
+  agent to write through `/okf-write`, but the skill was manual only, so the agent could
+  not load the writing rule or run `okf-log.sh` and `okf-tidy.sh` through the pinned
+  launcher, and the gate failed on the missing log line. The skill writes local files
+  and never commits or pushes by itself. `/okf-setup`, `/okf-migrate` and
+  `/okf-read` stay manual.
+
+### Fixed
+
+- **The launcher selftest passes on macOS.** It built its expected paths from the
+  unresolved temp directory, so `/var/…` never matched the `/private/var/…` that the
+  scripts print, and seven tests failed. It now resolves the temp directory first.
+
 ## [0.15.0] - 2026-10-15
 
 A drift signature changes whenever the bound code changes, but a function can change

@@ -28,7 +28,9 @@ trusting a green validation.
 | `/okf-migrate` | Brings an older bundle up to date: splits the log (freezes the root `log.md`, creates `log/`) and drops drift (deletes `drift.lock`, updates the CI workflow and the `CLAUDE.md` sections, and on request reviews the concepts against the writing rule). Idempotent, works on both profiles, commits nothing. |
 | `/okf-read` | Recalls from it: `okf search` with each hit's `status · review` and, when the code under its `code_refs` changed after the concept's last commit, a change hint. |
 
-All four are **manual trigger only** — they run when you type the slash command.
+`/okf-setup`, `/okf-migrate` and `/okf-read` are **manual trigger only** — they run when
+you type the slash command. `/okf-write` is model-invocable, so the Grow step and
+read-repair can load it without you; it writes local files and never commits or pushes.
 The fifth, `okf-runtime`, is model-invocable for the Work Loop: pinned gate and recall
 only, never setup, pin upgrades or bundle writes.
 

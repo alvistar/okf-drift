@@ -242,7 +242,10 @@ class Launcher(Fixture):
         result = subprocess.run(["sh", "-c", code], cwd=self.base, env=env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(), [str(self.repo.resolve()), "knowledge"])
-        for name in ("read", "write", "setup", "migrate"):
+        write = (SOURCE / "skills/okf-write/SKILL.md").read_text()
+        self.assertNotIn("disable-model-invocation: true", write)
+        self.assertNotIn("MANUAL TRIGGER ONLY", write)
+        for name in ("read", "setup", "migrate"):
             manual = (SOURCE / f"skills/okf-{name}/SKILL.md").read_text()
             self.assertIn(f"MANUAL TRIGGER ONLY: invoke only when the user types /okf-{name}.", manual)
             self.assertIn("disable-model-invocation: true", manual)
