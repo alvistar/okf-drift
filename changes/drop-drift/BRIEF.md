@@ -27,8 +27,10 @@ others): the owner does it separately. Renaming the plugin. 1.0.0. Any change to
 ## Add
 
 - **Change hint** in `okf-recall.sh` output, per hit:
-  `git log --oneline --since=<last_updated> -- <code_refs>` → `N commits on <paths> since
-  <last_updated> (last <sha> "<subject>")`, or nothing when N = 0 or no `code_refs`.
+  commits on `<code_refs>` after the concept's last commit (`git rev-list --count
+  <base>..HEAD -- <code_refs>`; a date cannot order two commits of one day) →
+  `code changed since this concept: N commit(s) on <paths> (last <sha> <date> "<subject>")`,
+  or nothing when N = 0, no `code_refs`, no commit, or outside git.
   Directories work as paths. Informative only, never an exit code.
 - **Gate**: fail while `drift.lock` exists at the repo root
   (`drift.lock found: drift is no longer used, run /okf-migrate`).

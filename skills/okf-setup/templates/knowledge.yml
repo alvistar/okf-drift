@@ -2,7 +2,8 @@ name: knowledge
 # Standalone bootstrap: no installed plugin or consumer scripts. Requires a pin to
 # v0.7.0 or newer (first root-aware launcher). Verify the launcher before executing it;
 # it verifies the gate, including on a warm cache. A pin to v0.14.0 or newer fails a bundle
-# whose root log.md is not frozen yet: run /okf-migrate. Keep this file verbatim for safe updates.
+# whose root log.md is not frozen yet, and a pin to v0.15.0 or newer fails while a drift.lock
+# exists: run /okf-migrate. Keep this file verbatim for safe updates.
 on:
   push:
     branches: [main]      # never on every push: both triggers on a topic branch cancel each other
@@ -16,20 +17,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0        # drift's blame reads git log; shallow = "changed" with no commit to name
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-      - name: okf v0.6.0 and drift v0.10.1, pinned
+      - name: okf v0.6.0, pinned
         run: |
           go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0
-          curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version v0.10.1
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      # Not decoration: okf-check.sh only WARNS when drift is missing, so a failed
-      # install would leave the gate green with step 6 silently skipped.
-      - run: okf version && drift --version
+      - run: okf version
       - name: pinned runtime gate
         run: |
           set -eu

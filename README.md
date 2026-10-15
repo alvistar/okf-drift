@@ -1,19 +1,21 @@
 # okf-drift
 
 A Claude Code plugin: project memory as an [OKF v0.2](https://github.com/okf-memory/okf-agent-memory)
-bundle, with content-level drift on top.
+bundle, kept honest by the code it describes.
 
 A knowledge bundle's failure mode is not being empty. It is being confidently wrong — a
 concept written six weeks ago, indexed, well-linked, top of the search results, and
-describing a function that was rewritten last Tuesday. `okf` can tell you a governed path
-**vanished**; it cannot tell you the path **changed**, which is how a concept actually goes
-wrong. [`drift`](https://drift.fp.dev) closes that with a content signature per
-(concept, path) pair. This plugin is the layout, the plumbing that joins the two tools, and
-the gate for everything `okf validate` was measured not to check.
+describing a function that was rewritten last Tuesday. This plugin's answer is that the
+**code is the source of truth**: the bundle holds what the code does not say, and a
+concept that contradicts the code is fixed by whoever finds it. The plugin is the layout,
+the plumbing around `okf`, and the gate for everything `okf validate` was measured not to
+check. (Its name is historical: until 0.15.0 it bound concepts to code with
+[`drift`](https://drift.fp.dev); `docs/adr/0002-drop-drift-code-is-the-source-of-truth.md`
+records why that went.)
 
-Every claim in these skills was measured against a running binary — drift v0.10.1 and
-mex 0.8.2 on 2026-09-16, okf v0.6.0 on 2026-10-08 — not read from documentation. Where a measurement
-contradicted the docs, the measurement is what is written down, and
+Every claim about `okf` in these skills was measured against a running binary — okf
+v0.6.0 on 2026-10-08 — not read from documentation. Where a measurement contradicted the
+docs, the measurement is what is written down, and
 `skills/okf-setup/references/okf-quirks.md` says which. Re-measure after an upgrade before
 trusting a green validation.
 
@@ -21,35 +23,45 @@ trusting a green validation.
 
 | Skill | What it does |
 |---|---|
-| `/okf-setup` | Lays the bundle down in a repo that has none: a fixed layout that validates `--strict` from the first commit, the population and resync prompts, the `CLAUDE.md` sections, the gate, the drift bootstrap, and the CI job. |
-| `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot and its evidence; binds every new **code** `code_refs` path and never a high-churn file (scripts, CI, `VERSION`); settles drift with a mechanical format-only sweep, then re-stamps what was read — never silently; keeps index rows and `last_updated` with `okf-tidy.sh`. |
-| `/okf-migrate` | Moves an existing bundle to the split log layout: freezes the root `log.md` and creates `log/`. Writes nothing else, works on both profiles, and is a no-op on a bundle already split. |
-| `/okf-read` | Recalls from it: `okf search` joined with `drift check`, marking STALE any concept whose bound code moved after it was written, with the commit to blame. |
+| `/okf-setup` | Lays the bundle down in a repo that has none: a fixed layout that validates `--strict` from the first commit, the population and resync prompts, the `CLAUDE.md` sections, the gate and the CI job. |
+| `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot and its evidence, each to the writing rule; logs the change in the branch's log entry; keeps index rows and `last_updated` with `okf-tidy.sh`. |
+| `/okf-migrate` | Brings an older bundle up to date: splits the log (freezes the root `log.md`, creates `log/`) and drops drift (deletes `drift.lock`, updates the CI workflow and the `CLAUDE.md` sections, and on request reviews the concepts against the writing rule). Idempotent, works on both profiles, commits nothing. |
+| `/okf-read` | Recalls from it: `okf search` with each hit's `status · review` and, when the code under its `code_refs` changed after the concept's last commit, a change hint. |
 
 All four are **manual trigger only** — they run when you type the slash command.
-The fifth, `okf-runtime`, is model-invocable for the Work Loop: pinned gate and
-freshness-checked recall only, never setup, pin upgrades or binding writes.
+The fifth, `okf-runtime`, is model-invocable for the Work Loop: pinned gate and recall
+only, never setup, pin upgrades or bundle writes.
 
-## The two halves that make it work
+## How the bundle stays true
 
-**The gate** (`scripts/okf-check.sh`) is the six steps `okf validate --strict --drift --stale`
-does not do: its own warning list treated as fatal (a dead `code_refs` path is a warning at
-exit 0), index rows that resolve and carry the concept's description verbatim in both
-directions, the frontmatter okf carries but ignores, template residue, the reserved files,
-and the drift join. It runs in the Work Loop and as a blocking CI job, because the PR that
-makes a concept stale is almost always one that touches only code.
+**The writing rule.** A concept holds what the code does not say: why, invariants, traps,
+conventions, how to behave, and where to look (`code_refs`). It never restates what the
+code says — signatures, defaults, step lists, numbers, field lists — because that copy is
+what goes wrong when the code moves. A fact that must be quoted from the code is a dated
+observation. The population and resync prompts and `/okf-write` all apply it.
 
-**The re-stamp rule** (`/okf-write` step 3): the agent may re-stamp a drift binding, and may
-never re-stamp one silently. `drift link … --doc-is-still-accurate` is a claim that a
-human-readable statement survived a code change, and it leaves no trace anywhere except a
-changed hex signature — so it is always paired with a dated line in the branch's log
-entry naming what was checked against what. Without that line the plugin degrades into a tool that
-silences its own alarm. `okf-restamp.sh` writes that line, and its `--format-only` sweep
-re-stamps, without anyone reading, only anchors whose file — in a language drift hashes
-raw, such as C or Swift — changed by indentation or trailing whitespace alone,
-measured against the version the binding was signed on.
+**The change hint.** Recall prints, under a hit, `code changed since this concept: N
+commit(s) on <paths> (last <sha> <date> "<subject>")` when commits touched the concept's
+`code_refs` after the concept's last commit. It is counted from the commit, not from
+`last_updated`, which cannot order two commits of one day. It is a place to look, never a
+verdict and never an exit code.
 
-## Log entries and the lock resolver
+**Read-repair.** When a concept an agent relies on contradicts the code, the code wins:
+the agent fixes the concept with an ordinary `/okf-write` edit if the session writes the
+repository, and says so in its answer otherwise. There is no re-verification field and
+no dedicated log line.
+
+**The gate** (`scripts/okf-check.sh`) is the six steps `okf validate --strict --drift
+--stale` does not do: its own warning list treated as fatal (a dead `code_refs` path is a
+warning at exit 0), index rows that resolve and carry the concept's description verbatim
+in both directions, the frontmatter okf carries but ignores, template residue, the
+reserved files, and a leftover `drift.lock`, which fails the gate with `drift.lock found:
+drift is no longer used, run /okf-migrate`. (`--drift` there is okf's own flag: a check
+that every `code_refs` path still exists.) It runs in the Work Loop and as a blocking CI
+job. It checks structure and review dates; whether a concept is still true is
+read-repair's question.
+
+## Log entries
 
 Every PR used to write the bundle's `log.md`, so merging one PR conflicted every other open
 PR (5 of 8 branch merges on the reference consumer, 2026-10-12; `merge=union` does not help,
@@ -62,7 +74,7 @@ because GitHub still reports the PR as conflicting). Since 0.14.0:
   a deliberate fix.
 - **Each branch writes one log entry**, `knowledge/log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md`,
   with the same `## YYYY-MM-DD` headings, newest first. The one writer is
-  `okf-log.sh add`: `/okf-write`, `okf-restamp.sh` and the scaffold all go through it. It
+  `okf-log.sh add`: `/okf-write` and the scaffold both go through it. It
   reuses the entry this branch already added (compared against `origin/HEAD`, or
   `--base`), and refuses rather than guess on a detached HEAD, the default branch, more
   than one candidate or a shallow clone (`--slug` and `--entry` settle it). okf treats the
@@ -70,22 +82,13 @@ because GitHub still reports the PR as conflicting). Since 0.14.0:
   checks its headings.
 - **`/okf-migrate`** moves an existing bundle to this layout. New bundles from
   `/okf-setup` start split.
-- **A conflicted `drift.lock`** (two branches binding docs that sort next to each other)
-  is resolved by `okf-lock-merge.py`, run through the pinned launcher while git is stopped
-  on `git merge main` or on each stop of `git rebase main` / `git pull --rebase`. It starts
-  from main's lock, replays the branch's added, removed and modified bindings, drops (and
-  reports) one removed on one side and changed on the other, writes the lock byte-for-byte
-  as drift does, and runs `drift check`, so a re-stamp main has since invalidated comes out
-  stale. Any other git state, a deleted lock, a lock that is not `version = 1`, a duplicate
-  binding or a missing drift is refused with nothing written. The gate fails a lock with
-  conflict markers and names the resolver.
 
 ## Profiles
 
 `code` (the default) is everything above. `wiki` is for a knowledge base that describes no
 code — personal admin, a small company's facts and procedures: `okf-scaffold.sh --profile
-wiki` writes `.okf-profile`, and the gate and recall then stop asking for drift, a project
-snapshot and `code_refs`, while every structural check stays. See `/okf-setup`, *Profile:
+wiki` writes `.okf-profile`, and the gate then stops asking for a project snapshot and
+`code_refs`, while every structural check stays. See `/okf-setup`, *Profile:
 wiki*.
 
 ## Install
@@ -102,12 +105,11 @@ Or point Claude Code straight at this repository:
 claude plugin marketplace add alvistar/okf-drift
 ```
 
-Runtime dependencies, installed separately and pinned by the CI template to the versions
+Runtime dependency, installed separately and pinned by the CI template to the version
 everything here was measured against:
 
 ```sh
 go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0   # okf v0.6.0, needs Go 1.26+
-curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version v0.10.1
 ```
 
 ## What a consumer repository carries
@@ -117,14 +119,14 @@ The repository carries **data and integration, no OKF scripts**:
 ```
 .okf-drift-version                tag and SHA-256 digests, from the release asset
 knowledge/                       the bundle
-drift.lock                      shared bindings (at repository root)
 CLAUDE.md                        managed Knowledge Bundle / Work Loop instructions
 .github/workflows/knowledge.yml   standalone verified bootstrap, PR + push to main
 ```
 
 A `wiki` consumer (see **Profiles**) carries `knowledge/`, `.okf-profile` and, to run the
-gate through `okf-runtime`, a `.okf-drift-version` pinned at v0.14.0 or later (v0.11.0 is the first that knows
-the wiki profile; v0.14.0 the first with the split log the scaffold now writes).
+gate through `okf-runtime`, a `.okf-drift-version` pinned at v0.15.0 or later (v0.11.0 is
+the first that knows the wiki profile, v0.14.0 the first with the split log the scaffold
+writes, v0.15.0 the first without drift).
 
 Local sessions invoke `okf-drift:okf-runtime`. It resolves the launcher from the
 absolute skill directory supplied by the host, two levels up, and calls:
@@ -138,18 +140,9 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-recall.sh "<t
 assumed environment variables. No versioned cache path is saved in project files.
 Updating the installed plugin does **not** update the project's pinned runtime.
 
-The gate reports a concept with **no tracked target** — no drift anchor at all, so
-nothing checks it — as a warning, separately from a concept with empty `code_refs`,
-which is the different complaint that `okf search --for-path` can never return it.
-Each such list prints at most 8 names and a count; `OKF_VERBOSE=1` lists them all. Set `OKF_REQUIRE_TRACKING=<glob>[,<glob>...]` to make coverage FATAL for a subset:
-shell globs over the concept path relative to the bundle (`architecture/*`, with `*`
-stopping at a `/` and `**` crossing one). Unset — the default — leaves it a warning,
-because making it fatal everywhere would fail every bundle that has not finished
-binding. On a repository that has adopted drift (`.okf-drift-version` and
-`drift.lock` both present) a missing `drift`, or one whose version disagrees with the
-pin in `.github/workflows/knowledge.yml` — or in that same file renamed `.yaml`,
-as a repository whose other workflows carry that extension does — fails the gate:
-a green gate must mean the detector ran.
+The gate reports a concept with empty `code_refs` as a warning: `okf search --for-path`
+can never return it, and recall never gives it a change hint. The list prints at most 8
+names and a count; `OKF_VERBOSE=1` lists them all.
 
 okf fails a concept on its `stale_after` day, so the gate warns about every concept due
 within the next 30 days (`OKF_REVIEW_WINDOW_DAYS`; a value that is not a whole number
@@ -162,7 +155,8 @@ before okf runs.
 
 **First compatible release: v0.7.0.**
 Wrapper-free adoption requires that release or a later compatible one and its
-published `SHA256SUMS` asset. Tests use fixture releases so future unpublished
+published `SHA256SUMS` asset. The `CLAUDE.md` sections and CI workflow installed today
+describe the v0.15.0 gate and recall: pin v0.15.0 or later. Tests use fixture releases so future unpublished
 source remains testable.
 
 Line 1 of `.okf-drift-version` is `vMAJOR.MINOR.PATCH`; remaining lines are
@@ -174,7 +168,7 @@ sh "$PLUGIN_ROOT/scripts/okf-pin.sh" v0.7.0 "$REPO_ROOT"
 ```
 
 This is an explicit upgrade, not a startup action. Pin generation rejects malformed
-or duplicate hashes and requires shim, gate, recall and drift-bootstrap hashes.
+or duplicate hashes and requires shim, gate and recall hashes.
 It stages a validated file before replacing the pin. Never hand-copy digests.
 Older pins remain usable through their legacy wrappers, but the root-aware
 integration diagnoses them and requires an explicit upgrade; it never runs the
@@ -217,9 +211,9 @@ sh "$tmp/okf-shim.sh" --repo-root "$root" okf-recall.sh "<terms>" knowledge
 
 Keep the preceding validation and cleanup steps unchanged. Missing plugin means an
 explicit diagnostic and this bootstrap, never an unverified search fallback. The
-workflow retains full Git history, PR/main-only triggers, pinned okf/drift installs
-and their explicit version/presence preflight. Digest verification covers plugin
-scripts, not the separately downloaded drift installer.
+workflow retains PR/main-only triggers, the pinned okf install and its explicit
+version/presence preflight. Digest verification covers plugin scripts, not okf itself,
+which `go install` fetches at its pinned tag.
 
 ### Integration conversion
 
@@ -228,7 +222,7 @@ Python 3.11+ and no third-party packages. For a fresh integration or conversion 
 
 ```sh
 python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
-  --repo-root "$REPO_ROOT" --tag v0.14.0 --dry-run
+  --repo-root "$REPO_ROOT" --tag v0.15.0 --dry-run
 # Review, then repeat without --dry-run. Omit --tag to preserve a compatible pin.
 ```
 
@@ -243,9 +237,10 @@ writes nothing to the consumer. The apply preflights every candidate before writ
   any existing Navigation (including required read order) remain byte-for-byte.
 - Symlinks (including candidate parent directories), customized/unknown files,
   duplicate managed headings and invalid pins are blockers naming the file.
-- `code_refs` and drift binding targets, including directory/glob references, are
-  checked before deletion. Bound candidates block conversion; no re-stamp is made.
-- `knowledge/` and `drift.lock` are read only and remain byte-for-byte unchanged.
+- `code_refs`, including directory/glob references, are checked before deletion. A
+  candidate a concept governs blocks conversion; the bundle is not edited.
+- `knowledge/` is read only and remains byte-for-byte unchanged; a leftover
+  `drift.lock` is `/okf-migrate`'s to delete, not the helper's.
   Historical operational references are reported, not rewritten; the new CLAUDE
   section makes them non-authoritative. No scaffold, population or log update runs.
 
@@ -266,11 +261,8 @@ apply can leave a partial integration (rerun after correcting it, review the dif
 .claude-plugin/plugin.json          the plugin manifest; its version tracks VERSION
 scripts/okf-scaffold.sh             the fixed bundle, laid down and validated
 scripts/okf-check.sh                the gate, six steps
-scripts/okf-recall.sh               search joined with drift; marks STALE what moved under it
-scripts/okf-drift-bootstrap.sh      one drift link per code `code_refs` entry (not shell scripts); a hand binding on a non-code path is kept
-scripts/okf-restamp.sh              re-stamp a reviewed anchor with its line in the log entry; --format-only settles formatting-only drift
+scripts/okf-recall.sh               search with status · review per hit and the change hint
 scripts/okf-log.sh                  the one writer of a branch's log entry (add); split freezes the root log.md
-scripts/okf-lock-merge.py           resolves a conflicted drift.lock during a git merge or rebase
 scripts/okf-tidy.sh                 index rows and last_updated, the bookkeeping that needs no judgement
 scripts/okf-shim.sh                 sole root-aware, content-pinned launcher (plugin/CI/legacy)
 scripts/okf-integrate.py            conservative plugin-only integration install/conversion

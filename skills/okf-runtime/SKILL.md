@@ -2,9 +2,9 @@
 name: okf-runtime
 description: |
   Run the pinned OKF gate for a repository's Verify/Grow loop, or recall knowledge
-  with the drift join during Context. Model-invocable, read-only with
-  respect to the consumer integration, bundle and bindings. Use when project
-  instructions request the OKF gate or freshness-checked knowledge recall.
+  with its change hint during Context. Model-invocable, read-only with respect to the
+  consumer integration and bundle. Use when project instructions request the OKF gate
+  or knowledge recall.
 ---
 
 # Pinned gate and recall
@@ -39,23 +39,25 @@ The launcher enters the consumer root and selects runtime bytes solely through i
 `OKF_DRIFT_ROOT` is a visible development-only bypass; use it only when explicitly
 working on the runtime, never as a recovery from verification failure.
 
-Report the command's status and diagnostics. A failing gate is not green. A recall hit
-marked STALE is a lead, not a fact: read its bound code before relying on it. A recall
-that warns `drift did not run` searched without the join; report that, and treat its hits
-as unchecked. If recall exits 2, stop: no bare-search fallback. A bundle declared `wiki`
-in `.okf-profile` with no `drift.lock` recalls without the join by design, labelling each
-hit `not drift-tracked (wiki)`; that is not a degraded result, but it is not a freshness
-claim either. The gate may warn when drift has
-not been adopted; report that degraded result rather than claiming drift passed.
+Report the command's status and diagnostics. A failing gate is not green. If recall
+exits 2, stop: no bare-search fallback.
 
-The gate warns, and does not fail, for a concept with no tracked target; a consumer
-that wants a subset to be mandatory sets `OKF_REQUIRE_TRACKING=<glob>[,<glob>...]`
-(shell globs over the concept path relative to the bundle, e.g. `architecture/*`),
-which turns coverage into a FAIL for the paths it matches and names the glob.
-On a repository that has ADOPTED drift — `.okf-drift-version` and `drift.lock` both
-present — a missing `drift` binary, or one whose version disagrees with the pin in
-`.github/workflows/knowledge.yml` (or that file renamed `.yaml`), is a FAIL rather
-than a warning: a green gate has to mean the detector ran. Never work around that by uninstalling the pin.
+A recall hit may carry a **change hint**, `code changed since this concept: N commit(s)
+on <paths> (last …)`: commits touched its `code_refs` after the concept's last commit. It
+is informative only, never an exit code, and does not make the concept wrong. The code is
+the source of truth: before relying on a concept's content, read the code it points at,
+starting where a hint names. When a concept you rely on contradicts the code, the code
+wins (**read-repair**): if the session already writes the repository, fix the concept
+with an ordinary `/okf-write` edit; otherwise say so in the answer. A concept merely
+listed in the results owes nothing. A bundle declared `wiki` in `.okf-profile` carries no
+`code_refs`, so its hits carry no hint.
+
+The gate fails while a `drift.lock` sits at the repository root (`drift.lock found:
+drift is no longer used, run /okf-migrate`): drift was removed in v0.15.0
+(`docs/adr/0002-drop-drift-code-is-the-source-of-truth.md`). Report it and point to
+`/okf-migrate`; this skill does not delete the lock. `okf validate --drift`, which the
+gate runs, is okf's own check for dead `code_refs` paths and is unrelated to the removed
+tool. A concept with empty `code_refs` is one grouped `warn` line, never a FAIL.
 
 ## When to run the gate
 
@@ -71,15 +73,15 @@ do next, not after every edit:
   single fix prints the same report again. The reference consumer's heaviest sessions
   ran the gate 57–60 times, 13–17 of them FAILs inside such a loop.
 
-Mid-work, to learn whether a path you are about to change is bound, ask drift for that
-path alone (`drift check --changed <path>`); the gate answers for the bundle, not the
+Mid-work, to learn which concepts govern a path you are about to change, ask for that
+path alone (`okf search --for-path <path>`); the gate answers for the bundle, not the
 path.
 
 ## Scope and unavailable plugin
 
 This skill only runs gate/recall. It never pins, installs/converts integration,
-scaffolds, edits knowledge, bootstraps drift or re-stamps bindings — `okf-restamp.sh`,
-`okf-tidy.sh` and the bootstrap belong to `/okf-write`. The four
+scaffolds or edits knowledge — `okf-tidy.sh` and `okf-log.sh` belong to `/okf-write`,
+deleting `drift.lock` to `/okf-migrate`. The four
 existing setup/migrate/read/write skills retain their manual triggers.
 
 If this skill or its launcher is unavailable, report the missing plugin explicitly.
