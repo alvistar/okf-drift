@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [0.17.0] - 2026-10-24
+
+### Changed
+
+- **New decisions take a MADR-inspired body.** The decision template in both scaffolds
+  (`templates/` and `templates-wiki/`) replaces Context / Decision / Reasoning /
+  Alternatives considered / Consequences with MADR's minimal sections: Context and
+  Problem Statement, Considered Options (each with the reason it lost), Decision Outcome
+  ("Chosen option: …, because …"), Consequences and an optional Confirmation. Decision and
+  Reasoning no longer repeat each other, and an agent reads the options at a glance. The
+  OKF frontmatter, the `draft|stable|deprecated` status, the supersession rule, the
+  permanent slug filenames (no `NNNN` prefix: a path is an OKF id and renumbering after a
+  parallel branch would break links) and `## Related` are unchanged. Existing decisions
+  keep their shape; the gate does not check body headings, so both shapes pass.
+
 ## [0.16.1] - 2026-10-15
 
 ### Fixed
