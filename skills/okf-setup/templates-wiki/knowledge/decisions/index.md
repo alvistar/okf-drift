@@ -21,15 +21,19 @@ last_updated: 2026-09-29
 
 # Tasks live in the task tracker
 
-## Context
-## Decision
-## Reasoning
-## Alternatives considered
-## Consequences
+## Context and Problem Statement
+## Considered Options
+- <option> — why it lost, in one line
+## Decision Outcome
+Chosen option: <option>, because <the reason that decided it>.
+### Consequences
+### Confirmation
 
 ## Related
 - [a matter](/matters/some-case.md) — where the consequence shows
 ```
+
+The body follows [MADR](https://adr.github.io/madr/)'s minimal template, adapted: each considered option carries the reason it lost on its own line, `## Related` replaces More Information, and the frontmatter is OKF's. `### Confirmation` is optional: write it only to name the invariant the decision protects and the check or test that enforces it, never to restate that check; otherwise leave the heading out, since the gate rejects an empty section. Decisions written in the earlier Context / Decision / Reasoning shape stay as they are.
 
 Rules the gate enforces:
 

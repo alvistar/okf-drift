@@ -110,7 +110,11 @@ The gate does not check this rule. You do, on every line you write.
 
 `knowledge/decisions/<slug>.md`. **The format is at the top of
 `knowledge/decisions/index.md`** — read it; search will never return it, because
-`index.md` is reserved and not indexed.
+`index.md` is reserved and not indexed. The body is MADR's minimal template, adapted:
+each considered option says on its own line why it lost, and `### Confirmation` is
+written only when it names an invariant and the check that enforces it. A decision in
+the earlier Context / Decision / Reasoning shape is left in that shape; never rewrite one
+only to change its headings.
 
 - `status: stable` for a decision in force. The vocabulary is okf's own and `--strict`
   enforces it: `draft|stable|deprecated`. There is no `active`.
