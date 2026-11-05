@@ -209,9 +209,13 @@ for my $entry (sort glob("\Q$bundle\E/log/*/log.md")) {
   }
 }
 
-# Collect concepts and indexes.
+# Collect concepts and indexes. A dot-directory below the bundle root is a tool's state
+# (e.g. ingestor's .ingestor/), not knowledge: okf validate skips it, and so does the gate.
 my (@concepts, @indexes);
 find({ no_chdir=>1, wanted=>sub {
+  if (-d && $File::Find::name ne $bundle && basename($File::Find::name) =~ /^\./) {
+    $File::Find::prune = 1; return;
+  }
   return unless -f && /\.md$/;
   (my $rel = $File::Find::name) =~ s{^\Q$bundle\E/}{};
   if    ($rel =~ m{(^|/)index\.md$}) { push @indexes, $rel }
