@@ -325,6 +325,16 @@ class RuntimeTests(unittest.TestCase):
         self.payload("search", [{"concept_id": "reference/identity",
                                  "description": "Who I am.", "score": 1}])
 
+    def test_gate_skips_dot_directories_like_okf_validate(self) -> None:
+        # A tool's state folder inside the bundle (e.g. ingestor's .ingestor/) is not
+        # knowledge: okf validate does not count it, so the gate must not either.
+        state = self.bundle / ".tool/reports"
+        state.mkdir(parents=True)
+        (state / "run-1.md").write_text("# Run 1\n\nNo frontmatter, no index row.\n")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn(".tool/", result.stdout)
+
     def test_wiki_gate_needs_no_drift_snapshot_or_code_refs(self) -> None:
         self.wiki()
         result = self.run_script("okf-check.sh")
