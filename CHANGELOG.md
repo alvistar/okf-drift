@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with three
 `VERSION` at the repository root is the single source of truth; the release workflow
 refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Fixed
+
+- **The gate skips dot-directories under the bundle, like `okf validate`.** A tool's
+  state folder inside a bundle (ingestor's `.ingestor/`) was read as concepts: 172 files
+  gave 407 FAILs on a wiki `okf validate` called conformant. Also released on the 0.11
+  line as v0.11.1.
+
 ## [0.17.0] - 2026-10-24
 
 ### Changed
