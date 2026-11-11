@@ -19,9 +19,11 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
   the one text for both: **Explain the run** (the pin move, what the release brings from
   `CHANGELOG.md`, each managed item with its role, and that nothing is written before the
   final OK) before the first question, and **Ask about an item** (role, why the helper
-  stopped, the project's changes and the official text's additions, the mark, and each
-  option now and at the next upgrade, with a worked example) for every question on one
-  file. Parts 2, 3 and 4 of `/okf-migrate` and `/okf-setup` Step 3 point to it.
+  stopped, what the project changed and what okf-drift changed since the project's base,
+  the mark, and each option now and at the next upgrade, with a worked example) for every
+  question on one item, and one table of options that every asking step points to. The
+  base is found in a scratch copy, so the project's file gets a mark only after the user
+  chooses one. Parts 2, 3 and 4 of `/okf-migrate` and `/okf-setup` Step 3 point to it.
 
 ## [0.19.0] - 2026-11-11
 

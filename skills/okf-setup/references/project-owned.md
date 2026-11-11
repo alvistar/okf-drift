@@ -23,91 +23,100 @@ the helper stops on it rather than overwrite the project's changes.
 ## Plain words
 
 Speak to the user in their language, with these words. The helper's own terms stay in the
-commands you run and in your own checks.
+commands you run and in your own checks; a progress line names the file and what you do
+to it ("I add the line that marks the gate workflow as the project's").
 
 | Helper term | Say to the user |
 |---|---|
-| official text | the text okf-drift ships in vX.Y.Z |
+| the helper, `okf-integrate.py` | okf-drift |
+| official text | okf-drift's vX.Y.Z text |
 | customized | the project changed this file |
-| refusal, `merge explicitly` | the helper stopped on this file, to keep the project's changes |
+| refusal, `merge explicitly` | okf-drift stopped on this file, to keep the project's changes |
 | mark, project-owned | a comment line that says the file belongs to the project |
-| base, digest, `sha256=` | the official version the project started from |
-| bare mark | (your own step: name what it found, never the step) |
+| base, digest, `sha256=` | the okf-drift version the project started from |
+| skipped | okf-drift leaves the file as it is |
+| upstream change, `moved on` | what okf-drift changed in its own text |
+| bare mark, dry run | what they found (the base, the files okf-drift would write) |
 
 ## Explain the run
 
-After the first dry run and before any question, tell the user in a few sentences:
+Explain the run once per session, before the first question, covering every part of the
+skill that runs the helper in this session. In a few sentences:
 
 1. **The move.** The pin goes from vA.B.C to vX.Y.Z, so CI, the local gate and recall
-   run that release's scripts. On a first install, say the repository starts at vX.Y.Z.
-2. **What the release brings.** Two or three lines from the sections of
-   `$PLUGIN_ROOT/CHANGELOG.md` between the two tags.
+   run that release's scripts. On a first install, the repository starts at vX.Y.Z. When
+   the pin stays (a part that only installs a file), say it stays at vA.B.C and that
+   the run adds or updates files of that same release.
+2. **What the release brings**, when the pin moves: two or three lines from the
+   sections of `$PLUGIN_ROOT/CHANGELOG.md` between the two tags.
 3. **The managed items**, each with its role from the table above.
-4. **What happens to them.** The helper updates by itself each item that holds an
-   official text. For each file the project changed, you ask, one file at a time.
-   Nothing is written before the user's final OK.
+4. **What happens to them.** okf-drift updates by itself each item that holds its own
+   text. For each item the project changed, you ask, one item per question. Each answer
+   is applied when the user gives it: the mark or the merge goes into the file then. The
+   files okf-drift writes by itself, and the pin, wait for the user's final OK.
 
 ## Ask about an item
 
-Ask about one item per question: each section of `CLAUDE.md` is its own item. The
+Ask about one item per question: each section of `CLAUDE.md` is its own item. Before you
+ask, find the item's base without touching the project's file, as **The mark** says. The
 question gives, in this order:
 
 1. **The role**, in one sentence, from the table above.
-2. **Why the helper stopped**: it updates a managed file only while the file holds an
-   official text, so it never overwrites the project's changes.
+2. **Why okf-drift stopped**: it updates a managed file only while the file holds its own
+   text, so it never overwrites the project's changes. For an item the project already
+   marked, see **Act on a moved official text** instead.
 3. **The differences**, in plain words, in two groups, each said even when empty ("the
-   project changed nothing else"; "the official text adds nothing the project lacks"):
-   - what the project changed: a mark keeps it;
-   - what the official text has that the project lacks: a merge brings it in.
-   Read both from your `diff` of the item against its closest official text, found
-   before you ask as **The mark** says, steps 1 and 2.
+   project changed nothing else"; "okf-drift's text has not changed since"):
+   - **what the project changed**, from the `diff` of the base against the project's
+     item: a mark keeps it;
+   - **what okf-drift changed since**, from the `diff` of the base against the current
+     official text: a merge brings it in.
+   A line the project replaced counts only in the first group, even when okf-drift
+   changed it too.
 4. **The mark**, the first time it comes up in the run: a comment line in the file that
-   tells okf-drift the item is the project's, so the helper skips it. It records which
-   official version the project started from, so a later upgrade can show what changed
-   upstream and propose a merge.
-5. **Each option**, with what the file becomes now and what happens at the next
-   upgrade. The step that sent you names the options that apply; for a refused
-   customized item they are:
+   tells okf-drift the item is the project's, so okf-drift leaves it as it is. It records
+   which okf-drift version the project started from, so a later upgrade can show what
+   okf-drift changed in its own text and propose to bring it in.
+5. **Each option** from the table below that applies to the item, with what the file
+   becomes now and what happens at the next upgrade. Recommend one and say why.
 
-   | Option | The file now | At the next upgrade |
-   |---|---|---|
-   | **Mark** | stays as it is, plus the mark line | skipped; when the official text changed, you show the upstream change and propose a merge |
-   | **Merge and mark**, when the second group is not empty | the official text's new lines come in, the project's changes stay, plus the mark line | as for Mark |
-   | **Take the official text** | the official text; the project's changes are gone | the helper updates it by itself |
-   | **Defer the upgrade** | nothing is written, the pin stays | the same question comes back |
+### The options
 
-   For `CODING_STANDARDS.md` the merge pastes the generated text into the project's file
-   and needs no mark: the helper accepts the file while it holds that text, and asks
-   again when a release changes it.
+This table is the one list of options. The steps that ask point here.
 
-Recommend one option and say why. Each progress line says what you do to which file in
-the same plain words: "I add the line that marks the gate workflow as the project's",
-not "applying the bare marks".
+| Option | Items | What you do | The file now | At the next upgrade |
+|---|---|---|---|---|
+| **Mark it as the project's** | every item but the pin | add the mark with the confirmed base (**The mark**) | stays as it is, plus the mark line | okf-drift leaves it as it is; when its own text changed, you show what changed and propose to bring it in |
+| **Merge and mark**, when the second group is not empty | a `CLAUDE.md` section, the gate workflow | rebuild the item from the current official text and put back each of the project's changes, show the diff, then add the mark with the current official text's digest | okf-drift's new lines come in, the project's changes stay, plus the mark line | as for the mark |
+| **Add okf-drift's text** | `CODING_STANDARDS.md` | paste `$PLUGIN_ROOT/skills/okf-setup/templates/CODING_STANDARDS.md` into the project's file verbatim, where its reader will see it; the project's rules stay | the project's rules plus okf-drift's text; no mark | okf-drift accepts the file while it holds that text; when a release changes it, the question comes back |
+| **Use okf-drift's vX.Y.Z text** | a `CLAUDE.md` section, the gate workflow | replace the item with the current official text | okf-drift's text; the project's changes are gone | okf-drift updates it by itself |
+| **Defer the upgrade** | every item | write nothing more; the run stops before the final OK | as it is; answers already applied stay | the same question comes back |
 
 A worked example, for a gate workflow the project gave its own runner, permissions and
 timeout:
 
 > **The gate workflow** (`.github/workflows/knowledge.yaml`) is the CI job that checks
-> the knowledge bundle on every PR. The helper stopped on it because the project changed
-> it, and the helper updates a file by itself only while it holds the text okf-drift
-> ships, so that it never overwrites the project's changes.
+> the knowledge bundle on every PR. okf-drift stopped on it because the project changed
+> it: okf-drift updates a file by itself only while it holds okf-drift's own text, so it
+> never overwrites the project's changes.
 >
-> - **What the project changed** (a mark keeps it): the job runs on the project's own
->   runner, has write permission on pull requests, and stops after 10 minutes.
-> - **What v0.19.0 has that the project lacks** (a merge brings it in): nothing; the
->   project started from the v0.19.0 text.
+> - **What the project changed** (a mark keeps it): the job runs on the project's
+>   `self-hosted` runner, has write permission on pull requests, and stops after 20
+>   minutes instead of 10.
+> - **What okf-drift changed since** (a merge brings it in): nothing; the project
+>   started from okf-drift's v0.19.0 text.
 >
 > A mark is a comment line at the top of the file that says the file belongs to the
-> project: okf-drift then leaves it alone. It also records which okf-drift version the
-> project started from, so a later upgrade can show what changed in okf-drift's own text
-> and propose to bring it in.
+> project: okf-drift then leaves it as it is. It also records which okf-drift version the
+> project started from, so a later upgrade can show what okf-drift changed in its own
+> text and propose to bring it in.
 >
-> - **Mark (recommended):** the file stays as it is, plus the mark line. At the next
->   upgrade okf-drift leaves it alone, and shows any change to its own text for you to
->   accept or refuse.
-> - **Take the official text:** the job loses its own runner, permissions and timeout.
->   At the next upgrade the helper updates it by itself.
-> - **Defer the upgrade:** nothing changes and the pin stays at v0.18.0.
+> - **Mark it as the project's (recommended):** the file stays as it is, plus the mark
+>   line. At the next upgrade okf-drift leaves it as it is, and shows any change to its
+>   own text for you to accept or refuse.
+> - **Use okf-drift's v0.19.0 text:** the job loses its own runner, permissions and
+>   timeout. At the next upgrade okf-drift updates it by itself.
+> - **Defer the upgrade:** nothing more changes and the pin stays at v0.18.0.
 
 ## The mark
 
@@ -120,18 +129,24 @@ it, on the line after the section heading or near the top of the file:
 ```
 
 `sha256` records the official text the project adapted: the base. A wrong base hides
-every upstream change made since the real one. To find it:
+every upstream change made since the real one. Find it in a scratch copy, so the
+project's file stays as it is until the user answers:
 
-1. Write the bare mark (`<!-- okf-drift: project-owned -->`) inside the item and run the
-   dry run. The helper refuses it and prints the mark for the item's closest official
-   text.
-2. Confirm that base before you record it: `diff` the project's item against
+1. Copy the repository's working tree to a scratch directory
+   (`rsync -a --exclude .git "$REPO_ROOT/" "$SCRATCH/"`). In the copy, write the bare
+   mark (`<!-- okf-drift: project-owned -->`, or `# okf-drift: project-owned` in YAML)
+   inside each customized item, and run the same dry run with `--repo-root "$SCRATCH"`.
+   The helper refuses the first bare mark and prints the mark for that item's closest
+   official text. Put that mark in the copy in place of the bare one and run again, until
+   no bare mark is refused.
+2. Confirm each base before you use it: `diff` the project's item against
    `$PLUGIN_ROOT/skills/okf-setup/templates/official/<digest>`, the archived official
-   text. The project's own additions are the only differences. When they are not, try the
+   text. The project's own changes are the only differences. When they are not, try the
    item's other official texts (the same directory, one file per digest; the item's
    digests are in `scripts/okf-integrate.py`) and pick the one the project was adapted
    from. Ask the user when two fit.
 
+Write a mark into the project's file only after the user chooses an option that adds one.
 The helper refuses a mark whose digest is not one of the item's own official texts, so a
 mark that lands in the wrong section (above the next heading instead of below its own)
 is caught. Put a section's mark on the line after its heading.
@@ -141,9 +156,8 @@ A kept item must not run a legacy wrapper under `scripts/` (`okf-check.sh`,
 and still runs <script>`. Show the user that line and the item's current official text;
 the item moves to the runtime launcher on the user's word, then the run goes on.
 
-The mark is the owner's decision, made once. When the helper refuses an unmarked item as
-customized, the choice belongs to the user, asked as **Ask about an item** says. Add a
-mark only on the user's explicit word.
+The mark is the owner's decision, made once, on the user's explicit word: when the helper
+refuses an unmarked item as customized, ask as **Ask about an item** says.
 
 ## The notices
 
@@ -173,8 +187,12 @@ For each item with a `moved on` notice, in turn:
 2. **Propose** the merge: read the project's version of the item and write out how each
    upstream hunk lands in it — taken as is, adapted to the project's wording, or left
    out with the reason. Show the result as a diff of the project's file.
-3. **Ask** for consent to that merge, as **Ask about an item** says: the upstream diff
-   is the second group of differences. The user may accept, amend or refuse it.
+3. **Ask** for consent to that merge, as **Ask about an item** says, with point 2
+   reading instead: the project marked this file as its own, so okf-drift left it as it
+   is and carried on with the rest; okf-drift's own text changed since the version the
+   project started from. The upstream diff is the second group. The user may accept,
+   amend or refuse the merge; a refusal leaves the file as it is, and the proposal comes
+   back at the next upgrade.
 4. **On consent**, edit the item as agreed and replace its mark with the `<new mark>`
    the notice printed. Run the helper's dry run again: the item prints `skipped` with no
    `moved on` notice.

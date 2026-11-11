@@ -158,8 +158,8 @@ human merge; do not overwrite them to get past preflight. An item the owner mark
 `project-owned` line, or a refusal offers the mark, read
 `$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md` and follow it: an upstream
 change to a project-owned item reaches the file only through a merge the user agreed to.
-Before any question the run raises, tell the user what it does, as **Explain the run**
-there says, and ask about each file as **Ask about an item** says.
+Its **Explain the run** and **Ask about an item** say how to tell the user what the run
+does and how to ask about each item.
 
 The helper also writes `CODING_STANDARDS.md` at the repository root, from
 `templates/CODING_STANDARDS.md`. It holds no rule: it tells a code reviewer (one that
