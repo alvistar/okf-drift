@@ -166,7 +166,8 @@ upstream change reaches the item only through a merge the user agreed to.
 When it refuses with `customized … section; merge explicitly` or `customized workflow;
 merge explicitly`, it wrote nothing, the pin included. The repository changed an official
 text without the mark. Ask the user about each such item as **Ask about an item** in
-`project-owned.md` says; its table of options says what each one does. Here every option
+`project-owned.md` says; its table of options says what each one does. Every option but
+**Defer the upgrade** applies: Step 2.1 has already deleted the lock. Here every option
 that keeps the project's changes (the mark, the merge) also drops drift, and the question
 says so:
 
@@ -249,8 +250,9 @@ without `--dry-run`. Its `project-owned` lines and `official text moved on` noti
 When it refuses with `CODING_STANDARDS.md: customized or project-owned; merge
 explicitly`, it wrote nothing. The repository has its own file. Ask the user as **Ask
 about an item** in `$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md` says. The
-project's own rules stay in every option; a judgement rule among them is a candidate
-convention for `/okf-write`, which you list for the user.
+options are **Mark it as the project's** and **Add okf-drift's text**: this part moves no
+pin, so there is no upgrade to defer. The project's own rules stay in both; a judgement
+rule among them is a candidate convention for `/okf-write`, which you list for the user.
 
 ## Step 3.2 — Check
 

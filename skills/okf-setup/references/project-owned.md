@@ -90,7 +90,7 @@ This table is the one list of options. The steps that ask point here.
 | **Merge and mark**, when the second group is not empty | a `CLAUDE.md` section, the gate workflow | rebuild the item from the current official text and put back each of the project's changes, show the diff, then add the mark with the current official text's digest | okf-drift's new lines come in, the project's changes stay, plus the mark line | as for the mark |
 | **Add okf-drift's text** | `CODING_STANDARDS.md` | paste `$PLUGIN_ROOT/skills/okf-setup/templates/CODING_STANDARDS.md` into the project's file verbatim, where its reader will see it; the project's rules stay | the project's rules plus okf-drift's text; no mark | okf-drift accepts the file while it holds that text; when a release changes it, the question comes back |
 | **Use okf-drift's vX.Y.Z text** | a `CLAUDE.md` section, the gate workflow | replace the item with the current official text | okf-drift's text; the project's changes are gone | okf-drift updates it by itself |
-| **Defer the upgrade** | every item | write nothing more; the run stops before the final OK | as it is; answers already applied stay | the same question comes back |
+| **Defer the upgrade** | every item, in `/okf-migrate` Part 4 only | write nothing more; the run stops before the final OK | as it is; answers already applied stay | the same question comes back |
 
 A worked example, for a gate workflow the project gave its own runner, permissions and
 timeout:

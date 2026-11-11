@@ -17,8 +17,9 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
   the upgrade does, what each file is for, why the helper stopped, what a mark is, or what
   each option makes of the file. `skills/okf-setup/references/project-owned.md` now holds
   the one text for both: **Explain the run** (the pin move, what the release brings from
-  `CHANGELOG.md`, each managed item with its role, and that nothing is written before the
-  final OK) before the first question, and **Ask about an item** (role, why the helper
+  `CHANGELOG.md`, each managed item with its role, and that each answer is applied when
+  the user gives it while okf-drift's own writes and the pin wait for the final OK) before
+  the first question, and **Ask about an item** (role, why the helper
   stopped, what the project changed and what okf-drift changed since the project's base,
   the mark, and each option now and at the next upgrade, with a worked example) for every
   question on one item, and one table of options that every asking step points to. The
