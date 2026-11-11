@@ -2,12 +2,13 @@
 name: okf-migrate
 disable-model-invocation: true
 description: |
-  Bring an existing OKF bundle and its integration up to date, in two independent parts.
+  Bring an existing OKF bundle and its integration up to date, in three independent parts.
   Split the log: freeze the root `log.md` (the history stays, a marker hashes it) and
   create `log/`, where each branch writes its own log entry (`okf-log.sh split`). Drop
   drift: delete `drift.lock`, take the drift steps out of the CI workflow and the
   CLAUDE.md knowledge section, and on request review every concept against the writing
-  rule. Works on both profiles (code and wiki). Safe to run twice; nothing commits.
+  rule. Install `CODING_STANDARDS.md`, the pointer a code reviewer
+  follows to the bundle's conventions. Works on both profiles (code and wiki). Safe to run twice; nothing commits.
 
   MANUAL TRIGGER ONLY: invoke only when the user types /okf-migrate.
 
@@ -18,14 +19,16 @@ description: |
 
 # /okf-migrate — bring an older bundle up to date
 
-Two parts, each idempotent, each run only when its sign is present:
+Three parts, each idempotent, each run only when its sign is present:
 
 | Sign | Part |
 |---|---|
 | the root `log.md` has no `<!-- okf-log frozen … -->` marker; the gate says `log.md: not frozen` | **Part 1 — Split the log** |
 | a `drift.lock` at the repository root; the gate says `drift.lock found` | **Part 2 — Drop drift** |
+| code profile, and no `CODING_STANDARDS.md` at the repository root, or one without the generated text of `$PLUGIN_ROOT/skills/okf-setup/templates/CODING_STANDARDS.md` | **Part 3 — Coding standards pointer** |
 
-Check both signs first and say which parts apply. Run Part 1 before Part 2 when both do.
+Check every sign first and say which parts apply. Run them in order. Part 2 runs the
+integration helper, which also does Part 3's work; after Part 2, Part 3 is only its check.
 
 Set `PLUGIN_ROOT` to two directories above this skill's absolute base directory supplied
 by the host. **Every command runs from the target repository root.** Nothing here
@@ -143,7 +146,7 @@ written, what each named file becomes: for `CLAUDE.md`, a diff of its `Knowledge
 and `Work Loop` sections against the template's
 (`$PLUGIN_ROOT/skills/okf-setup/templates/CLAUDE-knowledge-section.md`); for the workflow,
 `diff -u` against `$PLUGIN_ROOT/skills/okf-setup/templates/knowledge.yml`; for the pin,
-the new tag. Wait for an OK, then run the same command without `--dry-run`.
+the new tag; for `CODING_STANDARDS.md`, its new content (Part 3 says what it is). Wait for an OK, then run the same command without `--dry-run`.
 
 When it refuses with `customized … section; merge explicitly` or `customized workflow;
 merge explicitly`, it wrote nothing, the pin included. The repository changed an official
@@ -203,3 +206,40 @@ wrote, the new pin, the drift references found elsewhere and what was done with 
 and the concepts reviewed. Commit these together as the drift removal. Running this part
 again on a repository with no `drift.lock`, current integration and a v0.15.0 pin
 changes nothing.
+
+# Part 3 — Coding standards pointer
+
+A code reviewer that looks for the repository's standards by file name
+(`CODING_STANDARDS.md`, as mattpocock-skills' `/code-review` does) finds none in a
+repository whose standards are bundle conventions, and reviews without them. Conventions
+are cross-cutting: a convention's `code_refs` name where the lesson was learned, not
+every file it governs, so `okf search --for-path` on a changed file does not return it.
+The generated `CODING_STANDARDS.md` tells the reviewer to read the conventions indexes in
+full, to run `okf search --for-path` on each changed file, and to record a missing rule
+with `/okf-write`. It copies no rule, and no `CLAUDE.md` line names it, so it costs
+nothing while implementing. A bundle declared `wiki` in `.okf-profile` describes no code:
+skip this part.
+
+## Step 3.1 — Install
+
+```bash
+python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" --repo-root "$REPO_ROOT" --dry-run
+```
+
+Without `--tag` the helper keeps the pin. Besides `CODING_STANDARDS.md`, it may list
+`CLAUDE.md` or the workflow when they carry an older official text; show the user each
+named file's new content, as in Step 2.2, and wait for an OK. Then run the same command
+without `--dry-run`.
+
+When it refuses with `CODING_STANDARDS.md: customized or project-owned; merge
+explicitly`, it wrote nothing. The repository has its own file, and the merge is yours:
+paste the text of `$PLUGIN_ROOT/skills/okf-setup/templates/CODING_STANDARDS.md` into it
+verbatim, where the project's reader will see it, show the user the diff, and wait for an
+OK. Leave the project's own rules in place; a judgement rule among them is a candidate
+convention for `/okf-write`, which you list for the user, not move. The helper then accepts
+the file as it is.
+
+## Step 3.2 — Check
+
+Run the helper's dry run again: it must not name `CODING_STANDARDS.md`. Commit the file
+with the rest of the integration.

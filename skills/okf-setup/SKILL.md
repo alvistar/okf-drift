@@ -60,6 +60,7 @@ knowledge/
 .okf-drift-version          lockfile: the okf-drift tag, then one <sha256>  <name> per script (Step 3)
 .github/workflows/knowledge.yml   the gate on every PR and on push to main (Step 3b)
 CLAUDE.md                   + Knowledge Bundle · Work Loop · Navigation (Step 3)
+CODING_STANDARDS.md         a pointer for a code reviewer to the bundle's standards (Step 3)
 ```
 
 Six concepts, pre-wired with `## Related` links so `okf validate --strict` passes
@@ -131,8 +132,8 @@ is a bug in this skill — report it rather than patching the output.
 
 Use the plugin-only integration helper for both fresh setup and conversion of an
 existing wrapper-based installation. It changes only the pin, recognized instruction
-sections and workflow, and removes recognized generated legacy files. It never
-scaffolds, edits `knowledge/`, or changes project navigation.
+sections, the workflow and `CODING_STANDARDS.md`, and removes recognized generated
+legacy files. It never scaffolds, edits `knowledge/`, or changes project navigation.
 
 ```bash
 python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" \
@@ -153,6 +154,17 @@ stages the result, and validates it before changing the consumer. Omitting `--ta
 keeps an already compatible pin byte-for-byte. See README **Integration conversion**
 for recognition and refusal rules. Unknown/customized files require a deliberate
 human merge; do not overwrite them to get past preflight.
+
+The helper also writes `CODING_STANDARDS.md` at the repository root, from
+`templates/CODING_STANDARDS.md`. It holds no rule: it tells a code reviewer (one that
+looks for the file by name, as `/code-review` does) to read the conventions indexes in
+full, to run `okf search --for-path` on each changed file, and that a missing judgement
+rule is recorded with `/okf-write`. A convention governs a class of code, not only its
+`code_refs`, so `--for-path` alone misses it. No `CLAUDE.md` line names the file, so it
+costs nothing while implementing. An absent file is written, the generated file is left
+as is, and any other content is refused (`customized or project-owned; merge
+explicitly`); the merge is to paste the generated text into the project's file, which the
+helper then accepts unchanged. A bundle declared `wiki` gets no file.
 
 The helper preserves all other CLAUDE sections and any existing Navigation section.
 Fresh instructions respect the project's existing read order. Historical wrapper
