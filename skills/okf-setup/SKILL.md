@@ -153,7 +153,11 @@ plugin version. The helper calls `okf-pin.sh` against the release's `SHA256SUMS`
 stages the result, and validates it before changing the consumer. Omitting `--tag`
 keeps an already compatible pin byte-for-byte. See README **Integration conversion**
 for recognition and refusal rules. Unknown/customized files require a deliberate
-human merge; do not overwrite them to get past preflight.
+human merge; do not overwrite them to get past preflight. An item the owner marked
+`okf-drift: project-owned` is skipped while the rest installs. When the output holds a
+`project-owned` line, or a refusal offers the mark, read
+`$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md` and follow it: an upstream
+change to a project-owned item reaches the file only through a merge the user agreed to.
 
 The helper also writes `CODING_STANDARDS.md` at the repository root, from
 `templates/CODING_STANDARDS.md`. It holds no rule: it tells a code reviewer (one that
@@ -162,9 +166,9 @@ full, to run `okf search --for-path` on each changed file, and that a missing ju
 rule is recorded with `/okf-write`. A convention governs a class of code, not only its
 `code_refs`, so `--for-path` alone misses it. No `CLAUDE.md` line names the file, so it
 costs nothing while implementing. An absent file is written, the generated file is left
-as is, and any other content is refused (`customized or project-owned; merge
-explicitly`); the merge is to paste the generated text into the project's file, which the
-helper then accepts unchanged. A bundle declared `wiki` gets no file.
+as is, a file marked project-owned is skipped, and any other content is refused
+(`customized or project-owned; merge explicitly`); the merge is to paste the generated
+text into the project's file, which the helper then accepts unchanged. A bundle declared `wiki` gets no file.
 
 The helper preserves all other CLAUDE sections and any existing Navigation section.
 Fresh instructions respect the project's existing read order. Historical wrapper

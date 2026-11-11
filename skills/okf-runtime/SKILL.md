@@ -42,6 +42,11 @@ working on the runtime, never as a recovery from verification failure.
 Report the command's status and diagnostics. A failing gate is not green. If recall
 exits 2, stop: no bare-search fallback.
 
+The launcher may print `okf-drift X.Y.Z is installed; this repository pins vA.B.C. The
+user can run /okf-migrate to upgrade.` It is a suggestion for the user, not a finding:
+relay it once in your answer and carry on with the pinned result. Upgrading is
+`/okf-migrate`'s, on the user's request.
+
 A recall hit may carry a **change hint**, `code changed since this concept: N commit(s)
 on <paths> (last …)`: commits touched its `code_refs` after the concept's last commit. It
 is informative only, never an exit code, and does not make the concept wrong. The code is

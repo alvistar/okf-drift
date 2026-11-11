@@ -86,4 +86,18 @@ fi
 got=$(sha "$cached")
 [ "$got" = "$want" ] || die "cached $cached is damaged: sha256 expected $want, found $got"
 [ -x "$cached" ] || chmod +x "$cached"
+# Run from an installed plugin newer than the pin, say so once; the pinned runtime still
+# runs and its status is the only status. A launcher outside a plugin (CI's download, a
+# legacy consumer copy beside the consumer's own VERSION) has no manifest and stays quiet.
+plugin=$(CDPATH= cd -- "${OKF_DRIFT_SHIM%/*}/.." && pwd) || plugin=''
+if [ -n "$plugin" ] && [ -f "$plugin/.claude-plugin/plugin.json" ] && [ -f "$plugin/VERSION" ]; then
+  installed=$(sed -n '1p' "$plugin/VERSION" | tr -d '[:space:]')
+  if printf '%s %s\n' "$installed" "${ver#v}" | awk '
+    { n = split($1, a, "."); m = split($2, b, ".")
+      if (n != 3 || m != 3 || $1 !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) exit 1
+      for (i = 1; i <= 3; i++) if (a[i] + 0 != b[i] + 0) exit !(a[i] + 0 > b[i] + 0)
+      exit 1 }'; then
+    echo "okf-drift $installed is installed; this repository pins $ver. The user can run /okf-migrate to upgrade." >&2
+  fi
+fi
 exec "$cached" "$@"

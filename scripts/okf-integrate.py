@@ -5,6 +5,7 @@ No scaffold or bundle writes. Preflight all candidates before staging a pin or
 changing anything. Unknown integrations require a human merge, not a guessed migration.
 """
 import argparse
+import difflib
 import fnmatch
 import hashlib
 import os
@@ -58,6 +59,45 @@ SECTIONS = {
 # As with SECTIONS: add the OUTGOING release's digest BEFORE the template text changes.
 STANDARDS_FILES = set()
 LEGACY = [f"scripts/{name}.sh" for name in ("okf-check", "okf-recall", "okf-shim")]
+# Every official text above and the current ones, each in a file named by its digest, so a
+# project-owned item's notice can show the upstream change. A template change is archived
+# in the same commit (okf-launcher-selftest.py fails until it is).
+ARCHIVE = TEMPLATES / "official"
+# The owner's declaration that a managed item is the project's: an HTML comment in
+# Markdown, a comment in YAML, recording the official text the project adapted.
+MARK = re.compile(r"(?:<!--|#)[ \t]*okf-drift:[ \t]*project-owned\b(?:[ \t]+sha256=([0-9a-f]{64})\b)?")
+
+
+def mark_text(item, official):
+    record = f"okf-drift: project-owned sha256={digest(official)}"
+    return f"# {record}" if item.endswith((".yml", ".yaml")) else f"<!-- {record} -->"
+
+
+def lines(data):
+    return [line + "\n" for line in data.decode().splitlines()]
+
+
+def owned(item, text, official):
+    """True when the project marked the item as its own. Prints the skip and, when the
+    official text moved on since the project adapted it, the upstream diff."""
+    match = MARK.search(text)
+    if not match:
+        return False
+    if not match[1]:
+        raise ValueError(f"{item}: project-owned mark records no official text; "
+                         f"for the current one write `{mark_text(item, official)}`")
+    print(f"{item}: project-owned, skipped")
+    current = digest(official)
+    if match[1] != current:
+        archived = ARCHIVE / match[1]
+        old = archived.read_bytes() if archived.is_file() else b""
+        note = "upstream diff follows" if archived.is_file() else \
+            f"the recorded text sha256={match[1]} is not in this plugin's archive; current official text follows"
+        print(f"{item}: official text moved on since the project adapted it; {note}; "
+              f"after a merge the user agreed to, record `{mark_text(item, official)}`")
+        sys.stdout.writelines(difflib.unified_diff(lines(old), lines(official),
+                                                   f"official sha256={match[1]}", f"official sha256={current}"))
+    return True
 
 
 def digest(data):
@@ -92,16 +132,20 @@ def instructions(old):
     text = old.decode() if old is not None else ""
     existing = sections(text)
     # Navigation is project-owned: preserve any existing read order byte-for-byte.
+    kept = set()
     for title in SECTIONS:
         if title in existing:
             body = existing[title][0].rstrip()
-            if body != target[title][0].rstrip() and digest(body.encode()) not in SECTIONS[title]:
-                raise ValueError(f"CLAUDE.md: customized {title} section; merge explicitly")
+            if owned(f"CLAUDE.md ## {title}", body, target[title][0].rstrip().encode()):
+                kept.add(title)
+            elif body != target[title][0].rstrip() and digest(body.encode()) not in SECTIONS[title]:
+                raise ValueError(f"CLAUDE.md: customized {title} section; merge explicitly, "
+                                 "or the owner marks it project-owned (README, Project-owned items)")
     for title in (*SECTIONS, "Navigation"):
         existing = sections(text)
         new = target[title][0].rstrip()
         if title in existing:
-            if title == "Navigation":
+            if title == "Navigation" or title in kept:
                 continue
             match = existing[title]
             end = match.start() + len(match[0].rstrip())
@@ -210,11 +254,14 @@ def standards(old):
     names it, so it costs nothing at implementation time. A project-owned file is a human
     merge: it is accepted once it holds the generated text verbatim."""
     template = (TEMPLATES / "CODING_STANDARDS.md").read_bytes()
+    if old is not None and owned("CODING_STANDARDS.md", old.decode(), template):
+        return old
     if old is None or digest(old) in STANDARDS_FILES:
         return template
     if template.strip() in old:
         return old
-    raise ValueError("CODING_STANDARDS.md: customized or project-owned; merge explicitly")
+    raise ValueError("CODING_STANDARDS.md: customized or project-owned; merge explicitly, "
+                     "or the owner marks it project-owned (README, Project-owned items)")
 
 
 def integrate(root, tag, dry_run):
@@ -241,8 +288,11 @@ def integrate(root, tag, dry_run):
     changes = {"CLAUDE.md": instructions(before["CLAUDE.md"])}
     workflow = (TEMPLATES / "knowledge.yml").read_bytes()
     old_workflow = before[gate]
-    if old_workflow is not None and old_workflow != workflow and digest(old_workflow) not in WORKFLOWS:
-        raise ValueError(f"{root / gate}: customized workflow; merge explicitly")
+    if old_workflow is not None and owned(gate, old_workflow.decode(), workflow):
+        workflow = old_workflow
+    elif old_workflow is not None and old_workflow != workflow and digest(old_workflow) not in WORKFLOWS:
+        raise ValueError(f"{root / gate}: customized workflow; merge explicitly, "
+                         "or the owner marks it project-owned (README, Project-owned items)")
     changes[gate] = workflow
     if "CODING_STANDARDS.md" in before:
         changes["CODING_STANDARDS.md"] = standards(before["CODING_STANDARDS.md"])

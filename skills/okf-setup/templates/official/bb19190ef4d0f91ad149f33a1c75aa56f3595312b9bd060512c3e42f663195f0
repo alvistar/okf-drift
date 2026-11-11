@@ -1,0 +1,57 @@
+name: knowledge
+# Standalone bootstrap: no installed plugin or consumer scripts. Requires a pin to
+# v0.7.0 or newer (first root-aware launcher). Verify the launcher before executing it;
+# it verifies the gate, including on a warm cache. Keep this file verbatim for safe updates.
+on:
+  push:
+    branches: [main]      # never on every push: both triggers on a topic branch cancel each other
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  gate:
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}   # a repo without the variable gets GitHub-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # drift's blame reads git log; shallow = "changed" with no commit to name
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: okf v0.3.0 and drift v0.10.1, pinned
+        run: |
+          go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.3.0
+          curl -fsSL https://drift.fp.dev/install.sh | sh -s -- --version v0.10.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # Not decoration: okf-check.sh only WARNS when drift is missing, so a failed
+      # install would leave the gate green with step 6 silently skipped.
+      - run: okf version && drift --version
+      - name: pinned runtime gate
+        run: |
+          set -eu
+          unset OKF_DRIFT_ROOT
+          root=$(git rev-parse --show-toplevel)
+          cd "$root"
+          fail() { echo "okf-runtime: $*" >&2; exit 2; }
+          lock=.okf-drift-version
+          [ -s "$lock" ] || fail 'missing .okf-drift-version; use okf-pin.sh explicitly'
+          tag=$(sed -n '1p' "$lock")
+          printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || fail 'invalid release tag'
+          printf '%s\n' "$tag" | awk -F. '{ sub(/^v/, "", $1); exit !($1+0 > 0 || $2+0 >= 7) }' ||
+            fail 'root-aware bootstrap requires v0.7.0 or newer; upgrade explicitly with okf-pin.sh'
+          want=$(awk '$2 == "okf-shim.sh" { n++; if (NF != 2 || length($1) != 64 || $1 ~ /[^0-9a-f]/) bad=1; hash=$1 }
+            END { if (n != 1 || bad) exit 1; print hash }' "$lock") || fail 'need exactly one valid okf-shim.sh digest'
+          tmp=$(mktemp -d "${TMPDIR:-/tmp}/okf-ci-XXXXXX")
+          trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+          curl -fsSL "https://raw.githubusercontent.com/alvistar/okf-drift/$tag/scripts/okf-shim.sh" -o "$tmp/okf-shim.sh"
+          [ -s "$tmp/okf-shim.sh" ] || fail 'empty launcher download'
+          if command -v shasum >/dev/null 2>&1; then
+            got=$(shasum -a 256 "$tmp/okf-shim.sh" | cut -d' ' -f1)
+          elif command -v sha256sum >/dev/null 2>&1; then
+            got=$(sha256sum "$tmp/okf-shim.sh" | cut -d' ' -f1)
+          else fail 'no SHA-256 tool'; fi
+          [ "$got" = "$want" ] || fail "launcher sha256 expected $want, found $got"
+          sh "$tmp/okf-shim.sh" --repo-root "$root" okf-check.sh knowledge
