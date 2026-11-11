@@ -9,6 +9,8 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-11
+
 ### Added
 
 - **Project-owned integration items.** `okf-integrate.py` refused the whole run at the
