@@ -9,6 +9,8 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-11-11
+
 ### Fixed
 
 - **A repository whose gate is `knowledge.yaml` gets a `CLAUDE.md` section that names it
