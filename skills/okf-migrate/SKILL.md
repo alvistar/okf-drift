@@ -37,6 +37,12 @@ Set `PLUGIN_ROOT` to two directories above this skill's absolute base directory 
 by the host. **Every command runs from the target repository root.** Nothing here
 commits, pushes or opens a PR.
 
+Parts 2, 3 and 4 run the integration helper and may ask the user about the files it
+manages. `$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md` is the one text for
+how you speak about them: **Explain the run** after the first dry run, before any
+question, and **Ask about an item** for every question on a single file, in the user's
+language and its plain words.
+
 The bundle is `knowledge/` unless the repository keeps it elsewhere (the CLAUDE.md
 knowledge section names it). It must hold a root `log.md`. If it does not, stop: the
 bundle is incomplete, and `/okf-setup` is the job, not this one.
@@ -144,9 +150,10 @@ python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" --repo-root "$REPO_ROOT" --tag v
 
 `REPO_ROOT` is the absolute target repository root. Use the newest released tag at or
 above v0.15.0 in place of `v0.15.0`. The preview prints a `write …` line per file it
-would change and writes nothing. When it exits 0, show the user, before anything is
-written, what each named file becomes: for `CLAUDE.md`, a diff of its `Knowledge Bundle`
-and `Work Loop` sections against the template's
+would change and writes nothing. Explain the run (see the top of this skill). When it
+exits 0, show the user, before anything is written, what each named file becomes: for
+`CLAUDE.md`, a diff of its `Knowledge Bundle` and `Work Loop` sections against the
+template's
 (`$PLUGIN_ROOT/skills/okf-setup/templates/CLAUDE-knowledge-section.md`); for the workflow,
 `diff -u` against `$PLUGIN_ROOT/skills/okf-setup/templates/knowledge.yml`; for the pin,
 the new tag; for `CODING_STANDARDS.md`, its new content (Part 3 says what it is). Wait for an OK, then run the same command without `--dry-run`.
@@ -159,8 +166,8 @@ upstream change reaches the item only through a merge the user agreed to.
 
 When it refuses with `customized … section; merge explicitly` or `customized workflow;
 merge explicitly`, it wrote nothing, the pin included. The repository changed an official
-text without the mark. Ask the user which way: mark the item project-owned (the
-reference file above says how), or merge, which is yours:
+text without the mark. Ask the user about each such item, as **Ask about an item** says:
+mark it project-owned (**The mark** there says how), or merge, which is yours:
 
 1. Read the new texts: `$PLUGIN_ROOT/skills/okf-setup/templates/CLAUDE-knowledge-section.md`
    and `$PLUGIN_ROOT/skills/okf-setup/templates/knowledge.yml`.
@@ -239,12 +246,14 @@ python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" --repo-root "$REPO_ROOT" --dry-r
 Without `--tag` the helper keeps the pin. Besides `CODING_STANDARDS.md`, it may list
 `CLAUDE.md` or the workflow when they carry an older official text; show the user each
 named file's new content, as in Step 2.2, and wait for an OK. Then run the same command
-without `--dry-run`. Its `project-owned` lines and `official text moved on` notices are
-handled as in Step 2.2, **Project-owned items**.
+without `--dry-run`. Explain the run first when nothing earlier in this session did. Its
+`project-owned` lines and `official text moved on` notices are handled as in Step 2.2,
+**Project-owned items**.
 
 When it refuses with `CODING_STANDARDS.md: customized or project-owned; merge
-explicitly`, it wrote nothing. The repository has its own file. Ask the user which way:
-mark it project-owned (Step 2.2, **Project-owned items**), or merge, which is yours:
+explicitly`, it wrote nothing. The repository has its own file. Ask the user as **Ask
+about an item** says: mark it project-owned (Step 2.2,
+**Project-owned items**), or merge, which is yours:
 paste the text of `$PLUGIN_ROOT/skills/okf-setup/templates/CODING_STANDARDS.md` into it
 verbatim, where the project's reader will see it, show the user the diff, and wait for an
 OK. Leave the project's own rules in place; a judgement rule among them is a candidate
@@ -275,7 +284,13 @@ python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" --repo-root "$REPO_ROOT" --tag "
 
 It downloads the release's `SHA256SUMS` and writes nothing. When it cannot fetch them,
 the installed plugin is not a published release: stop and report it; never pin by hand.
-When it refuses a customized item, ask the user which way:
+
+Before any question, explain the upgrade as **Explain the run** in
+`$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md` says, from line 1 of
+`.okf-drift-version` to `v$VERSION`.
+
+When it refuses a customized item, ask the user about it, one item per question, as
+**Ask about an item** in the same file says. The options:
 
 - **Mark it project-owned**, as `$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md`
   says.
