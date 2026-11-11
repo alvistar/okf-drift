@@ -695,6 +695,117 @@ class Integration(Fixture):
         self.assertNotIn("+5. **Review loops**: one review round, then ask.", result.stdout)
         self.assertEqual(yaml.read_bytes(), before_yaml)
 
+    YML = ".github/workflows/knowledge.yml"
+    YAML = ".github/workflows/knowledge.yaml"
+
+    def gate(self, name):
+        path = self.repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((self.TEMPLATES / "knowledge.yml").read_bytes())
+
+    def test_a_yaml_gate_gets_a_section_that_names_it(self):
+        """The section's fallback points an agent at the gate workflow: in a repository
+        whose gate is `knowledge.yaml`, naming `knowledge.yml` points it at nothing."""
+        self.gate(self.YAML)
+        (self.repo / "CLAUDE.md").write_text("# Repo\n")
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (self.repo / "CLAUDE.md").read_text()
+        current, _ = self.official()
+        self.assertEqual(self.section(text, "Knowledge Bundle"),
+                         self.section(current, "Knowledge Bundle").replace(self.YML, self.YAML))
+        self.assertIn(self.YAML, text)
+        self.assertNotIn(self.YML, text)
+        after = self.snapshot()
+        again = self.integrate()
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertNotIn("write ", again.stdout)
+        self.assertEqual(after, self.snapshot())
+
+    def test_a_yaml_section_naming_the_yaml_gate_upgrades_with_no_refusal(self):
+        """An official text whose gate name the owner corrected to `knowledge.yaml` is
+        still that official text: it upgrades, and is not refused as customized. A section
+        an earlier run wrote with the template's `knowledge.yml` is corrected the same way."""
+        current, _ = self.official()
+        for tag, rename in (("v0.13.0", True), (None, True), ("v0.13.0", False), (None, False)):
+            with self.subTest(tag=tag, rename=rename):
+                self.setUp()
+                self.gate(self.YAML)
+                claude, _ = self.official(tag)
+                if rename:
+                    claude = claude.replace(self.YML, self.YAML)
+                (self.repo / "CLAUDE.md").write_text("# Identity\n\n" + claude + "\n## Other\nKeep this.\n")
+                result = self.integrate()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("customized", result.stderr)
+                text = (self.repo / "CLAUDE.md").read_text()
+                for title in self.TITLES:
+                    self.assertEqual(self.section(text, title),
+                                     self.section(current, title).replace(self.YML, self.YAML), title)
+                self.assertNotIn(self.YML, text)
+                self.assertIn("Keep this.", text)
+                self.assertFalse((self.repo / self.YML).exists())
+
+    def test_a_yml_gate_keeps_the_template_name(self):
+        """A `.yml` repository behaves as before: the section names `knowledge.yml`, and a
+        section naming a `knowledge.yaml` the repository does not have is customized."""
+        self.gate(self.YML)
+        (self.repo / "CLAUDE.md").write_text("# Repo\n")
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (self.repo / "CLAUDE.md").read_text()
+        current, _ = self.official()
+        self.assertEqual(self.section(text, "Knowledge Bundle"), self.section(current, "Knowledge Bundle"))
+        self.assertNotIn(self.YAML, text)
+        (self.repo / "CLAUDE.md").write_text(text.replace(self.YML, self.YAML))
+        before = self.snapshot()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("customized Knowledge Bundle section", result.stderr)
+        self.assertEqual(before, self.snapshot())
+
+    def test_a_marked_yaml_section_recording_the_current_text_is_not_moved_on(self):
+        """A mark records the official text with the template's gate name, so the digests
+        and the archive stay as they are; the `.yaml` name in the kept section is no
+        upstream change."""
+        yaml = self.margins()
+        claude = (self.repo / "CLAUDE.md").read_text().replace(self.YML, self.YAML)
+        (self.repo / "CLAUDE.md").write_text(claude)
+        self.assertIn(self.YAML, self.section(claude, "Knowledge Bundle"))
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CLAUDE.md ## Knowledge Bundle: project-owned, skipped", result.stdout)
+        self.assertNotIn("moved on", result.stdout)
+        text = (self.repo / "CLAUDE.md").read_text()
+        for title in self.TITLES:
+            self.assertEqual(self.section(text, title), self.section(claude, title))
+        self.assertTrue(yaml.exists())
+        # A mark recording an older text announces only the official change between them.
+        self.setUp()
+        self.margins(base="v0.13.0")
+        (self.repo / "CLAUDE.md").write_text((self.repo / "CLAUDE.md").read_text().replace(self.YML, self.YAML))
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CLAUDE.md ## Knowledge Bundle: official text moved on", result.stdout)
+        self.assertFalse(any(self.YAML in l for l in result.stdout.splitlines() if l[:1] in "+-"))
+
+    def test_a_bare_marked_yaml_section_is_offered_the_template_named_record(self):
+        """The bare-mark suggestion records the official text as archived, with the
+        template's gate name, whatever name the kept section uses."""
+        self.margins(base="v0.13.0", marks={"Knowledge Bundle": "<!-- okf-drift: project-owned -->"})
+        (self.repo / "CLAUDE.md").write_text((self.repo / "CLAUDE.md").read_text().replace(self.YML, self.YAML))
+        result = self.integrate()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        old, _ = self.official("v0.13.0")
+        self.assertIn(self.mark(self.section(old, "Knowledge Bundle")), result.stderr)
+
+    def test_no_official_text_names_the_yaml_gate(self):
+        """The `.yaml` gate name maps back to the template's without ambiguity only while
+        no official text already names `knowledge.yaml`."""
+        for path in sorted((self.TEMPLATES / "official").iterdir()):
+            with self.subTest(digest=path.name):
+                self.assertNotIn(self.YAML, path.read_text())
+
     def test_every_official_text_is_archived_under_its_digest(self):
         """A notice shows the upstream change only when the text the mark records is
         still at hand. The archive holds every recognized official text and the current

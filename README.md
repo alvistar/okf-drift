@@ -247,6 +247,10 @@ writes nothing to the consumer. The apply preflights every candidate before writ
 - Only exact official legacy/current workflow content is replaced. Only exact
   template Knowledge Bundle / Work Loop sections are replaced; other sections and
   any existing Navigation (including required read order) remain byte-for-byte.
+  The sections name the repository's gate workflow: `knowledge.yaml` when the gate
+  carries that name. A section is compared after its gate name is mapped back to the
+  template's `knowledge.yml`, so an official text that names either is replaced, and the
+  official digests and marks always record the template's name.
 - `CODING_STANDARDS.md` (code profile only) is written when absent and kept when it
   equals the template or holds its text verbatim (a project file with the pointer pasted
   in). Any other content is a blocker: merge by pasting the template's text in.
@@ -277,7 +281,8 @@ The mark goes on the line after the section heading or near the top of the file:
 ```
 
 `sha256` records the official text the project adapted (for a section, its text from the
-heading to the last non-blank line), and must be one of that item's own official texts,
+heading to the last non-blank line, with the gate named `.github/workflows/knowledge.yml`
+even where the repository's gate is `knowledge.yaml`), and must be one of that item's own official texts,
 or the mark is refused. A bare mark is refused, and the refusal prints the mark for the
 item's closest official text, which the skill confirms as the project's base. A kept
 item that still runs a legacy script the same run removes is refused. The helper never compares or writes a marked
