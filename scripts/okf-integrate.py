@@ -54,6 +54,9 @@ SECTIONS = {
         "0e3c29e38020e39200b187dc6c25c15cb5f60fc5396bf4c9be181b8f2ee28c4e",  # v0.14.0
     },
 }
+# Whole-file digests of earlier official CODING_STANDARDS.md templates, replaced in place.
+# As with SECTIONS: add the OUTGOING release's digest BEFORE the template text changes.
+STANDARDS_FILES = set()
 LEGACY = [f"scripts/{name}.sh" for name in ("okf-check", "okf-recall", "okf-shim")]
 
 
@@ -196,9 +199,29 @@ def workflow_name(root):
     return ".github/workflows/knowledge.yml"
 
 
+def wiki(root):
+    """A bundle declared `wiki` in `.okf-profile` describes no code: no review pointer."""
+    profile = regular(root, ".okf-profile")
+    return profile is not None and profile.decode().strip() == "wiki"
+
+
+def standards(old):
+    """CODING_STANDARDS.md is a pointer a code reviewer finds by name; no CLAUDE.md line
+    names it, so it costs nothing at implementation time. A project-owned file is a human
+    merge: it is accepted once it holds the generated text verbatim."""
+    template = (TEMPLATES / "CODING_STANDARDS.md").read_bytes()
+    if old is None or digest(old) in STANDARDS_FILES:
+        return template
+    if template.strip() in old:
+        return old
+    raise ValueError("CODING_STANDARDS.md: customized or project-owned; merge explicitly")
+
+
 def integrate(root, tag, dry_run):
     gate = workflow_name(root)
     candidates = [*LEGACY, "CLAUDE.md", gate, ".okf-drift-version"]
+    if not wiki(root):
+        candidates.append("CODING_STANDARDS.md")
     before = {name: regular(root, name) for name in candidates}
     removed = []
     for name in LEGACY:
@@ -221,6 +244,8 @@ def integrate(root, tag, dry_run):
     if old_workflow is not None and old_workflow != workflow and digest(old_workflow) not in WORKFLOWS:
         raise ValueError(f"{root / gate}: customized workflow; merge explicitly")
     changes[gate] = workflow
+    if "CODING_STANDARDS.md" in before:
+        changes["CODING_STANDARDS.md"] = standards(before["CODING_STANDARDS.md"])
     check_code_refs(root, removed)
     # Pin generation is staged only AFTER every consumer candidate passed preflight.
     if tag:

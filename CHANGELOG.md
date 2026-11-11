@@ -9,6 +9,21 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-11
+
+### Added
+
+- **`CODING_STANDARDS.md`, a pointer for a code reviewer.** A reviewer that looks for the
+  repository's coding standards by file name (`/code-review` from mattpocock-skills) found
+  none in a repository whose standards are bundle conventions, and missed bugs a
+  convention covered. `okf-integrate.py`, run by `/okf-setup` and `/okf-migrate`, now
+  writes a short generated `CODING_STANDARDS.md` at the root: read the conventions
+  indexes in full and apply every convention the diff matches, run `okf search
+  --for-path` on each changed file, keep mechanical rules in lint or CI, and record a
+  missing rule with `/okf-write`. It copies no rule, and no `CLAUDE.md` line names it.
+  A customized or project-owned file is refused until it holds the generated text
+  verbatim. The `wiki` profile gets none.
+
 ### Fixed
 
 - **The gate skips dot-directories under the bundle, like `okf validate`.** A tool's

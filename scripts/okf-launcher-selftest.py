@@ -310,6 +310,58 @@ class Integration(Fixture):
         self.assertEqual(before, self.snapshot())
         self.assertIn("okf-runtime", (self.repo / "CLAUDE.md").read_text())
 
+    STANDARDS = SOURCE / "skills/okf-setup/templates/CODING_STANDARDS.md"
+
+    def test_install_writes_the_coding_standards_pointer_once(self):
+        """A reviewer finds CODING_STANDARDS.md by name; the generated file sends it to
+        the bundle's conventions and to `okf search --for-path`, and copies no rule."""
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CODING_STANDARDS.md", result.stdout)
+        self.assertEqual((self.repo / "CODING_STANDARDS.md").read_bytes(), self.STANDARDS.read_bytes())
+        before = self.snapshot()
+        again = self.integrate()
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertNotIn("write ", again.stdout)
+        self.assertEqual(before, self.snapshot())
+
+    def test_coding_standards_pointer_costs_nothing_at_implementation_time(self):
+        text = self.STANDARDS.read_text()
+        for needle in ("knowledge/conventions/index.md", "knowledge/project/conventions.md",
+                       "okf search --for-path", "/okf-write"):
+            self.assertIn(needle, text)
+        claude = (SOURCE / "skills/okf-setup/templates/CLAUDE-knowledge-section.md").read_text()
+        self.assertNotIn("CODING_STANDARDS", claude)
+
+    def test_customized_coding_standards_is_refused_and_nothing_changes(self):
+        self.integrate()
+        path = self.repo / "CODING_STANDARDS.md"
+        path.write_text("# Our standards\nTabs, always.\n")
+        (self.repo / "CLAUDE.md").write_text("# Identity\n")
+        before = self.snapshot()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("CODING_STANDARDS.md", result.stderr)
+        self.assertIn("merge explicitly", result.stderr)
+        self.assertEqual(before, self.snapshot())
+
+    def test_merged_coding_standards_holding_the_pointer_verbatim_is_kept(self):
+        """The human merge for a project-owned file: paste the generated text into it.
+        The helper then recognizes the file and leaves the project's rules alone."""
+        path = self.repo / "CODING_STANDARDS.md"
+        path.write_text("# Our standards\nTabs, always.\n\n" + self.STANDARDS.read_text())
+        before = path.read_bytes()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertNotIn("CODING_STANDARDS.md", result.stdout)
+
+    def test_wiki_profile_gets_no_coding_standards(self):
+        (self.repo / ".okf-profile").write_text("wiki\n")
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.repo / "CODING_STANDARDS.md").exists())
+
     def test_an_existing_knowledge_yaml_is_upgraded_in_place_not_duplicated(self):
         """A repository whose every workflow is `.yaml` renames the gate. Writing the
         template's own name regardless would install a SECOND gate workflow beside it,

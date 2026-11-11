@@ -238,6 +238,9 @@ writes nothing to the consumer. The apply preflights every candidate before writ
 - Only exact official legacy/current workflow content is replaced. Only exact
   template Knowledge Bundle / Work Loop sections are replaced; other sections and
   any existing Navigation (including required read order) remain byte-for-byte.
+- `CODING_STANDARDS.md` (code profile only) is written when absent and kept when it
+  equals the template or holds its text verbatim (a project file with the pointer pasted
+  in). Any other content is a blocker: merge by pasting the template's text in.
 - Symlinks (including candidate parent directories), customized/unknown files,
   duplicate managed headings and invalid pins are blockers naming the file.
 - `code_refs`, including directory/glob references, are checked before deletion. A
