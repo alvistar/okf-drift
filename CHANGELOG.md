@@ -9,6 +9,8 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-11
+
 ### Added
 
 - **`CODING_STANDARDS.md`, a pointer for a code reviewer.** A reviewer that looks for the
