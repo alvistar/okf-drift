@@ -9,6 +9,22 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-11-11
+
+### Fixed
+
+- **A repository whose gate is `knowledge.yaml` gets a `CLAUDE.md` section that names it
+  (#31).** `okf-integrate.py` kept the gate under its real name but wrote the Knowledge
+  Bundle section from the template, which names `.github/workflows/knowledge.yml`: the
+  section's fallback pointed an agent at a file the repository does not have, and when
+  the owner corrected the name the helper refused the whole run as a customized section.
+  The helper now writes the section with the repository's gate name, and compares an
+  existing section after mapping that name back to the template's, so an official text
+  naming either upgrades in place. The official digests, the `templates/official/`
+  archive and the digest a project-owned mark records stay those of the template text,
+  so a marked `.yaml` section that records the current text gets no `moved on` notice.
+  A `.yml` repository is unchanged.
+
 ## [0.19.1] - 2026-11-11
 
 ### Changed

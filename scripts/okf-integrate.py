@@ -65,6 +65,8 @@ LEGACY = [f"scripts/{name}.sh" for name in ("okf-check", "okf-recall", "okf-shim
 ARCHIVE = TEMPLATES / "official"
 # The owner's declaration that a managed item is the project's: an HTML comment in
 # Markdown, a comment in YAML, recording the official text the project adapted.
+# The gate workflow every official CLAUDE.md text names; a consumer's may be `.yaml`.
+TEMPLATE_GATE = ".github/workflows/knowledge.yml"
 MARK = re.compile(r"(?:<!--|#)[ \t]*okf-drift:[ \t]*project-owned\b(?:[ \t]+sha256=([0-9a-f]{64})\b)?")
 
 
@@ -134,7 +136,13 @@ def sections(text):
     return found
 
 
-def instructions(old, kept):
+def instructions(old, kept, gate=TEMPLATE_GATE):
+    """The sections name the consumer's gate workflow. Every official text names the
+    template's, so an existing section is compared after mapping `gate` back to it: the
+    digests, the archive and a mark's record stay those of the official text."""
+    def official(text):
+        return text.replace(gate, TEMPLATE_GATE)
+
     template = (TEMPLATES / "CLAUDE-knowledge-section.md").read_text()
     target = sections(template)
     text = old.decode() if old is not None else ""
@@ -143,7 +151,7 @@ def instructions(old, kept):
     owns = set()
     for title in SECTIONS:
         if title in existing:
-            body = existing[title][0].rstrip()
+            body = official(existing[title][0].rstrip())
             if owned(f"CLAUDE.md ## {title}", body, target[title][0].rstrip().encode(), SECTIONS[title], kept):
                 owns.add(title)
             elif body != target[title][0].rstrip() and digest(body.encode()) not in SECTIONS[title]:
@@ -151,7 +159,7 @@ def instructions(old, kept):
                                  "or the owner marks it project-owned (README, Project-owned items)")
     for title in (*SECTIONS, "Navigation"):
         existing = sections(text)
-        new = target[title][0].rstrip()
+        new = target[title][0].rstrip().replace(TEMPLATE_GATE, gate)
         if title in existing:
             if title == "Navigation" or title in owns:
                 continue
@@ -246,9 +254,9 @@ def workflow_name(root):
     every other workflow is `.yaml` renames it; writing the template name regardless
     would install a SECOND gate beside the one already there."""
     renamed = ".github/workflows/knowledge.yaml"
-    if (root / renamed).is_file() and not (root / ".github/workflows/knowledge.yml").is_file():
+    if (root / renamed).is_file() and not (root / TEMPLATE_GATE).is_file():
         return renamed
-    return ".github/workflows/knowledge.yml"
+    return TEMPLATE_GATE
 
 
 def wiki(root):
@@ -294,7 +302,7 @@ def integrate(root, tag, dry_run):
             raise ValueError(f"{root / name}: unrecognized or customized legacy file")
         removed.append(name)
     kept = {}
-    changes = {"CLAUDE.md": instructions(before["CLAUDE.md"], kept)}
+    changes = {"CLAUDE.md": instructions(before["CLAUDE.md"], kept, gate)}
     workflow = (TEMPLATES / "knowledge.yml").read_bytes()
     old_workflow = before[gate]
     if old_workflow is not None and owned(gate, old_workflow.decode(), workflow, WORKFLOWS, kept):

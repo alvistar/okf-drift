@@ -144,7 +144,10 @@ project's file stays as it is until the user answers:
    text. The project's own changes are the only differences. When they are not, try the
    item's other official texts (the same directory, one file per digest; the item's
    digests are in `scripts/okf-integrate.py`) and pick the one the project was adapted
-   from. Ask the user when two fit.
+   from. Ask the user when two fit. Every official `CLAUDE.md` text names the gate
+   `.github/workflows/knowledge.yml`: in a repository whose gate is `knowledge.yaml`,
+   that name is no change of the project's, and the helper maps it back before it
+   compares a section, so the mark records the archived text as it is.
 
 Write a mark into the project's file only after the user chooses an option that adds one.
 The helper refuses a mark whose digest is not one of the item's own official texts, so a
