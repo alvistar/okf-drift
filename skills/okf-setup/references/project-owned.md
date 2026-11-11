@@ -15,11 +15,27 @@ heading or near the top of the file:
 # okf-drift: project-owned sha256=<64 hex>            YAML: the gate workflow
 ```
 
-`sha256` records the official text the project adapted. To get it, write the bare mark
-(`<!-- okf-drift: project-owned -->`) and run the dry run: the helper refuses a mark with
-no record and prints the full mark for the current official text. When the project
-adapted an older official text, its digest is the name of a file in
-`$PLUGIN_ROOT/skills/okf-setup/templates/official/` whose content is that text.
+`sha256` records the official text the project adapted: the base. A wrong base hides
+every upstream change made since the real one. To find it:
+
+1. Write the bare mark (`<!-- okf-drift: project-owned -->`) inside the item and run the
+   dry run. The helper refuses it and prints the mark for the item's closest official
+   text.
+2. Confirm that base before you record it: `diff` the project's item against
+   `$PLUGIN_ROOT/skills/okf-setup/templates/official/<digest>`, the archived official
+   text. The project's own additions are the only differences. When they are not, try the
+   item's other official texts (the same directory, one file per digest; the item's
+   digests are in `scripts/okf-integrate.py`) and pick the one the project was adapted
+   from. Ask the user when two fit.
+
+The helper refuses a mark whose digest is not one of the item's own official texts, so a
+mark that lands in the wrong section (above the next heading instead of below its own)
+is caught. Put a section's mark on the line after its heading.
+
+A kept item must not run a legacy wrapper under `scripts/` (`okf-check.sh`,
+`okf-recall.sh`, `okf-shim.sh`) that the same run removes: the helper refuses with `<item>: project-owned
+and still runs <script>`. Show the user that line and the item's current official text;
+the item moves to the runtime launcher on the user's word, then the run goes on.
 
 The mark is the owner's decision, made once. When the helper refuses an unmarked item as
 customized, the choice belongs to the user: merge the official text in (the skill's own
@@ -44,9 +60,7 @@ and, only when the official text changed since the recorded one:
 <unified diff of the two OFFICIAL texts>
 ```
 
-The diff is the upstream change, not the project's adaptation. When the recorded text is
-not in the plugin's archive, the notice says so and the diff shows the whole current
-official text.
+The diff is the upstream change, not the project's adaptation.
 
 ## Act on a moved official text
 

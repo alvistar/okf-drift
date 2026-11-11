@@ -275,7 +275,10 @@ python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" --repo-root "$REPO_ROOT" --tag "
 
 It downloads the release's `SHA256SUMS` and writes nothing. When it cannot fetch them,
 the installed plugin is not a published release: stop and report it; never pin by hand.
-When it refuses a customized item, handle it as in Step 2.2 and preview again.
+When it refuses a customized item, ask the user which way, as in Step 2.2: mark it
+project-owned, or merge it with Step 2.2's items 1 to 4 only. Item 5 there re-pins at
+another tag: skip it, because the pin moves only in Step 4.2, after the OK of this step.
+Then preview again.
 
 Show the user, before anything is written:
 
@@ -292,8 +295,8 @@ Wait for the user's OK to the whole list.
 
 ## Step 4.2 — Apply
 
-Run the same command without `--dry-run`. Then make the project-owned merges the user
-agreed to, each with its refreshed mark, and run the dry run once more: it prints no
+This is the only step that moves the pin. Run the same command without `--dry-run`.
+Then make the project-owned merges the user agreed to, each with its refreshed mark, and run the dry run once more: it prints no
 `write` line and no `moved on` notice for a merged item.
 
 ## Step 4.3 — Check and record

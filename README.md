@@ -277,8 +277,10 @@ The mark goes on the line after the section heading or near the top of the file:
 ```
 
 `sha256` records the official text the project adapted (for a section, its text from the
-heading to the last non-blank line). A bare mark is refused, and the refusal prints the
-full mark for the current official text. The helper never compares or writes a marked
+heading to the last non-blank line), and must be one of that item's own official texts,
+or the mark is refused. A bare mark is refused, and the refusal prints the mark for the
+item's closest official text, which the skill confirms as the project's base. A kept
+item that still runs a legacy script the same run removes is refused. The helper never compares or writes a marked
 item, installs every other item, and prints `<item>: project-owned, skipped`. When the
 official text has changed since the recorded one, it also prints `<item>: official text
 moved on since the project adapted it` with the new mark to record and a unified diff of

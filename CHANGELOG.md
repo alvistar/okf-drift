@@ -22,7 +22,9 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
   mark and the diff between the two official texts, from an archive of every recognized
   official text (`skills/okf-setup/templates/official/`). `/okf-setup` and `/okf-migrate`
   show that diff, propose a merge, and edit the item only with the user's consent. A
-  customized item without the mark is still refused.
+  customized item without the mark is still refused, and so is a mark that records no
+  official text of its own item (the refusal of a bare mark names the closest one), or a
+  kept item that still runs a legacy script the same run removes.
 - **An upgrade notice, and `/okf-migrate` as the one upgrade command.** A consumer whose
   pin lagged the installed plugin got no sign of it. The launcher run from an installed
   plugin newer than the pin now prints `okf-drift X.Y.Z is installed; this repository
