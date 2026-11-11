@@ -629,6 +629,23 @@ class Integration(Fixture):
         self.assertIn(".github/workflows/knowledge.yaml", result.stderr)
         self.assertIn("not an official text of this item", result.stderr)
 
+    def test_a_kept_launcher_workflow_beside_legacy_scripts_lets_the_run_remove_them(self):
+        """Every official workflow since v0.7.0 downloads the launcher from a URL ending in
+        scripts/okf-shim.sh. That is no local run of the legacy script: the move to the
+        launcher project-owned.md asks for must pass."""
+        self.legacy()
+        workflow = self.repo / ".github/workflows/knowledge.yml"
+        _, official = self.official()
+        self.assertIn("/scripts/okf-shim.sh", official)
+        workflow.write_text(official.replace("\n", f"\n{self.mark(official, yaml=True)}\n", 1) + "# ours\n")
+        kept = workflow.read_bytes()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(".github/workflows/knowledge.yml: project-owned, skipped", result.stdout)
+        self.assertEqual(workflow.read_bytes(), kept)
+        for name in ("okf-check.sh", "okf-recall.sh", "okf-shim.sh"):
+            self.assertFalse((self.repo / "scripts" / name).exists(), name)
+
     def test_a_kept_item_running_a_removed_script_is_refused(self):
         """A pre-v0.7 consumer: removing the legacy scripts while a project-owned workflow
         or section still runs them would break CI on every PR."""

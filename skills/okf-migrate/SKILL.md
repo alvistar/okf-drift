@@ -275,10 +275,21 @@ python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" --repo-root "$REPO_ROOT" --tag "
 
 It downloads the release's `SHA256SUMS` and writes nothing. When it cannot fetch them,
 the installed plugin is not a published release: stop and report it; never pin by hand.
-When it refuses a customized item, ask the user which way, as in Step 2.2: mark it
-project-owned, or merge it with Step 2.2's items 1 to 4 only. Item 5 there re-pins at
-another tag: skip it, because the pin moves only in Step 4.2, after the OK of this step.
-Then preview again.
+When it refuses a customized item, ask the user which way:
+
+- **Mark it project-owned**, as `$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md`
+  says.
+- **Merge a `CLAUDE.md` section or the workflow** with Step 2.2's items 1 to 4 only.
+  Item 5 there re-pins at another tag: skip it, because the pin moves only in Step 4.2,
+  after the OK of this step. A merge that puts back the repository's own additions leaves
+  the item customized, and the helper refuses it again: end that merge by adding the
+  project-owned mark with the current official digest (the refusal of a bare mark prints
+  it), with the user's consent as the reference file says. The next preview skips the
+  item.
+- **Merge `CODING_STANDARDS.md`** as in Part 3: paste the generated text into it
+  verbatim.
+
+Then preview again; Step 4.2 runs only on a preview that exits 0.
 
 Show the user, before anything is written:
 

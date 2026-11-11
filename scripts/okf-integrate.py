@@ -306,9 +306,12 @@ def integrate(root, tag, dry_run):
     if "CODING_STANDARDS.md" in before:
         changes["CODING_STANDARDS.md"] = standards(before["CODING_STANDARDS.md"], kept)
     # A project-owned item is kept as it is: it must not run a script this run deletes.
+    # A URL is no local run: every official workflow since v0.7.0 downloads the launcher
+    # from .../scripts/okf-shim.sh.
     for item, text in kept.items():
+        local = re.sub(r"[A-Za-z][A-Za-z0-9+.-]*://\S+", "", text)
         for name in removed:
-            if name in text:
+            if name in local:
                 raise ValueError(f"{item}: project-owned and still runs {name}, which this run removes; "
                                  "the owner updates the item first")
     check_code_refs(root, removed)
