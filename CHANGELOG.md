@@ -9,6 +9,25 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-11
+
+### Changed
+
+- **`/okf-migrate` and `/okf-setup` explain the run and each question in plain words.**
+  An owner upgrading a consumer from v0.18.0 to v0.19.0 could not follow the questions:
+  they named the helper's terms (customized, bare mark, digest, base) and never said what
+  the upgrade does, what each file is for, why the helper stopped, what a mark is, or what
+  each option makes of the file. `skills/okf-setup/references/project-owned.md` now holds
+  the one text for both: **Explain the run** (the pin move, what the release brings from
+  `CHANGELOG.md`, each managed item with its role, and that each answer is applied when
+  the user gives it while okf-drift's own writes and the pin wait for the final OK) before
+  the first question, and **Ask about an item** (role, why the helper
+  stopped, what the project changed and what okf-drift changed since the project's base,
+  the mark, and each option now and at the next upgrade, with a worked example) for every
+  question on one item, and one table of options that every asking step points to. The
+  base is found in a scratch copy, so the project's file gets a mark only after the user
+  chooses one. Parts 2, 3 and 4 of `/okf-migrate` and `/okf-setup` Step 3 point to it.
+
 ## [0.19.0] - 2026-11-11
 
 ### Added
