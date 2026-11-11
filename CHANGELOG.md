@@ -9,6 +9,33 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-11
+
+### Added
+
+- **Project-owned integration items.** `okf-integrate.py` refused the whole run at the
+  first managed item a consumer had adapted, so the consumer never received a new
+  generated file: alvistar/margins, with an adapted `Knowledge Bundle` section and a
+  `knowledge.yaml` gate, could not get v0.18.0's `CODING_STANDARDS.md`. The owner now
+  marks an adapted item once, `<!-- okf-drift: project-owned sha256=<digest> -->` in
+  Markdown or `# okf-drift: project-owned sha256=<digest>` in YAML, recording the
+  official text it adapted. The helper skips a marked item (`<item>: project-owned,
+  skipped`) and installs the rest; when the official text has moved on, it prints the new
+  mark and the diff between the two official texts, from an archive of every recognized
+  official text (`skills/okf-setup/templates/official/`). `/okf-setup` and `/okf-migrate`
+  show that diff, propose a merge, and edit the item only with the user's consent. A
+  customized item without the mark is still refused, and so is a mark that records no
+  official text of its own item (the refusal of a bare mark names the closest one), or a
+  kept item that still runs a legacy script the same run removes.
+- **An upgrade notice, and `/okf-migrate` as the one upgrade command.** A consumer whose
+  pin lagged the installed plugin got no sign of it. The launcher run from an installed
+  plugin newer than the pin now prints `okf-drift X.Y.Z is installed; this repository
+  pins vA.B.C. The user can run /okf-migrate to upgrade.` on gate and recall; the pinned
+  runtime still runs, the exit status is unchanged, and CI prints nothing. `/okf-migrate`
+  Part 4 previews the pin change, every generated file (`CODING_STANDARDS.md` included)
+  and each project-owned notice with its consent step, waits for an OK, applies, runs the
+  gate and writes the log line.
+
 ## [0.18.0] - 2026-11-11
 
 ### Added

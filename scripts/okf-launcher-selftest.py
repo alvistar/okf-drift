@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline launcher contracts; fixture releases exercise the public shell boundary."""
 import hashlib
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -209,6 +210,49 @@ class Launcher(Fixture):
         self.assertEqual(result.returncode, ci.returncode, result.stderr + ci.stderr)
         self.assertEqual(result.stdout, ci.stdout)
         self.assertNotIn("UNPINNED", result.stdout)
+
+    def installed(self, version, manifest=True):
+        """A plugin install: the launcher beside VERSION and the plugin manifest."""
+        plugin = self.base / f"installed {version}"
+        (plugin / "scripts").mkdir(parents=True)
+        (plugin / "VERSION").write_text(version + "\n")
+        if manifest:
+            (plugin / ".claude-plugin").mkdir()
+            (plugin / ".claude-plugin/plugin.json").write_text(f'{{"name": "okf-drift", "version": "{version}"}}\n')
+        launcher = plugin / "scripts/okf-shim.sh"
+        launcher.write_bytes((SOURCE / "scripts/okf-shim.sh").read_bytes())
+        return launcher
+
+    UPGRADE = "okf-drift 0.10.2 is installed; this repository pins v0.7.0. The user can run /okf-migrate to upgrade."
+
+    def test_newer_installed_plugin_prints_the_upgrade_notice_and_changes_nothing(self):
+        launcher = self.installed("0.10.2")
+        pin = (self.repo / ".okf-drift-version").read_bytes()
+        for status in ("0", "1"):
+            env = dict(self.env, FIXTURE_STATUS=status)
+            pinned = self.run_shim("--repo-root", str(self.repo), "okf-check.sh", "knowledge", env=env)
+            result = self.run_shim("--repo-root", str(self.repo), "okf-check.sh", "knowledge", env=env, launcher=launcher)
+            self.assertEqual(result.returncode, pinned.returncode, result.stderr)
+            self.assertEqual(result.stdout, pinned.stdout)
+            self.assertIn(self.UPGRADE, result.stderr.splitlines())
+            recall = self.run_shim("--repo-root", str(self.repo), "okf-recall.sh", "terms", "knowledge",
+                                   env=env, launcher=launcher)
+            self.assertIn(self.UPGRADE, recall.stderr.splitlines())
+            # A relative launcher path still finds its plugin after entering the consumer.
+            relative = subprocess.run(["sh", "scripts/okf-shim.sh", "--repo-root", str(self.repo), "okf-check.sh"],
+                                      cwd=launcher.parent.parent, env=env, text=True, capture_output=True)
+            self.assertIn(self.UPGRADE, relative.stderr.splitlines())
+        self.assertEqual((self.repo / ".okf-drift-version").read_bytes(), pin)
+
+    def test_no_upgrade_notice_at_or_below_the_pin_or_outside_a_plugin(self):
+        cases = [("0.7.0", True), ("0.6.9", True), ("10.0.0", False)]
+        for version, manifest in cases:
+            with self.subTest(version=version, manifest=manifest):
+                launcher = self.installed(version, manifest)
+                result = self.run_shim("--repo-root", str(self.repo), "okf-check.sh", "knowledge", launcher=launcher)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("/okf-migrate", result.stderr)
+        self.assertNotIn("/okf-migrate", self.ci().stderr)
 
     def test_ci_rejects_missing_duplicate_malformed_shim_hash_and_asset(self):
         pin = self.repo / ".okf-drift-version"
@@ -452,6 +496,223 @@ class Integration(Fixture):
         after = self.snapshot()
         self.assertEqual(self.integrate().returncode, 0)
         self.assertEqual(after, self.snapshot())
+
+    TEMPLATES = SOURCE / "skills/okf-setup/templates"
+    TITLES = ("Knowledge Bundle", "Work Loop")
+
+    def sha(self, data):
+        return hashlib.sha256(data if isinstance(data, bytes) else data.encode()).hexdigest()
+
+    def official(self, tag=None):
+        """The official CLAUDE.md sections and workflow at a release tag, or the current ones."""
+        if tag is None:
+            return ((self.TEMPLATES / "CLAUDE-knowledge-section.md").read_text(),
+                    (self.TEMPLATES / "knowledge.yml").read_text())
+        return (self.historic(tag, "skills/okf-setup/templates/CLAUDE-knowledge-section.md").decode(),
+                self.historic(tag, "skills/okf-setup/templates/knowledge.yml").decode())
+
+    def mark(self, text, yaml=False):
+        record = f"okf-drift: project-owned sha256={self.sha(text)}"
+        return f"# {record}" if yaml else f"<!-- {record} -->"
+
+    def margins(self, base=None, marks=None):
+        """The 2026-11-11 alvistar/margins shape: adapted Knowledge Bundle and Work Loop
+        sections and a renamed, adapted `knowledge.yaml`, each marked project-owned with
+        the official text it was adapted from (`base`, a tag, or the current templates);
+        no CODING_STANDARDS.md. `marks` overrides a mark by title or "workflow"."""
+        marks = marks or {}
+        claude, workflow = self.official(base)
+        lines = {"Knowledge Bundle": "Before editing, `okf search --for-path <file>` lists our rules too.",
+                 "Work Loop": "5. **Review loops**: one review round, then ask."}
+        for title in self.TITLES:
+            mark = marks.get(title, self.mark(self.section(claude, title)))
+            claude = claude.replace(f"## {title}\n", f"## {title}\n{mark}\n{lines[title]}\n", 1) if mark \
+                else claude.replace(f"## {title}\n", f"## {title}\n{lines[title]}\n", 1)
+        (self.repo / "CLAUDE.md").write_text("# Identity\n\n" + claude + "\n## Other\nKeep this.\n")
+        yaml = self.repo / ".github/workflows/knowledge.yaml"
+        yaml.parent.mkdir(parents=True)
+        mark = marks.get("workflow", self.mark(workflow, yaml=True))
+        yaml.write_text(workflow.replace("name: knowledge\n", f"name: knowledge\n{mark}\n# our runner\n", 1))
+        return yaml
+
+    def test_project_owned_items_are_skipped_and_the_run_continues(self):
+        yaml = self.margins()
+        kept_yaml = yaml.read_bytes()
+        kept = {t: self.section((self.repo / "CLAUDE.md").read_text(), t) for t in self.TITLES}
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for title in self.TITLES:
+            self.assertIn(f"CLAUDE.md ## {title}: project-owned, skipped", result.stdout)
+        self.assertIn(".github/workflows/knowledge.yaml: project-owned, skipped", result.stdout)
+        # The official text each mark records is the current one: no notice.
+        self.assertNotIn("moved on", result.stdout)
+        text = (self.repo / "CLAUDE.md").read_text()
+        for title in self.TITLES:
+            self.assertEqual(self.section(text, title), kept[title])
+        self.assertIn("Keep this.", text)
+        self.assertEqual(yaml.read_bytes(), kept_yaml)
+        self.assertFalse((self.repo / ".github/workflows/knowledge.yml").exists())
+        # The run continued: the absent generated file was written.
+        self.assertEqual((self.repo / "CODING_STANDARDS.md").read_bytes(), self.STANDARDS.read_bytes())
+        after = self.snapshot()
+        again = self.integrate()
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertNotIn("write ", again.stdout)
+        self.assertEqual(after, self.snapshot())
+
+    def test_a_marked_section_beside_an_official_one_lets_the_official_one_upgrade(self):
+        claude, _ = self.official("v0.13.0")
+        current, _ = self.official()
+        claude = claude.replace(self.section(claude, "Knowledge Bundle"), self.section(current, "Knowledge Bundle"))
+        mark = self.mark(self.section(current, "Knowledge Bundle"))
+        claude = claude.replace("## Knowledge Bundle\n", f"## Knowledge Bundle\n{mark}\nOurs.\n", 1)
+        (self.repo / "CLAUDE.md").write_text("# Identity\n\n" + claude)
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (self.repo / "CLAUDE.md").read_text()
+        self.assertIn("Ours.", self.section(text, "Knowledge Bundle"))
+        self.assertEqual(self.section(text, "Work Loop"), self.section(current, "Work Loop"))
+
+    def test_project_owned_coding_standards_is_skipped(self):
+        mark = self.mark(self.STANDARDS.read_bytes())
+        path = self.repo / "CODING_STANDARDS.md"
+        path.write_text(f"# Our standards\n{mark}\nTabs, always.\n")
+        before = path.read_bytes()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CODING_STANDARDS.md: project-owned, skipped", result.stdout)
+        self.assertNotIn("moved on", result.stdout)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertIn("okf-runtime", (self.repo / "CLAUDE.md").read_text())
+
+    def test_a_mark_never_lets_an_unmarked_customized_item_through(self):
+        self.margins(marks={"Knowledge Bundle": ""})
+        before = self.snapshot()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("customized Knowledge Bundle section; merge explicitly", result.stderr)
+        self.assertIn("project-owned", result.stderr)
+        self.assertEqual(before, self.snapshot())
+
+    def test_a_bare_mark_is_refused_and_names_the_closest_official_text(self):
+        """A project adapted from an older official text must record THAT text, or the
+        moved-on notice never fires. The refusal suggests the closest official text of the
+        item, not the current one."""
+        self.margins(base="v0.13.0", marks={"Work Loop": "<!-- okf-drift: project-owned -->"})
+        before = self.snapshot()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("CLAUDE.md ## Work Loop", result.stderr)
+        old, _ = self.official("v0.13.0")
+        current, _ = self.official()
+        self.assertIn(self.mark(self.section(old, "Work Loop")), result.stderr)
+        self.assertNotIn(self.mark(self.section(current, "Work Loop")), result.stderr)
+        self.assertEqual(before, self.snapshot())
+
+    def test_a_mark_recording_another_items_text_is_refused(self):
+        """A Work Loop mark written on the line ABOVE `## Work Loop` falls inside the
+        Knowledge Bundle section; it must not make that section project-owned."""
+        current, workflow = self.official()
+        wl = self.mark(self.section(current, "Work Loop"))
+        claude = current.replace("## Work Loop\n", f"{wl}\n## Work Loop\nOurs.\n", 1)
+        (self.repo / "CLAUDE.md").write_text("# Identity\n\n" + claude)
+        before = self.snapshot()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("CLAUDE.md ## Knowledge Bundle", result.stderr)
+        self.assertIn("not an official text of this item", result.stderr)
+        self.assertEqual(before, self.snapshot())
+        # An unknown record is refused the same way.
+        self.margins(marks={"workflow": f"# okf-drift: project-owned sha256={'0' * 64}"})
+        result = self.integrate()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(".github/workflows/knowledge.yaml", result.stderr)
+        self.assertIn("not an official text of this item", result.stderr)
+
+    def test_a_kept_launcher_workflow_beside_legacy_scripts_lets_the_run_remove_them(self):
+        """Every official workflow since v0.7.0 downloads the launcher from a URL ending in
+        scripts/okf-shim.sh. That is no local run of the legacy script: the move to the
+        launcher project-owned.md asks for must pass."""
+        self.legacy()
+        workflow = self.repo / ".github/workflows/knowledge.yml"
+        _, official = self.official()
+        self.assertIn("/scripts/okf-shim.sh", official)
+        workflow.write_text(official.replace("\n", f"\n{self.mark(official, yaml=True)}\n", 1) + "# ours\n")
+        kept = workflow.read_bytes()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(".github/workflows/knowledge.yml: project-owned, skipped", result.stdout)
+        self.assertEqual(workflow.read_bytes(), kept)
+        for name in ("okf-check.sh", "okf-recall.sh", "okf-shim.sh"):
+            self.assertFalse((self.repo / "scripts" / name).exists(), name)
+
+    def test_a_kept_item_running_a_removed_script_is_refused(self):
+        """A pre-v0.7 consumer: removing the legacy scripts while a project-owned workflow
+        or section still runs them would break CI on every PR."""
+        self.legacy()
+        workflow = self.repo / ".github/workflows/knowledge.yml"
+        official = workflow.read_text()
+        workflow.write_text(official.replace("\n", f"\n{self.mark(official, yaml=True)}\n", 1) + "# ours\n")
+        before = self.snapshot()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(".github/workflows/knowledge.yml", result.stderr)
+        self.assertIn("scripts/okf-check.sh", result.stderr)
+        self.assertEqual(before, self.snapshot())
+        workflow.write_text(official)
+        claude = (self.repo / "CLAUDE.md").read_text()
+        section = self.section(claude, "Work Loop")
+        (self.repo / "CLAUDE.md").write_text(claude.replace(
+            "## Work Loop\n", f"## Work Loop\n{self.mark(section)}\nOurs.\n", 1))
+        before = self.snapshot()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("CLAUDE.md ## Work Loop", result.stderr)
+        self.assertIn("scripts/okf-", result.stderr)
+        self.assertEqual(before, self.snapshot())
+
+    def test_moved_official_text_is_announced_with_the_upstream_diff(self):
+        yaml = self.margins(base="v0.13.0")
+        before_yaml = yaml.read_bytes()
+        result = self.integrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        old, _ = self.official("v0.13.0")
+        current, workflow = self.official()
+        records = {f"CLAUDE.md ## {t}": self.mark(self.section(current, t)) for t in self.TITLES}
+        records[".github/workflows/knowledge.yaml"] = self.mark(workflow, yaml=True)
+        for item, record in records.items():
+            self.assertIn(f"{item}: project-owned, skipped", result.stdout)
+            self.assertIn(f"{item}: official text moved on", result.stdout)
+            # The new record, ready for the mark once the user agreed to a merge.
+            self.assertIn(record, result.stdout)
+        # The upstream change is the diff between the two OFFICIAL texts, not the project's.
+        old_kb = self.section(old, "Knowledge Bundle")
+        removed = [l for l in old_kb.splitlines() if l not in current]
+        added = [l for l in self.section(current, "Knowledge Bundle").splitlines() if l not in old]
+        self.assertTrue(removed and added)
+        self.assertIn("-" + removed[0], result.stdout.splitlines())
+        self.assertIn("+" + added[0], result.stdout.splitlines())
+        self.assertNotIn("+5. **Review loops**: one review round, then ask.", result.stdout)
+        self.assertEqual(yaml.read_bytes(), before_yaml)
+
+    def test_every_official_text_is_archived_under_its_digest(self):
+        """A notice shows the upstream change only when the text the mark records is
+        still at hand. The archive holds every recognized official text and the current
+        ones; a template change fails here until its new text is archived. The reverse
+        holds too: an archived text whose digest is missing from SECTIONS/WORKFLOWS means a
+        consumer on that official text is refused as customized."""
+        spec = importlib.util.spec_from_file_location("okf_integrate", SOURCE / "scripts/okf-integrate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        current, workflow = self.official()
+        wanted = {*module.WORKFLOWS, *module.STANDARDS_FILES, *(d for s in module.SECTIONS.values() for d in s),
+                  self.sha(workflow), self.sha(self.STANDARDS.read_bytes()),
+                  *(self.sha(self.section(current, t)) for t in module.SECTIONS)}
+        archive = self.TEMPLATES / "official"
+        for name in sorted(wanted):
+            with self.subTest(digest=name):
+                self.assertEqual(self.sha((archive / name).read_bytes()), name)
+        self.assertEqual(sorted(p.name for p in archive.iterdir()), sorted(wanted))
 
     def test_frontmatter_okf_accepts_is_not_parsed_as_strict_yaml(self):
         # okf accepts a description whose value starts with an unquoted backtick; a strict

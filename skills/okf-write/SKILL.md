@@ -38,7 +38,7 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" <script> <args>
 
 Below, `okf-tidy.sh …` and `okf-log.sh …` mean exactly that. A pin older than the release
 that ships a helper has no digest for it and the launcher refuses it; upgrade the pin with
-`/okf-setup`, never run the plugin's copy.
+`/okf-migrate`, never run the plugin's copy.
 
 **Every new line goes in the branch's log entry, through `okf-log.sh add`.** Never edit
 `knowledge/log.md`: it is the frozen log, and the gate fails any change to it. Each branch

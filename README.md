@@ -177,6 +177,15 @@ Older pins remain usable through their legacy wrappers, but the root-aware
 integration diagnoses them and requires an explicit upgrade; it never runs the
 installed plugin runtime as a fallback.
 
+When the installed plugin's `VERSION` is newer than the pin, the launcher run from the
+plugin (gate and recall through `okf-runtime`) prints one line on stderr: `okf-drift
+X.Y.Z is installed; this repository pins vA.B.C. The user can run /okf-migrate to
+upgrade.` It changes nothing and never alters the exit status; the pinned runtime still
+runs. CI's downloaded launcher has no plugin manifest beside it and prints nothing.
+`/okf-migrate` Part 4 is the upgrade: it previews the pin change, every generated file
+and every project-owned notice, waits for an OK, applies, runs the gate and writes the
+log line.
+
 ### Launcher resolution and cache
 
 One launcher, `scripts/okf-shim.sh`, with this consumer-root precedence:
@@ -241,8 +250,9 @@ writes nothing to the consumer. The apply preflights every candidate before writ
 - `CODING_STANDARDS.md` (code profile only) is written when absent and kept when it
   equals the template or holds its text verbatim (a project file with the pointer pasted
   in). Any other content is a blocker: merge by pasting the template's text in.
-- Symlinks (including candidate parent directories), customized/unknown files,
-  duplicate managed headings and invalid pins are blockers naming the file.
+- Symlinks (including candidate parent directories), customized/unknown files without
+  a project-owned mark, duplicate managed headings and invalid pins are blockers naming
+  the file.
 - `code_refs`, including directory/glob references, are checked before deletion. A
   candidate a concept governs blocks conversion; the bundle is not edited.
 - `knowledge/` is read only and remains byte-for-byte unchanged; a leftover
@@ -255,8 +265,33 @@ already has a bundle does **not** get the Verify Checklist's first item — the 
 gate, at the baseline and again at the end — from an upgrade. Add it by hand, from
 `skills/okf-setup/templates/knowledge/project/conventions.md`.
 
+#### Project-owned items
+
+A consumer that adapts a managed item on purpose marks it as its own, once: a `CLAUDE.md`
+section (`Knowledge Bundle`, `Work Loop`), the gate workflow or `CODING_STANDARDS.md`.
+The mark goes on the line after the section heading or near the top of the file:
+
+```
+<!-- okf-drift: project-owned sha256=<digest> -->   Markdown
+# okf-drift: project-owned sha256=<digest>          YAML (the gate workflow)
+```
+
+`sha256` records the official text the project adapted (for a section, its text from the
+heading to the last non-blank line), and must be one of that item's own official texts,
+or the mark is refused. A bare mark is refused, and the refusal prints the mark for the
+item's closest official text, which the skill confirms as the project's base. A kept
+item that still runs a legacy script the same run removes is refused. The helper never compares or writes a marked
+item, installs every other item, and prints `<item>: project-owned, skipped`. When the
+official text has changed since the recorded one, it also prints `<item>: official text
+moved on since the project adapted it` with the new mark to record and a unified diff of
+the two official texts, read from `skills/okf-setup/templates/official/` (every
+recognized official text, named by its digest). `/okf-setup` and `/okf-migrate` show
+that diff, propose the merge, and edit the item and refresh its mark only with the
+user's consent (`skills/okf-setup/references/project-owned.md`). A customized item
+without the mark is still refused.
+
 The second application makes no changes. Customized integrations need an explicit
-human merge rather than force/overwrite flags. Candidates are rechecked before
+human merge or a project-owned mark rather than force/overwrite flags. Candidates are rechecked before
 apply to detect edits during downloads; apply uses atomic file replacement, **not a
 multi-file transaction**. Avoid concurrent consumer edits; filesystem failure during
 apply can leave a partial integration (rerun after correcting it, review the diff).
@@ -277,8 +312,9 @@ scripts/okf-pin.sh                  writes a consumer repo's .okf-drift-version 
 scripts/okf-shim-selftest.sh        the shim's regression test, run by CI against a real tag
 skills/okf-{setup,migrate,write,read,runtime}/SKILL.md
 skills/okf-setup/templates/         the bundle, the CLAUDE.md sections, the CI workflow
+skills/okf-setup/templates/official/ every recognized official integration text, named by its digest
 skills/okf-setup/templates-wiki/    the wiki-profile bundle (okf-scaffold.sh --profile wiki)
-skills/okf-setup/references/        okf-quirks.md and the population/resync prompts
+skills/okf-setup/references/        okf-quirks.md, the population/resync prompts, project-owned.md
 ```
 
 ## Versioning

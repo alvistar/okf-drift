@@ -2,33 +2,36 @@
 name: okf-migrate
 disable-model-invocation: true
 description: |
-  Bring an existing OKF bundle and its integration up to date, in three independent parts.
+  Bring an existing OKF bundle and its integration up to date, in four independent parts.
   Split the log: freeze the root `log.md` (the history stays, a marker hashes it) and
   create `log/`, where each branch writes its own log entry (`okf-log.sh split`). Drop
   drift: delete `drift.lock`, take the drift steps out of the CI workflow and the
   CLAUDE.md knowledge section, and on request review every concept against the writing
   rule. Install `CODING_STANDARDS.md`, the pointer a code reviewer
-  follows to the bundle's conventions. Works on both profiles (code and wiki). Safe to run twice; nothing commits.
+  follows to the bundle's conventions. Upgrade the pin to the installed plugin's release,
+  with every generated file it brings. Works on both profiles (code and wiki). Safe to run twice; nothing commits.
 
   MANUAL TRIGGER ONLY: invoke only when the user types /okf-migrate.
 
   Trigger on: "/okf-migrate", "split the log", "freeze log.md", "migrate the bundle to
   log entries", "the gate says run /okf-migrate", "the gate says drift.lock found",
-  "drop drift".
+  "drop drift", "upgrade okf-drift", "the runtime says the user can run /okf-migrate".
 ---
 
 # /okf-migrate — bring an older bundle up to date
 
-Three parts, each idempotent, each run only when its sign is present:
+Four parts, each idempotent, each run only when its sign is present:
 
 | Sign | Part |
 |---|---|
 | the root `log.md` has no `<!-- okf-log frozen … -->` marker; the gate says `log.md: not frozen` | **Part 1 — Split the log** |
 | a `drift.lock` at the repository root; the gate says `drift.lock found` | **Part 2 — Drop drift** |
-| code profile, and no `CODING_STANDARDS.md` at the repository root, or one without the generated text of `$PLUGIN_ROOT/skills/okf-setup/templates/CODING_STANDARDS.md` | **Part 3 — Coding standards pointer** |
+| code profile, and no `CODING_STANDARDS.md` at the repository root, or one with neither the generated text of `$PLUGIN_ROOT/skills/okf-setup/templates/CODING_STANDARDS.md` nor an `okf-drift: project-owned` mark | **Part 3 — Coding standards pointer** |
+| the tag on line 1 of `.okf-drift-version` is older than `$PLUGIN_ROOT/VERSION`; the runtime says `okf-drift X.Y.Z is installed; this repository pins vA.B.C` | **Part 4 — Upgrade the pin** |
 
 Check every sign first and say which parts apply. Run them in order. Part 2 runs the
 integration helper, which also does Part 3's work; after Part 2, Part 3 is only its check.
+Part 4 runs last, against the pin the earlier parts left.
 
 Set `PLUGIN_ROOT` to two directories above this skill's absolute base directory supplied
 by the host. **Every command runs from the target repository root.** Nothing here
@@ -148,9 +151,16 @@ and `Work Loop` sections against the template's
 `diff -u` against `$PLUGIN_ROOT/skills/okf-setup/templates/knowledge.yml`; for the pin,
 the new tag; for `CODING_STANDARDS.md`, its new content (Part 3 says what it is). Wait for an OK, then run the same command without `--dry-run`.
 
+**Project-owned items.** An item the owner marked `okf-drift: project-owned` is
+skipped (`<item>: project-owned, skipped`) while the rest installs. When the output holds
+a `project-owned` line, read `$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md`
+and act on every `official text moved on` notice as it says, before the hand-back: the
+upstream change reaches the item only through a merge the user agreed to.
+
 When it refuses with `customized … section; merge explicitly` or `customized workflow;
 merge explicitly`, it wrote nothing, the pin included. The repository changed an official
-text, and the merge is yours:
+text without the mark. Ask the user which way: mark the item project-owned (the
+reference file above says how), or merge, which is yours:
 
 1. Read the new texts: `$PLUGIN_ROOT/skills/okf-setup/templates/CLAUDE-knowledge-section.md`
    and `$PLUGIN_ROOT/skills/okf-setup/templates/knowledge.yml`.
@@ -229,10 +239,12 @@ python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" --repo-root "$REPO_ROOT" --dry-r
 Without `--tag` the helper keeps the pin. Besides `CODING_STANDARDS.md`, it may list
 `CLAUDE.md` or the workflow when they carry an older official text; show the user each
 named file's new content, as in Step 2.2, and wait for an OK. Then run the same command
-without `--dry-run`.
+without `--dry-run`. Its `project-owned` lines and `official text moved on` notices are
+handled as in Step 2.2, **Project-owned items**.
 
 When it refuses with `CODING_STANDARDS.md: customized or project-owned; merge
-explicitly`, it wrote nothing. The repository has its own file, and the merge is yours:
+explicitly`, it wrote nothing. The repository has its own file. Ask the user which way:
+mark it project-owned (Step 2.2, **Project-owned items**), or merge, which is yours:
 paste the text of `$PLUGIN_ROOT/skills/okf-setup/templates/CODING_STANDARDS.md` into it
 verbatim, where the project's reader will see it, show the user the diff, and wait for an
 OK. Leave the project's own rules in place; a judgement rule among them is a candidate
@@ -241,5 +253,72 @@ the file as it is.
 
 ## Step 3.2 — Check
 
-Run the helper's dry run again: it must not name `CODING_STANDARDS.md`. Commit the file
+Run the helper's dry run again: it must not name `CODING_STANDARDS.md`, other than as
+`CODING_STANDARDS.md: project-owned, skipped`. Commit the file
 with the rest of the integration.
+
+# Part 4 — Upgrade the pin
+
+`/okf-migrate` is the one upgrade command. The runtime (gate and recall) prints
+`okf-drift X.Y.Z is installed; this repository pins vA.B.C. The user can run /okf-migrate
+to upgrade.` when the installed plugin is newer than the pin. The notice changes nothing:
+the pinned runtime still runs, and CI runs the pin. Upgrading is this part, run only on
+the user's request.
+
+## Step 4.1 — Preview
+
+`VERSION` is the content of `$PLUGIN_ROOT/VERSION`.
+
+```bash
+python3 "$PLUGIN_ROOT/scripts/okf-integrate.py" --repo-root "$REPO_ROOT" --tag "v$VERSION" --dry-run
+```
+
+It downloads the release's `SHA256SUMS` and writes nothing. When it cannot fetch them,
+the installed plugin is not a published release: stop and report it; never pin by hand.
+When it refuses a customized item, ask the user which way:
+
+- **Mark it project-owned**, as `$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md`
+  says.
+- **Merge a `CLAUDE.md` section or the workflow** with Step 2.2's items 1 to 4 only.
+  Item 5 there re-pins at another tag: skip it, because the pin moves only in Step 4.2,
+  after the OK of this step. A merge that puts back the repository's own additions leaves
+  the item customized, and the helper refuses it again: end that merge by adding the
+  project-owned mark with the current official digest (the refusal of a bare mark prints
+  it), with the user's consent as the reference file says. The next preview skips the
+  item.
+- **Merge `CODING_STANDARDS.md`** as in Part 3: paste the generated text into it
+  verbatim.
+
+Then preview again; Step 4.2 runs only on a preview that exits 0.
+
+Show the user, before anything is written:
+
+1. the pin change: line 1 of `.okf-drift-version` now, and `v$VERSION`;
+2. each file a `write …` line names, as in Step 2.2: for `CLAUDE.md` the diff of its
+   `Knowledge Bundle` and `Work Loop` sections against the template, for the workflow
+   `diff -u` against the template, for `CODING_STANDARDS.md` its new content (Part 3
+   says what it is);
+3. each `project-owned` line, and for each `official text moved on` notice the consent
+   step of `$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md`. A merge the user
+   agrees to is part of this upgrade; a refused one leaves the item as it is.
+
+Wait for the user's OK to the whole list.
+
+## Step 4.2 — Apply
+
+This is the only step that moves the pin. Run the same command without `--dry-run`.
+Then make the project-owned merges the user agreed to, each with its refreshed mark, and run the dry run once more: it prints no
+`write` line and no `moved on` notice for a merged item.
+
+## Step 4.3 — Check and record
+
+Run the gate through `okf-drift:okf-runtime` (gate mode). It must run the new pin and
+print no upgrade notice. Findings the new gate adds are the user's to fix, not this
+part's; list them. Then write one log line for the upgrade:
+
+```bash
+sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-log.sh add knowledge '* okf-drift pin upgraded from vA.B.C to vX.Y.Z; <files the helper wrote, project-owned merges>'
+```
+
+Hand back: the old and new pin, the files written, each project-owned item and what was
+done with it, and the gate's result. Running this part again changes nothing.
