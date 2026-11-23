@@ -1,15 +1,23 @@
-# okf v0.6.0 — what was measured, not what the docs say
+# okf v0.6.0 and v0.9.0 — what was measured, not what the docs say
 
 Every claim here was first verified by running okf v0.3.0 on 2026-09-16, either on a
 scratch bundle made by the plugin's `okf-scaffold.sh` or during the 27-document migration
 of a real repo, and re-measured on `okf version v0.6.0 (OKF v0.2 specification)` on
 2026-10-08: the same probes run against both binaries side by side, plus the gate over three
-real bundles (one code, two wiki), which passed unchanged. Where v0.6.0 behaves
-differently the text says so; everything else held. Re-measure after upgrading; correct this
-file when a number disagrees.
+real bundles (one code, two wiki), which passed unchanged. Re-measured again on
+`okf version v0.9.0 (OKF v0.3 specification)` on 2026-11-23, side by side with v0.6.0, on
+scratch bundles and on copies of three real bundles (two code, one wiki). Where a version
+behaves differently the text says so; everything else held. Re-measure after upgrading;
+correct this file when a number disagrees. The gate accepts exactly the versions measured
+here and warns on any other.
 
-v0.6.0 is built with Go 1.26: `go install …/cmd/okf@v0.6.0` needs Go 1.26 or newer (an
+Both are built with Go 1.26: `go install …/cmd/okf@v0.9.0` needs Go 1.26 or newer (an
 older `go` switches toolchain itself when `GOTOOLCHAIN` allows it).
+
+The format itself is the Open Knowledge Format, `SPEC.md` in
+github.com/open-knowledge-format/open-knowledge-format (v0.3, 2026-10-23). The copy in
+GoogleCloudPlatform/knowledge-catalog is deprecated and stops at v0.2; okf v0.9.0 still
+links to it.
 
 ## What `okf validate` gates, and what it only mentions
 
@@ -17,7 +25,7 @@ Exit code is 1 for:
 
 | Finding | Needs flag |
 |---|---|
-| a concept without `type:` | none (an error) |
+| a concept without `type:` — **v0.6.0 only**: v0.9.0 skips it silently (OKF v0.3 §3.2), so only the gate's own `no type:` / `no frontmatter` catches it | none (an error) |
 | a `## Related` / body link to a concept that does not exist | `--strict` |
 | an **orphan** — a concept with no links in *and* no links out | `--strict` |
 | a `status` outside `draft\|stable\|deprecated` (a `gate_findings` entry) | `--strict` |
@@ -25,7 +33,7 @@ Exit code is 1 for:
 | a concept whose `stale_after` is **today or earlier** | `--stale` |
 
 The stale test is `<=`: `concept is stale (stale_after 2026-10-08 <= 2026-10-08)` on the
-day itself (measured on v0.3.0 and v0.6.0). The gate warns about a `stale_after` within the
+day itself (measured on v0.3.0, v0.6.0 and v0.9.0). The gate warns about a `stale_after` within the
 next 30 days so the review can happen before that day, not on it.
 
 Exit code stays **0**, with a line in `warnings`, for:
@@ -74,24 +82,39 @@ Link form does not matter to the checker: `[t](/project/stack.md)` (root-relativ
 form under an `# Related Concepts` H1; the templates use the root-relative form under
 `## Related`. Pick one per bundle and stay with it — the reader is a human.
 
-**Every `.md` link in a concept body is a concept link**, including one that leaves
-the bundle. Measured under `--strict`: `[t](../../docs/a.md)`, `[t](../../docs/a.md#h)`
-and `[t](/docs/a.md)` are all `broken concept link`; a link to a category `index.md`
-is broken too ("reserved index.md is navigation, not a concept"). **Not counted at
-all**: an angle-bracket destination `[t](<../../docs/a.md>)`, a non-`.md` target
-(`../../src/a.ts`), an `https://` URL, and a reference-style link (`[t][r]` +
-`[r]: ../../docs/a.md`). The angle form is CommonMark and renders as a normal link, so
-it is how a concept cites a repo document outside `knowledge/` — with the path listed
-under `sources:` as well. The mex conversion (removed in 0.14.0) rewrote outbound links
-that way (19 in the repo B scaffold).
+**Links that leave the bundle.** OKF v0.3 §6 makes a link that resolves outside the bundle
+root external: valid, never read from disk, and §11.2 forbids rejecting a bundle for it.
+Neither okf agrees, and the two disagree with each other. Measured under `--strict`:
+
+| Link in a concept body | v0.6.0 | v0.9.0 |
+|---|---|---|
+| `[t](../../docs/a.md)`, `[t](../../docs/a.md#h)` | broken concept link | **error** `escapes bundle root (path traversal denied)`, not conformant |
+| `[t](../../src/a.ts)` (not `.md`) | not counted | **error**, as above |
+| `[t](<../../docs/a.md>)` (angle brackets) | not counted | broken: `target asset does not exist`, the brackets kept in the path (okf-agent-memory#69); `<x.md>` inside the bundle breaks too |
+| `[t](/docs/a.md)` | broken concept link | broken concept link |
+| `[t](https://…)`, `[t][r]` + `[r]: ../../docs/a.md` | not counted | not counted |
+| a missing non-`.md` file inside the bundle | not counted | broken |
+| link syntax inside a code span (`` `[t](x.md)` ``) | parsed as a link | parsed as a link |
+| link syntax inside a fenced block | ignored | ignored |
+
+A link to a category `index.md` is broken on both ("reserved index.md is navigation, not a
+concept"). So a concept cites a repository file outside `knowledge/` with the plain
+relative form, `[t](../../docs/a.md)`, a space as `%20`: clickable on GitHub and in an IDE,
+and valid for the spec. The gate drops okf's finding on such a link and checks it itself —
+the target must exist inside the repository — and refuses the angle-bracket form and link
+syntax inside a code span (`docs/adr/0003-links-outside-the-bundle.md`; okf-agent-memory#70
+asks okf to treat these links as §6 says). `okf-links.sh` rewrites the angle form, which
+this file recommended while v0.6.0 was the only version measured.
 
 ## `okf create` — prefer writing the file
 
 - On v0.3.0 `okf create --help` **created a concept named `--help.md`** and added it to
-  `index.md`. v0.6.0 prints help and writes nothing.
+  `index.md`. v0.6.0 and v0.9.0 print help and write nothing.
 - v0.6.0 has `--type` (default `Fact`), `--title` (default: the last id segment),
   `--desc`, `--body`, `--status` (default `stable`), `--tags`, `--actor`, `--no-log`,
-  `--no-index`, `--json`. v0.3.0 had only `-desc`, `-body`, `-actor`, `-json`.
+  `--no-index`, `--json`. v0.3.0 had only `-desc`, `-body`, `-actor`, `-json`. v0.9.0 adds
+  `--stale-after` and `--change-note`; the note goes to the root `log.md`, which is the
+  frozen log here, so the plugin never passes it.
 - It writes `generated: { by: agent/cli, at: "<iso>" }`, which is provenance the
   templates do not carry, and no `last_updated`, which the gate requires. Nothing in okf
   validates `generated`.
@@ -116,8 +139,9 @@ last line. Nothing writes it again; the gate fails any change above the marker a
 `log/<YYYY-MM-DD>-<slug>-<4 hex>/log.md`, with the same `## YYYY-MM-DD` headings, newest
 first, and only through `okf-log.sh add`. okf v0.6.0 treats that nested `log.md` as
 reserved too (not a concept, not searched, passed by `okf validate`) but never checks its
-headings, so the gate checks them itself. A `README.md` inside the bundle **is** a
-concept and is rejected for having no frontmatter. That is why the format guides live
+headings, so the gate checks them itself (v0.9.0 the same). A `README.md` inside the bundle
+**is** a concept to v0.6.0 and is rejected for having no frontmatter; v0.9.0 skips it, as
+OKF v0.3 §3.2 says, and the gate still fails it (`no frontmatter`). That is why the format guides live
 at the top of `playbooks/index.md` and `decisions/index.md`: reserved, so no
 frontmatter, no orphan check, no search pollution — and, being reserved, nothing will
 ever find them by search, so `CLAUDE.md` says to read the index.
@@ -126,7 +150,7 @@ ever find them by search, so `CLAUDE.md` says to read the index.
 
 Two different parsers read the frontmatter, and they disagree.
 
-- **okf's own parser** (v0.3.0, unchanged in v0.6.0) reads a `description:` line whole, unquoted `#` included
+- **okf's own parser** (v0.3.0, unchanged in v0.6.0 and v0.9.0) reads a `description:` line whole, unquoted `#` included
   — measured: `… (issue #48); the rest` comes back intact from `okf search --json`. But
   it stops at the end of the line: a value **folded over two lines** (what PyYAML's
   dumper does to any long string) is truncated at the fold, silently, in search results
@@ -148,8 +172,9 @@ carried through and ignored, which is why the gate checks their format.
 
 **`status` IS an enum under `--strict`**: `draft|stable|deprecated`. Any other word is a
 `gate_findings` entry and exit 1 (`status 'active' is not draft|stable|deprecated`,
-measured). It is reported neither as an error nor as a warning — a script that reads
-only those two lists misses it; read `gate_passed`. So a decision in force is `stable`
+measured). v0.6.0 reports it neither as an error nor as a warning — a script that reads
+only those two lists misses it; read `gate_passed`. v0.9.0 reports the same text in both
+`warnings` and `gate_findings`; the gate prints it once. So a decision in force is `stable`
 and a superseded one is `deprecated`; there is no "active".
 
 **`sources` entries must be mappings with a `resource` key** under `--strict`: a bare
@@ -185,8 +210,8 @@ and `priority` as well.
 
 ## `okf bootstrap` and `okf agents`
 
-`okf init <dir>` writes exactly two files: `index.md` (with `okf_version: "0.2"`) and
-`log.md`. `okf bootstrap <dir>` adds an `AGENTS.md` in Agent-Action-Grammar style (RFC
+`okf init <dir>` writes exactly two files: `index.md` (with `okf_version: "0.2"`; v0.9.0
+writes `"0.3"`) and `log.md`. `okf bootstrap <dir>` adds an `AGENTS.md` in Agent-Action-Grammar style (RFC
 2119 `MUST`/`NEVER` rules, "diagrams => ASSERT(mermaid)"), a `Makefile`, and
 `.agents/skills/okf-memory/` with six guide files. None of that writes a concept. This
 skill does not use bootstrap: its `AGENTS.md` house style is not the project's. (Under
@@ -194,3 +219,25 @@ v0.3.0 the `.agents/skills` copy also documented `--type`/`--title` flags the bi
 have; v0.6.0 has them.) `okf agents lint` checks an `AGENTS.md` against five AAG rules and a
 400-token budget on the managed block — v0.6.0 also prints the whole file's tokens; useful
 only if you adopt that style.
+
+## What v0.9.0 added that this plugin does not use
+
+- **`okf validate --drift-git`** warns for each concept whose `code_refs` have a commit
+  newer than the concept's last touch: 456 warnings on the margins bundle. The gate treats
+  warnings as fatal and never passes the flag; the change hint in recall is the signal
+  (ADR 0002).
+- **`trust_tier` and `staleness`** in `okf search --json` and `okf show`, computed from
+  `verified` (OKF v0.3 §5.3: an event counts only when no later change exists). The plugin
+  writes no `verified` and ignores both fields; every concept reads `unverified`.
+- **`x-okf-memory-protected: true`** makes `okf update` and the MCP tools refuse an
+  agent's edit. The skills write files directly and do not honour it: it would block
+  read-repair.
+- **`okf changes --since`** lists changes from the root `log.md`; here the history after
+  the split lives in log entries, which it does not read.
+- **`scopes:`** in the root `index.md` (new in v0.8.0): an unknown value such as
+  `scopes: [bundle]` makes v0.9.0 exit 2 with no JSON. The templates write no `scopes:`.
+- **`superseded_by`** counts as a graph edge on v0.9.0 (it clears an orphan) and a missing
+  target is an error; v0.6.0 ignores it.
+
+None of `validate`, `search`, `show`, `--scorecard` or `--drift-git` writes a file on
+v0.9.0 (checksums unchanged, on a scratch bundle and on a real repository).

@@ -640,6 +640,133 @@ class RuntimeTests(unittest.TestCase):
         self.env["VALIDATE_EXIT"] = "7"
         self.assert_unusable(self.run_script("okf-check.sh"))
 
+    def linked(self, body: str) -> None:
+        """One concept whose body is `body`, listed in its index; the bundle sits in a repo
+        that also holds docs/adr.md, a file outside the bundle a concept may cite."""
+        self.concept("architecture/core")
+        path = self.bundle / "architecture/core.md"
+        path.write_text(path.read_text().replace("Body.\n", body + "\n"))
+        (self.bundle / "architecture/index.md").write_text(
+            "- [Second](/architecture/core.md) — Second fixture.\n")
+        (self.root / "docs").mkdir(exist_ok=True)
+        (self.root / "docs/adr.md").write_text("# ADR\n")
+
+    def test_gate_accepts_both_measured_okf_versions_and_warns_on_another(self) -> None:
+        for line, warned in (("okf version v0.6.0 (OKF v0.2 specification)", False),
+                             ("okf version v0.9.0 (OKF v0.3 specification)", False),
+                             ("okf version v0.8.0 (OKF v0.2 specification)", True)):
+            (self.stub / "okf").write_text(
+                '#!/bin/sh\ncase "$1" in\nversion) echo "%s";;\n'
+                'validate) cat "$FIXTURE/validate.json";;\nesac\n' % line)
+            result = self.run_script("okf-check.sh")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual("measured against v0.6.0 and v0.9.0" in result.stdout, warned, line)
+
+    def test_a_link_to_a_repository_file_outside_the_bundle_drops_okfs_findings(self) -> None:
+        # okf v0.9.0 reports it as an error and loses conformance; okf v0.6.0 as a broken link.
+        self.linked("See [the ADR](../../docs/adr.md#why).")
+        href = "../../docs/adr.md#why"
+        self.payload("validate", {
+            "gate_passed": False, "is_conformant": False,
+            "errors": [f'architecture/core.md: link "{href}" escapes bundle root (path traversal denied)'],
+            "broken_links": [{"source_concept": "architecture/core.md", "target_href": href,
+                              "reason": "path traversal denied: target escapes bundle root"}]})
+        self.env["VALIDATE_EXIT"] = "1"
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("escapes bundle root", result.stdout)
+
+    def test_okfs_other_findings_still_fail_beside_a_dropped_link(self) -> None:
+        self.linked("See [the ADR](../../docs/adr.md).")
+        self.payload("validate", {
+            "gate_passed": False, "is_conformant": False,
+            "errors": ['architecture/core.md: link "../../docs/adr.md" escapes bundle root (path traversal denied)'],
+            "orphans": ["architecture/core"]})
+        self.env["VALIDATE_EXIT"] = "1"
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("FAIL  okf validate orphan: architecture/core", result.stdout)
+        self.assertIn("FAIL  okf validate: not conformant", result.stdout)
+
+    def test_an_unlisted_okf_failure_beside_a_dropped_link_still_fails(self) -> None:
+        # Value: protects=dropping okf's outside-link findings never mutes a failure okf reports elsewhere; fails_when=$only_ours ignores an unknown non-empty field or a stale count; why_new=only listed findings were tested beside a dropped link; seam=none; no_claim=fields a future okf adds with an empty value
+        self.linked("See [the ADR](../../docs/adr.md).")
+        error = 'architecture/core.md: link "../../docs/adr.md" escapes bundle root (path traversal denied)'
+        self.env["VALIDATE_EXIT"] = "1"
+        for extra in ({"new_findings": ["something okf adds later"]}, {"stale_count": 1}):
+            self.payload("validate", {"gate_passed": False, "is_conformant": False,
+                                      "errors": [error], "concept_count": 2, **extra})
+            result = self.run_script("okf-check.sh")
+            self.assertEqual(result.returncode, 1, (extra, result.stdout))
+            self.assertNotIn("escapes bundle root", result.stdout)
+
+    def test_an_encoded_slash_is_not_a_path_separator(self) -> None:
+        # Value: protects=a link whose `/` is percent-encoded is judged as the dead link a reader sees; fails_when=the gate decodes %2F before splitting the path; why_new=only %20 was covered; seam=none; no_claim=none beyond protects
+        # docs/adr.md exists, but `docs%2Fadr.md` is one segment naming no file.
+        self.linked("See [the ADR](../../docs%2Fadr.md).")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("link ../../docs%2Fadr.md — no such file in the repository", result.stdout)
+
+    def test_a_link_outside_the_bundle_must_exist_inside_the_repository(self) -> None:
+        outside = Path(self.tmp.name).parent / f"{self.root.name}-sibling.md"
+        outside.write_text("x\n")
+        self.addCleanup(outside.unlink)
+        self.linked(f"See [gone](../../docs/nope.md) and [up](../../../{outside.name}).")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("architecture/core.md: link ../../docs/nope.md — no such file in the repository", result.stdout)
+        self.assertIn(f"architecture/core.md: link ../../../{outside.name} leaves the repository", result.stdout)
+
+    def test_angle_brackets_and_a_link_in_a_code_span_fail_but_a_fence_does_not(self) -> None:
+        self.linked("See [the ADR](<../../docs/adr.md>).\n\nWrite `[t](../../x.md)` "
+                    "or ``a `[t](y.md)` b``.\n\n```\n[t](<z.md>)\n```")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("link destination in angle brackets, <../../docs/adr.md>", result.stdout)
+        self.assertIn("link syntax inside a code span, [..](../../x.md)", result.stdout)
+        self.assertIn("link syntax inside a code span, [..](y.md)", result.stdout)
+        self.assertNotIn("z.md", result.stdout)
+        self.assertNotIn("no such file", result.stdout)
+
+    def test_a_status_okf_reports_twice_fails_once(self) -> None:
+        finding = "project/state.md: status 'active' is not draft|stable|deprecated"
+        self.payload("validate", {"gate_passed": False, "is_conformant": True,
+                                  "warnings": [finding], "gate_findings": [finding]})
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(result.stdout.count(finding), 1, result.stdout)
+
+    def test_a_link_okf_links_rewrote_with_a_space_passes_the_gate(self) -> None:
+        # Value: protects=/okf-migrate Part 5 then the gate: the %20 form okf-links writes is percent-decoded and found; fails_when=percent-decoding is dropped or okf-links emits a form the gate refuses; why_new=no test fed okf-links output to the gate or used %20; seam=none; no_claim=real okf's own reading of %20
+        self.linked("See [the ADR](<../../docs/a b.md>).")
+        (self.root / "docs/a b.md").write_text("# ADR\n")
+        rewrite = subprocess.run(["sh", str(SCRIPTS / "okf-links.sh"), "knowledge"],
+                                 cwd=self.root, text=True, capture_output=True)
+        self.assertEqual(rewrite.returncode, 0, rewrite.stderr)
+        self.assertIn("(../../docs/a%20b.md)", (self.bundle / "architecture/core.md").read_text())
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_okfs_go_quoted_href_is_unescaped_before_it_is_dropped(self) -> None:
+        # Value: protects=okf v0.9.0's %q-escaped href still matches the link the gate judged; fails_when=the \" / \\ unescape is removed or wrong; why_new=existing drop tests use hrefs with nothing to escape; seam=none; no_claim=other Go escapes such as \t or \u
+        self.linked('See [the ADR](../../docs/a"b.md).')
+        (self.root / 'docs/a"b.md').write_text("# ADR\n")
+        self.payload("validate", {
+            "gate_passed": False, "is_conformant": False,
+            "errors": ['architecture/core.md: link "../../docs/a\\"b.md" escapes bundle root (path traversal denied)']})
+        self.env["VALIDATE_EXIT"] = "1"
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("escapes bundle root", result.stdout)
+
+    def test_a_lone_backtick_never_pairs_across_a_paragraph(self) -> None:
+        # Value: protects=CommonMark span scope: an unmatched backtick stays literal and does not swallow a real link in the next paragraph; fails_when=code_spans stops splitting on blank lines or pairs runs of different length; why_new=the code-span test only has balanced spans; seam=none; no_claim=backslash-escaped backticks
+        self.linked("A lone ` here.\n\nSee [the ADR](../../docs/adr.md) and `x`, ``y``.")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("code span", result.stdout)
+
     def test_gate_caps_a_long_warning_list_unless_verbose(self) -> None:
         # Value: protects=a grouped list stays 8 names + a count; fails_when=the cap or OKF_VERBOSE breaks; why_new=no test had >8 concepts; seam=none
         rows = []
@@ -1166,6 +1293,79 @@ class LogEntryTests(unittest.TestCase):
         self.history = "# Log\n"
         self.assert_refused(self.log("add", "knowledge", "* x"), "/okf-migrate")
 
+
+
+class LinksTests(unittest.TestCase):
+    def test_angle_destinations_are_rewritten_in_concepts_only_and_once(self) -> None:
+        # Value (extended): protects=a dot-directory (tool state) and a double-backtick span holding a single one stay untouched; fails_when=the dot-dir prune or the exact-run span match breaks; why_new=only log dirs and single-backtick spans were covered; seam=none; no_claim=a span split across paragraphs
+        with tempfile.TemporaryDirectory(prefix="okf-links-") as tmp:
+            bundle = Path(tmp) / "knowledge"
+            (bundle / "a").mkdir(parents=True)
+            (bundle / "log/2026-11-23-x-abcd").mkdir(parents=True)
+            (bundle / ".ingestor").mkdir()
+            concept = ("---\ntype: Note\n---\nSee [ADR](<../../docs/a b.md>) and "
+                       "[x](<x.md#h>).\n\nShow `[t](<keep.md>)` as code, "
+                       "``a `[t](<keep2.md>)` b`` too.\n\n"
+                       "```\n[t](<fenced.md>)\n```\n")
+            (bundle / "a/y.md").write_text(concept)
+            untouched = {"index.md": "- [Y](<a/y.md>) — y.\n", "log.md": "[t](<l.md>)\n",
+                         "log/2026-11-23-x-abcd/log.md": "[t](<e.md>)\n",
+                         ".ingestor/state.md": "[t](<s.md>)\n"}
+            for rel, text in untouched.items():
+                (bundle / rel).write_text(text)
+            run = lambda: subprocess.run(["sh", str(SCRIPTS / "okf-links.sh"), "knowledge"],
+                                         cwd=tmp, text=True, capture_output=True)
+            first = run()
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertIn("knowledge/a/y.md: 2 link(s) rewritten", first.stdout)
+            self.assertEqual((bundle / "a/y.md").read_text(), concept
+                             .replace("(<../../docs/a b.md>)", "(../../docs/a%20b.md)")
+                             .replace("(<x.md#h>)", "(x.md#h)"))
+            for rel, text in untouched.items():
+                self.assertEqual((bundle / rel).read_text(), text, rel)
+            second = run()
+            self.assertEqual((second.returncode, second.stdout), (0, ""))
+
+    def test_a_concept_folder_named_log_and_a_lone_backtick_do_not_hide_a_link(self) -> None:
+        # Value: protects=okf-links.sh rewrites every link the gate refuses; fails_when=it prunes any folder named log, or pairs a lone backtick across a paragraph; why_new=only the bundle's own log/ and same-paragraph spans were covered; seam=none; no_claim=none beyond protects
+        with tempfile.TemporaryDirectory(prefix="okf-links-") as tmp:
+            bundle = Path(tmp) / "knowledge"
+            (bundle / "architecture/log").mkdir(parents=True)
+            (bundle / "architecture/log/audit.md").write_text("---\ntype: Note\n---\nSee [t](<../../../a.md>).\n")
+            (bundle / "b.md").write_text("---\ntype: Note\n---\nA lone ` here.\n\nSee [t](<../a.md>) and `x`.\n")
+            result = subprocess.run(["sh", str(SCRIPTS / "okf-links.sh"), "knowledge"],
+                                    cwd=tmp, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("](../../../a.md)", (bundle / "architecture/log/audit.md").read_text())
+            self.assertIn("](../a.md)", (bundle / "b.md").read_text())
+
+    def test_spaces_and_parentheses_are_percent_encoded(self) -> None:
+        # Value: protects=okf-links.sh writes a destination the gate resolves to the same file; fails_when=only spaces are encoded, so a ")" ends the link early; why_new=no test had a parenthesis in a path; seam=none; no_claim=other reserved characters
+        with tempfile.TemporaryDirectory(prefix="okf-links-") as tmp:
+            bundle = Path(tmp) / "knowledge"
+            bundle.mkdir()
+            (Path(tmp) / "docs").mkdir()
+            (Path(tmp) / "docs/a (b).md").write_text("# A\n")
+            (bundle / "c.md").write_text("---\ntype: Note\n---\nSee [t](<../docs/a (b).md>).\n")
+            subprocess.run(["sh", str(SCRIPTS / "okf-links.sh"), "knowledge"], cwd=tmp, check=True,
+                           capture_output=True)
+            self.assertIn("](../docs/a%20%28b%29.md)", (bundle / "c.md").read_text())
+
+    def test_a_trailing_slash_and_a_symlinked_concept(self) -> None:
+        # Value: protects=log entries stay untouched however the bundle is named, and a symlinked concept keeps its link while its target is rewritten; fails_when=the log prune compares the raw argument, or the rename replaces the link; why_new=no test passed knowledge/ or had a symlinked concept; seam=none; no_claim=a link pointing outside the repository
+        with tempfile.TemporaryDirectory(prefix="okf-links-") as tmp:
+            bundle = Path(tmp) / "knowledge"
+            (bundle / "log/2026-11-23-x-abcd").mkdir(parents=True)
+            entry = bundle / "log/2026-11-23-x-abcd/note.md"  # not log.md: only the folder prune spares it
+            entry.write_text("[t](<e.md>)\n")
+            (bundle / "real.md").write_text("---\ntype: Note\n---\nSee [t](<a b.md>).\n")
+            (bundle / "linked.md").symlink_to("real.md")
+            result = subprocess.run(["sh", str(SCRIPTS / "okf-links.sh"), "knowledge/"],
+                                    cwd=tmp, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(entry.read_text(), "[t](<e.md>)\n")
+            self.assertTrue((bundle / "linked.md").is_symlink())
+            self.assertIn("](a%20b.md)", (bundle / "real.md").read_text())
 
 
 if __name__ == "__main__":

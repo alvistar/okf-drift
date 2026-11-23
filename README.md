@@ -14,7 +14,7 @@ check. (Its name is historical: until 0.15.0 it bound concepts to code with
 records why that went.)
 
 Every claim about `okf` in these skills was measured against a running binary — okf
-v0.6.0 on 2026-10-08 — not read from documentation. Where a measurement contradicted the
+v0.6.0 on 2026-10-08 and okf v0.9.0 on 2026-11-23 — not read from documentation. Where a measurement contradicted the
 docs, the measurement is what is written down, and
 `skills/okf-setup/references/okf-quirks.md` says which. Re-measure after an upgrade before
 trusting a green validation.
@@ -25,7 +25,7 @@ trusting a green validation.
 |---|---|
 | `/okf-setup` | Lays the bundle down in a repo that has none: a fixed layout that validates `--strict` from the first commit, the population and resync prompts, the `CLAUDE.md` sections, the gate and the CI job. |
 | `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot and its evidence, each to the writing rule; logs the change in the branch's log entry; keeps index rows and `last_updated` with `okf-tidy.sh`. |
-| `/okf-migrate` | Brings an older bundle up to date: splits the log (freezes the root `log.md`, creates `log/`) and drops drift (deletes `drift.lock`, updates the CI workflow and the `CLAUDE.md` sections, and on request reviews the concepts against the writing rule). Idempotent, works on both profiles, commits nothing. |
+| `/okf-migrate` | Brings an older bundle up to date: splits the log (freezes the root `log.md`, creates `log/`) and drops drift (deletes `drift.lock`, updates the CI workflow and the `CLAUDE.md` sections, and on request reviews the concepts against the writing rule), adds `CODING_STANDARDS.md`, upgrades the pin, and rewrites angle-bracket links to repository files outside the bundle to the plain form. Idempotent, works on both profiles, commits nothing. |
 | `/okf-read` | Recalls from it: `okf search` with each hit's `status · review` and, when the code under its `code_refs` changed after the concept's last commit, a change hint. |
 
 `/okf-setup`, `/okf-migrate` and `/okf-read` are **manual trigger only** — they run when
@@ -53,12 +53,14 @@ the agent fixes the concept with an ordinary `/okf-write` edit if the session wr
 repository, and says so in its answer otherwise. No field records the check, and the
 branch's log entry records only the edit.
 
-**The gate** (`scripts/okf-check.sh`) is the six steps `okf validate --strict --drift
+**The gate** (`scripts/okf-check.sh`) is the seven steps `okf validate --strict --drift
 --stale` does not do: its own warning list treated as fatal (a dead `code_refs` path is a
 warning at exit 0), index rows that resolve and carry the concept's description verbatim
 in both directions, the frontmatter okf carries but ignores, template residue, the
-reserved files, and a leftover `drift.lock`, which fails the gate with `drift.lock found:
-drift is no longer used, run /okf-migrate`. (`--drift` there is okf's own flag: a check
+reserved files, a leftover `drift.lock`, which fails the gate with `drift.lock found:
+drift is no longer used, run /okf-migrate`, and links from a concept to repository files
+outside the bundle, which must exist in the repository
+(`docs/adr/0003-links-outside-the-bundle.md`). (`--drift` there is okf's own flag: a check
 that every `code_refs` path still exists.) It runs in the Work Loop and as a blocking CI
 job. It checks structure and review dates; whether a concept is still true is
 read-repair's question.
@@ -112,7 +114,7 @@ Runtime dependency, installed separately and pinned by the CI template to the ve
 everything here was measured against:
 
 ```sh
-go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0   # okf v0.6.0, needs Go 1.26+
+go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.9.0   # okf v0.9.0, needs Go 1.26+
 ```
 
 ## What a consumer repository carries
@@ -306,10 +308,11 @@ apply can leave a partial integration (rerun after correcting it, review the dif
 ```
 .claude-plugin/plugin.json          the plugin manifest; its version tracks VERSION
 scripts/okf-scaffold.sh             the fixed bundle, laid down and validated
-scripts/okf-check.sh                the gate, six steps
+scripts/okf-check.sh                the gate, seven steps
 scripts/okf-recall.sh               search with status · review per hit and the change hint
 scripts/okf-log.sh                  the one writer of a branch's log entry (add); split freezes the root log.md
 scripts/okf-tidy.sh                 index rows and last_updated, the bookkeeping that needs no judgement
+scripts/okf-links.sh                rewrites angle-bracket link destinations to the plain form (/okf-migrate Part 5)
 scripts/okf-shim.sh                 sole root-aware, content-pinned launcher (plugin/CI/legacy)
 scripts/okf-integrate.py            conservative plugin-only integration install/conversion
 scripts/okf-launcher-selftest.py    offline fixture-release launcher/CI/conversion contracts

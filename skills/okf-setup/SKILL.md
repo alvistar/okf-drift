@@ -30,7 +30,7 @@ layout whose value is the section prompts inside each concept — what belongs t
 what does not — and a gate that fails until they are replaced by facts.
 
 Everything in `references/okf-quirks.md` was measured on okf v0.3.0 on 2026-09-16 and
-re-measured on okf v0.6.0 on 2026-10-08, and the design was reviewed adversarially by a second model on 2026-09-16 (the findings that
+re-measured on okf v0.6.0 on 2026-10-08 and on okf v0.9.0 on 2026-11-23, and the design was reviewed adversarially by a second model on 2026-09-16 (the findings that
 survived are in the templates and the gate). Re-read the quirks after an upgrade before
 trusting a green validation.
 
@@ -85,16 +85,16 @@ read the repo** — hand them over only when the user wants to run them elsewher
 ## Step 0 — okf present, and which one
 
 ```bash
-okf version          # expect: okf version v0.6.0 (OKF v0.2 specification)
+okf version          # expect: okf version v0.9.0 (OKF v0.3 specification); v0.6.0 is also measured
 ```
 
-Absent: `go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0` (Go 1.26+) and make sure
+Absent: `go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.9.0` (Go 1.26+) and make sure
 `$(go env GOPATH)/bin` is on PATH. Another version: the gate prints a warning; re-run the
 probes in `references/okf-quirks.md` before believing either the tool or this skill.
 
 **Do not create concepts with `okf create`** — the skill writes them from templates (see
 `references/okf-quirks.md`). On okf v0.3.0, `okf create --help` even created a concept called
-`--help.md`; v0.6.0 prints help.
+`--help.md`; v0.6.0 and v0.9.0 print help.
 
 ## Step 1 — Is there a bundle already?
 
@@ -197,7 +197,10 @@ is a warning). Empty `code_refs` is a warning:
 coverage is a judgement. A `stale_after` within the next 30 days
 (`OKF_REVIEW_WINDOW_DAYS`) is a warning, because okf fails the concept on that day; an
 impossible one (`2026-13-01`) is a failure. A bundle root that resolves outside its parent
-directory (a `knowledge -> /elsewhere` symlink) fails before okf runs.
+directory (a `knowledge -> /elsewhere` symlink) fails before okf runs. A link from a
+concept to a repository file outside the bundle must name a file that exists in the
+repository; an angle-bracket destination `[t](<…>)` and link syntax inside a code span fail
+(`docs/adr/0003-links-outside-the-bundle.md` in okf-drift).
 
 The gate fails while a `drift.lock` exists beside the bundle: drift is no longer used
 (`docs/adr/0002-drop-drift-code-is-the-source-of-truth.md` in okf-drift), and the lock

@@ -11,3 +11,12 @@ _Avoid_: stale, drift, alarm
 
 **Read-repair**: correcting a concept at the moment an agent, while relying on it, finds that the code says otherwise. The code wins; the concept is fixed as an ordinary edit.
 _Avoid_: re-stamp, verification
+
+**okf binary**: the `okf` command-line tool from okf-agent-memory that validates and searches a bundle; the gate accepts only the releases of it that were measured.
+_Avoid_: okf version (unqualified), okf
+
+**Format version**: the OKF specification release a bundle declares with `okf_version` in its root `index.md`; it says how the bundle's files are read, whatever tool reads them.
+_Avoid_: okf version (unqualified), spec version
+
+**Plugin pin**: the okf-drift release a consumer repository records in `.okf-drift-version`, which fixes the gate and recall scripts it runs.
+_Avoid_: okf version (unqualified), pinned okf

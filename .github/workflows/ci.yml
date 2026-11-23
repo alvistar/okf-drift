@@ -21,6 +21,11 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The gate accepts every okf version it was measured against; each runs the real-okf steps.
+    strategy:
+      fail-fast: false
+      matrix:
+        okf: [v0.6.0, v0.9.0]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,10 +80,10 @@ jobs:
         with:
           go-version: '1.26'
 
-      # The same pinned okf the CI template hands to a consumer repo.
-      - name: okf v0.6.0, pinned
+      # The pinned okf the CI template hands to a consumer repo, and the one before it.
+      - name: okf ${{ matrix.okf }}, pinned
         run: |
-          go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.6.0
+          go install github.com/okf-memory/okf-agent-memory/cmd/okf@${{ matrix.okf }}
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - run: okf version
@@ -97,7 +102,8 @@ jobs:
           cd "$repo"
           git init -q . && git config user.email t@example.com && git config user.name Test
 
-          mkdir -p src knowledge/architecture knowledge/playbooks knowledge/project
+          mkdir -p src docs knowledge/architecture knowledge/playbooks knowledge/project
+          echo '# Notes' > docs/notes.md   # a repository file outside the bundle, cited by a concept
           cat > src/lib.rs <<'RS'
           pub fn admit_reusable(x: u32) -> u32 {
               x + 1
@@ -134,7 +140,8 @@ jobs:
           ---
           # Core
 
-          Admission enforces a ceiling: look in `src/lib.rs` for where.
+          Admission enforces a ceiling: look in [the source](../../src/lib.rs) for where,
+          and in [the notes](../../docs/notes.md) for why.
 
           ## Related
 

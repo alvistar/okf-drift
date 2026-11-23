@@ -3,7 +3,7 @@
 #
 #   okf-check.sh [bundle-dir]        (default: knowledge)      exit 0 = clean
 #
-# Measured on okf v0.6.0: `okf validate --strict --drift --stale` exits non-zero for a
+# Measured on okf v0.6.0 and v0.9.0: `okf validate --strict --drift --stale` exits non-zero for a
 # missing `type`, a broken link, an orphan (a concept with no links in OR out), a status
 # outside draft|stable|deprecated, a bare-string `sources` item and a `stale_after` that is
 # today or earlier — and for nothing else. A dead `code_refs` path and a concept missing
@@ -27,12 +27,18 @@
 #      30): the day it arrives, step 1 fails it, so the review is better done before;
 #   6. fails while a `drift.lock` sits beside the bundle: drift is no longer used
 #      (docs/adr/0002-drop-drift-code-is-the-source-of-truth.md), and a leftover lock
-#      means the repository has not run /okf-migrate.
+#      means the repository has not run /okf-migrate;
+#   7. checks a concept's links to repository files outside the bundle itself, and drops
+#      okf's findings on them (docs/adr/0003-links-outside-the-bundle.md): OKF v0.3 §6
+#      makes such a link external and valid, but okf v0.6.0 reports a `.md` one as broken
+#      and okf v0.9.0 reports every one as an error. The target must exist inside the
+#      repository. A `<…>` destination (okf v0.9.0 keeps the brackets in the path,
+#      okf-agent-memory#69) and link syntax inside a code span (okf parses it) fail.
 #
 # A concept with empty `code_refs` is grouped into one `warn` line: `okf search
 # --for-path <file>` can never return it.
 #
-# Other warnings (do not fail): an okf version other than the one measured. The runtime
+# Other warnings (do not fail): an okf version other than the ones measured. The runtime
 # skill and standalone CI bootstrap call the pinned launcher; no consumer copy is needed.
 # Run it from the repository root: code_refs are rooted there.
 # Needs sh, perl 5.14+ (JSON::PP is core) and okf.
@@ -43,19 +49,19 @@ bundle=${1:-knowledge}
 command -v okf >/dev/null 2>&1 || { echo "okf not on PATH" >&2; exit 2; }
 
 ver=$(okf version 2>/dev/null | head -1)
-case "$ver" in
-  *v0.6.0*) ;;
-  *) shell_warns=$((shell_warns+1)); echo "warn  okf is '$ver'; this gate was measured against v0.6.0 — re-check references/okf-quirks.md" ;;
+case "$(printf '%s\n' "$ver" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)" in
+  v0.6.0|v0.9.0) ;;
+  *) shell_warns=$((shell_warns+1)); echo "warn  okf is '$ver'; this gate was measured against v0.6.0 and v0.9.0 — re-check references/okf-quirks.md" ;;
 esac
 
-# okf v0.6.0 refuses a bundle root that resolves outside the directory holding it — a
+# okf v0.6.0 and v0.9.0 refuse a bundle root that resolves outside the directory holding it — a
 # `knowledge -> /elsewhere` symlink — with no JSON, which step 1 would only report as "no
 # JSON". Name the cause here instead. (v0.3.0 loaded the same link as an EMPTY bundle.)
 real_bundle=$(CDPATH= cd -P -- "$bundle" 2>/dev/null && pwd) || { echo "okf-check: cannot resolve $bundle" >&2; exit 2; }
 real_parent=$(CDPATH= cd -P -- "$(dirname "$bundle")" 2>/dev/null && pwd) || { echo "okf-check: cannot resolve the parent of $bundle" >&2; exit 2; }
 case "$real_bundle/" in
   "${real_parent%/}"/*) ;;
-  *) echo "FAIL  $bundle resolves to $real_bundle, outside $real_parent — okf v0.6.0 refuses a bundle root that leaves its parent directory; move the bundle into the repository instead of linking it"; exit 1 ;;
+  *) echo "FAIL  $bundle resolves to $real_bundle, outside $real_parent — okf refuses a bundle root that leaves its parent directory; move the bundle into the repository instead of linking it"; exit 1 ;;
 esac
 
 json=$(okf validate "$bundle" --strict --drift --stale --json)
@@ -92,7 +98,7 @@ printf '%s' "$json" > "$tmp/okf.json" || exit 2
 
 perl - "$bundle" "$tmp/okf.json" "$parent" "$okf_status" "$profile" "$shell_warns" <<'PERL'
 use strict; use warnings; use utf8;
-use JSON::PP; use File::Find; use File::Basename; use Time::Local qw(timegm); use Digest::SHA qw(sha256_hex);
+use JSON::PP; use File::Find; use File::Basename; use Time::Local qw(timegm); use Digest::SHA qw(sha256_hex); use Cwd qw(abs_path getcwd);
 binmode STDOUT, ':utf8';
 my ($bundle, $json_file, $parent, $okf_status, $profile, $shell_warns) = @ARGV;
 # A wiki is relieved of the code-only expectations: the snapshot and code_refs.
@@ -155,21 +161,138 @@ sub grouped {
   print "$indent$_\n" for @lines;
 }
 
+# Collect concepts and indexes. A dot-directory below the bundle root is a tool's state
+# (e.g. ingestor's .ingestor/), not knowledge: okf validate skips it, and so does the gate.
+my (@concepts, @indexes);
+find({ no_chdir=>1, wanted=>sub {
+  if (-d && $File::Find::name ne $bundle && basename($File::Find::name) =~ /^\./) {
+    $File::Find::prune = 1; return;
+  }
+  return unless -f && /\.md$/;
+  (my $rel = $File::Find::name) =~ s{^\Q$bundle\E/}{};
+  if    ($rel =~ m{(^|/)index\.md$}) { push @indexes, $rel }
+  elsif ($rel =~ m{(^|/)log\.md$})   { }
+  else                               { push @concepts, $rel }
+}}, $bundle);
+@concepts = sort @concepts; @indexes = sort @indexes;
+# An empty bundle passes every per-concept check vacuously. A fresh scaffold must not.
+bad("no concept in $bundle yet — populate it before a green gate means anything") unless @concepts;
+
+# 7, read first because step 1 needs it: links from a concept body to repository files
+# outside the bundle. Fenced blocks are not read (okf skips them too); code spans are, since
+# okf parses a link inside one. %outside holds "concept\0href" for every link this step
+# judges, so step 1 drops okf's own finding on the same link instead of printing it twice.
+my (%outside, @link_fail);
+my $repo = abs_path(getcwd());
+my $bundle_abs = abs_path($bundle);
+# CommonMark code spans: a run of N backticks opens a span that the next run of exactly N
+# closes, inside one paragraph; a run with no partner is literal text. Returns the spans'
+# text and blanks them in place, so the link scan after it never sees them.
+sub code_spans {
+  my $ref = shift; my @spans; my $out = '';
+  for my $para (split /(\n[ \t]*\n)/, $$ref) {
+    my @runs; push @runs, [$-[0], length $1] while $para =~ /(`+)/g;
+    my @blank;
+    for (my $i = 0; $i < @runs; $i++) {
+      my ($j) = grep { $runs[$_][1] == $runs[$i][1] } $i + 1 .. $#runs;
+      next unless defined $j;
+      my $from = $runs[$i][0]; my $to = $runs[$j][0] + $runs[$j][1];
+      push @spans, substr($para, $from, $to - $from);
+      push @blank, [$from, $to - $from];
+      $i = $j;
+    }
+    substr($para, $_->[0], $_->[1]) = ' ' x $_->[1] for @blank;
+    $out .= $para;
+  }
+  $$ref = $out;
+  return @spans;
+}
+my $DEST = qr/\]\(\s*(<[^<>\n]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/;
+for my $rel (@concepts) {
+  my $text = slurp("$bundle/$rel");
+  (my $body = $text) =~ s/\A---\n.*?\n---\n//s;
+  $body =~ s/^(?:[ \t]*)```.*?^(?:[ \t]*)```[^\n]*$//smg;
+  for my $span (code_spans(\$body)) {
+    while ($span =~ /$DEST/g) {
+      $outside{"$rel\0$1"} = 1;
+      push @link_fail, "$rel: link syntax inside a code span, [..]($1) — okf parses it as a link; put the example in a fenced block or drop the parentheses";
+    }
+  }
+  while ($body =~ /$DEST/g) {
+    my $href = $1;
+    if ($href =~ /^<(.*)>$/) {
+      $outside{"$rel\0$href"} = 1;
+      push @link_fail, "$rel: link destination in angle brackets, $href — okf v0.9.0 keeps the brackets in the path (okf-agent-memory#69); write it without them, spaces as %20 (/okf-migrate rewrites it)";
+      next;
+    }
+    next if $href =~ m{^(?:[A-Za-z][A-Za-z0-9+.-]*:|#|/)};
+    (my $path = $href) =~ s/[?#].*\z//s;
+    next unless length $path;
+    # Split on `/` first, then decode each segment: an encoded `%2F` is not a separator to
+    # a reader or to okf, so a segment that decodes to one names no file.
+    my @raw = map { (my $s = $_) =~ s/%([0-9A-Fa-f]{2})/chr(hex $1)/ge; $s } split m{/}, $path;
+    my $encoded_slash = grep { m{/} } @raw;
+    $path = join '/', @raw;
+    my $dir = dirname($rel);
+    my @seg = $dir eq '.' ? () : split m{/}, $dir;
+    my $escapes = 0;
+    for my $s (@raw) {
+      next if $s eq '' || $s eq '.';
+      if ($s eq '..') { if (@seg) { pop @seg } else { $escapes = 1; last } }
+      else { push @seg, $s }
+    }
+    next unless $escapes;
+    $outside{"$rel\0$href"} = 1;
+    my $target = "$bundle/" . ($dir eq '.' ? '' : "$dir/") . $path;
+    my $real = !$encoded_slash && -e $target ? abs_path($target) : undef;
+    if (!defined $real) { push @link_fail, "$rel: link $href — no such file in the repository" }
+    elsif ($real ne $repo && index($real, "$repo/") != 0) { push @link_fail, "$rel: link $href leaves the repository" }
+  }
+}
+
 # 1. okf's own verdict, warnings included.
+# okf's verdict on a link step 7 judges is dropped. When those were okf's only findings,
+# its failed gate, lost conformance and non-zero exit came from them alone ($only_ours).
+my ($dropped, $kept) = (0, 0);
+sub okf_bad { $kept++; bad(@_) }
 my $v = eval { decode_json($json) };
 if (!$v) {
   bad("okf validate produced no JSON (run it without --json for the findings)");
   exit 2;
 }
 else {
-  for my $e (@{ $v->{errors} || [] })        { bad("okf validate error: $e") }
-  for my $g (@{ $v->{gate_findings} || [] }) { bad("okf validate gate: $g") }
-  for my $w (@{ $v->{warnings} || [] })      { bad("okf validate warning (fatal here): $w") }
-  for my $l (@{ $v->{broken_links} || [] })  { bad("okf validate broken link: ".(ref $l ? join(' ', map { "$_=$l->{$_}" } sort keys %$l) : $l)) }
-  for my $o (@{ $v->{orphans} || [] })       { bad("okf validate orphan: $o") }
-  bad("okf validate: gate failed for a reason not listed above — run `okf validate $bundle --strict --drift --stale`") if !$v->{gate_passed} && !$fail;
-  bad("okf validate: not conformant") unless $v->{is_conformant};
+  # okf v0.9.0 reports a failed status twice, as a warning and as a gate finding.
+  my %gate = map { $_ => 1 } @{ $v->{gate_findings} || [] };
+  for my $e (@{ $v->{errors} || [] }) {
+    # The href is Go-quoted (%q): a backslash or a quote in it arrives escaped.
+    if ($e =~ /^(.*?): link "(.*)" escapes bundle root/) {
+      my ($c, $h) = ($1, $2); $h =~ s/\\(["\\])/$1/g;
+      if ($outside{"$c\0$h"}) { $dropped++; next }
+    }
+    okf_bad("okf validate error: $e");
+  }
+  for my $g (sort keys %gate)                { okf_bad("okf validate gate: $g") }
+  for my $w (@{ $v->{warnings} || [] })      { next if $gate{$w}; okf_bad("okf validate warning (fatal here): $w") }
+  for my $l (@{ $v->{broken_links} || [] }) {
+    if (ref $l && $outside{($l->{source_concept} // '') . "\0" . ($l->{target_href} // '')}) { $dropped++; next }
+    okf_bad("okf validate broken link: ".(ref $l ? join(' ', map { "$_=$l->{$_}" } sort keys %$l) : $l));
+  }
+  for my $o (@{ $v->{orphans} || [] })       { okf_bad("okf validate orphan: $o") }
 }
+# Only the fields okf v0.6.0 and v0.9.0 were measured to emit count as accounted for: a
+# stale count, or any other field with a value, is a reason the gate did not read.
+my %KNOWN = map { $_ => 1 } qw(errors gate_findings warnings broken_links orphans
+  gate_passed is_conformant bundle_path concept_count declared_version stale_count);
+my @unread = $v ? grep {
+  my $x = $v->{$_};
+  !$KNOWN{$_} && (ref $x eq 'ARRAY' ? @$x : ref $x eq 'HASH' ? %$x : $x)
+} keys %$v : ();
+my $only_ours = $dropped && !$kept && !@unread && !($v && $v->{stale_count});
+if ($v) {
+  bad("okf validate: gate failed for a reason not listed above — run `okf validate $bundle --strict --drift --stale`") if !$v->{gate_passed} && !$fail && !$only_ours;
+  bad("okf validate: not conformant") unless $v->{is_conformant} || $only_ours;
+}
+bad($_) for @link_fail;
 
 # 2. Reserved files.
 my $root = slurp("$bundle/index.md");
@@ -208,23 +331,6 @@ for my $entry (sort glob("\Q$bundle\E/log/*/log.md")) {
     bad("$entry: `## $h` is not a bare ISO date heading (## YYYY-MM-DD)") unless $h =~ /^\d{4}-\d{2}-\d{2}[ \t]*$/;
   }
 }
-
-# Collect concepts and indexes. A dot-directory below the bundle root is a tool's state
-# (e.g. ingestor's .ingestor/), not knowledge: okf validate skips it, and so does the gate.
-my (@concepts, @indexes);
-find({ no_chdir=>1, wanted=>sub {
-  if (-d && $File::Find::name ne $bundle && basename($File::Find::name) =~ /^\./) {
-    $File::Find::prune = 1; return;
-  }
-  return unless -f && /\.md$/;
-  (my $rel = $File::Find::name) =~ s{^\Q$bundle\E/}{};
-  if    ($rel =~ m{(^|/)index\.md$}) { push @indexes, $rel }
-  elsif ($rel =~ m{(^|/)log\.md$})   { }
-  else                               { push @concepts, $rel }
-}}, $bundle);
-@concepts = sort @concepts; @indexes = sort @indexes;
-# An empty bundle passes every per-concept check vacuously. A fresh scaffold must not.
-bad("no concept in $bundle yet — populate it before a green gate means anything") unless @concepts;
 
 # 3. Frontmatter and body of each concept.
 my %desc;                       # rel => description
@@ -330,7 +436,7 @@ grouped("with an open question ([TO VERIFY] / [DA VERIFICARE]) — confirm or re
 grouped("due for review within $REVIEW_WINDOW days (stale_after; the gate fails on the day) — review now, then move the date", @review_due);
 
 # Never erase a failed subprocess status.
-bad("okf validate exited $okf_status") if $okf_status && !$fail;
+bad("okf validate exited $okf_status") if $okf_status && !$fail && !$only_ours;
 print "ok    $bundle: okf gate passed with ".($warnings ? "$warnings warning(s) above" : "no warnings").", indexes consistent both ways, frontmatter complete, no template residue\n" unless $fail;
 exit $fail;
 PERL
