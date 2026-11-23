@@ -31,6 +31,7 @@ WORKFLOWS = {
     "bb19190ef4d0f91ad149f33a1c75aa56f3595312b9bd060512c3e42f663195f0",  # v0.7.0-v0.12.0 (okf v0.3.0)
     "a6ce4bd268e5cd2eb32a31aed2a13459815e573c20d6160614e55ced5cdf949c",  # v0.13.0 (okf v0.6.0)
     "ff135fbc1ec08608a2ac1bf453ef4e96a69575c0a82457419dcb081e84394bc3",  # v0.14.0, the last with drift
+    "7dee19d1bf2d2865c7b0cfacfd96f81b8be5bbe7d569e427d817c2bfa52e6641",  # v0.15.0-v0.19.2 (okf v0.6.0)
 }
 # Accepted official template digests; the current template text is compared separately.
 # Each entry names the releases whose template body digests to it, measured from the
