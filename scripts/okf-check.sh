@@ -247,7 +247,11 @@ sub path_fields {
       push @out, ['sources.resource', $1];
     }
   }
-  $_->[1] =~ s/^(["'])(.*)\1$/$2/ for @out;
+  for (@out) {
+    # A comment after an unquoted value (` # note`) is YAML's, not the path's.
+    $_->[1] =~ s/^(["'])(.*?)\1\s+#.*\z/$1$2$1/ or $_->[1] =~ s/\s+#.*\z// unless $_->[1] =~ /^["'][^"']*\z/;
+    $_->[1] =~ s/^(["'])(.*)\1$/$2/;
+  }
   return @out;
 }
 my $DEST = qr/\]\(\s*(<[^<>\n]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/;
@@ -295,12 +299,30 @@ for my $rel (@concepts) {
     (my $p = $value) =~ s/[?#].*\z//s;
     my $here = $p =~ m{^/} ? "$bundle$p" : "$inside";
     next if $status eq 'ok' || -e $here;
-    # The form OKF v0.2 bundles used: a repository path from the repository root.
+    # The form OKF v0.2 bundles used: a repository path from the repository root. Known by
+    # its first segment, so a file the checkout lacks (a submodule not fetched) is caught
+    # too, the same in every checkout.
     (my $from_root = $p) =~ s/%([0-9A-Fa-f]{2})/chr(hex $1)/ge;
-    my $root_real = $value !~ m{^/} && -e $from_root ? abs_path($from_root) : undef;
+    my ($first) = split m{/}, $from_root;
+    my $cdir = "$bundle/" . dirname($rel);
+    my $root_real = $value !~ m{^/} && defined $first && $first !~ /^\.\.?\z/ && -e $first
+      && !-e "$cdir/$first" && !-e "$bundle/$first" ? abs_path($first) : undef;
     if (defined $root_real && index($root_real, "$repo/") == 0) {
-      push @link_fail, "$rel: $field $value names a repository file from the repository root, but OKF v0.3 resolves it from the concept's folder ($inside): write it relative to the concept (/okf-migrate rewrites it)";
+      push @link_fail, "$rel: $field $value names a path from the repository root (its first segment, $first, is there), but OKF v0.3 resolves it from the concept's folder ($inside): write it relative to the concept (/okf-migrate rewrites it)";
     } else { push @unresolved, "$rel → $value" }
+  }
+  # superseded_by names a concept in the bundle (§5.4). okf v0.9.0 checks it, v0.6.0 does
+  # not, so the gate does, on any version.
+  my ($sfm) = $text =~ /\A---\n(.*?)\n---\n/s;
+  if (defined $sfm && $sfm =~ /^superseded_by:[ \t]*(.*?)[ \t]*$/m) {
+    my $s = $1;
+    $s =~ s/^(["'])(.*?)\1\s+#.*\z/$1$2$1/ or $s =~ s/\s+#.*\z//;
+    $s =~ s/^(["'])(.*)\1$/$2/;
+    if (length $s && $s !~ m{^[A-Za-z][A-Za-z0-9+.-]*:}) {
+      my ($esc, undef, $in) = $s =~ m{^/(.*)\z}s ? resolve_from('index.md', $1) : resolve_from($rel, $s);
+      (my $f = $in) =~ s/[?#].*\z//s;
+      push @link_fail, "$rel: superseded_by $s — no such concept in the bundle" if $esc || !-f $f;
+    }
   }
 }
 
@@ -356,7 +378,8 @@ my $root = slurp("$bundle/index.md");
 # OKF v0.3 (docs/adr/0003-links-outside-the-bundle.md, okf-quirks.md): the root index
 # declares the version and names the bundle. An older declaration means /okf-migrate has
 # not moved the bundle yet.
-my ($root_fm) = $root =~ /\A---\n(.*?)\n---\n/s;
+(my $root_lf = $root) =~ s/\r\n/\n/g;   # a CRLF checkout of the root still reads
+my ($root_fm) = $root_lf =~ /\A---\n(.*?)\n---\n/s;
 $root_fm //= '';
 if ($root_fm =~ /^okf_version:\s*["']?0\.[0-2]["']?\s*$/m) { bad("index.md: okf_version is older than \"0.3\": run /okf-migrate, which moves the bundle to OKF v0.3") }
 elsif ($root_fm !~ /^okf_version:\s*"0\.3"\s*$/m) { bad("index.md: missing okf_version: \"0.3\" in the root index frontmatter") }

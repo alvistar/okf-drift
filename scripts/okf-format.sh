@@ -17,8 +17,8 @@
 #
 # What it does NOT touch: `title:` and `description:` of the root index (they need the
 # owner's words; it says when they are missing), a URL, a `/` path, a value with a space (a
-# descriptor, not a path), a value that resolves already or names nothing anywhere (the
-# gate names it), and log files. Each file is
+# descriptor, not a path), a value that resolves already, one whose first segment is not at
+# the repository root or is also a folder of the bundle (the gate names it), and log files. Each file is
 # written beside itself and renamed into place. One line per change; idempotent.
 #
 # Needs sh and perl 5.14+. Exit 0 = done, 2 = unusable.
@@ -51,6 +51,12 @@ sub spew {
 # The root index.
 my $root = "$bundle/index.md";
 my $t = slurp($root);
+# A root that opens a frontmatter this script cannot read (CRLF line endings, no closing
+# `---`) would get a second one stacked above it: refuse instead.
+if ($t =~ /\A---[ \t]*\r?\n/ && $t !~ /\A---\n(.*?)\n---\n/s) {
+  print STDERR "okf-format: $root: its frontmatter is not LF line endings closed by `---`; normalise the line endings (or close it), then rerun\n";
+  exit 2;
+}
 my $nt = $t;
 if ($nt =~ /\A---\n(.*?)\n---\n/s) {
   my $fm = $1; my $new = $fm;
@@ -79,19 +85,25 @@ for my $f (sort @files) {
   for my $line (split /\n/, $fm, -1) {
     $cur = $1 if $line =~ /^([A-Za-z_][\w-]*):/;
     # Only `resource:` on top, or inside a `sources` item: never an extension's own key.
+    # A comment after an unquoted value is set aside and put back unchanged.
+    my $comment = $line =~ s/^(\s*(?:-\s+)?resource:\s*(?:"[^"\n]*"|'[^'\n]*'|[^"'\s][^\n]*?))(\s+#.*)\z/$1/ ? $2 : '';
     if ((($cur eq 'resource' && $line =~ /^resource:/) || ($cur eq 'sources' && $line !~ /^sources:/))
         && $line =~ /^(\s*(?:-\s+)?resource:\s*)(["']?)([^"'\n]+?)\2(\s*)$/) {
       my ($pre, $q, $v, $post) = ($1, $2, $3, $4);
       (my $p = $v) =~ s/[?#].*\z//s;
       (my $d = $p) =~ s/%([0-9A-Fa-f]{2})/chr(hex $1)/ge;
+      # Known by its first segment at the repository root, so a file the checkout lacks
+      # (a submodule not fetched) is rewritten too, the same in every checkout.
+      my ($first) = split m{/}, $d;
       if ($v !~ m{^[A-Za-z][A-Za-z0-9+.-]*:} && $v !~ m{^/} && $v !~ /\s/ && length $p
-          && !-e "$dir/$d" && -e $d && inside_repo(abs_path($d))) {
+          && !-e "$dir/$d" && defined $first && $first !~ /^\.\.?\z/ && -e $first
+          && !-e "$dir/$first" && !-e "$bundle/$first" && inside_repo(abs_path($first))) {
         my $out = File::Spec->abs2rel(File::Spec->rel2abs($p), abs_path($dir)) . substr($v, length $p);
         push @changes, "resource $v -> $out";
         $line = "$pre$q$out$q$post";
       }
     }
-    push @lines, $line;
+    push @lines, $line . $comment;
   }
   my $new = join "\n", @lines;
   if ($new =~ /^status:\s*deprecated\s*$/m && $new !~ /^superseded_by:/m

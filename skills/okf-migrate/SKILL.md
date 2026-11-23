@@ -388,9 +388,10 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-log.sh add kn
 
 `<n>` is the sum of `okf-links.sh`'s `N link(s) rewritten`, `<m>` the code-span links
 fixed in Step 5.2. When `okf-log.sh` refuses (no `origin/HEAD`, the default branch, more
-than one candidate entry), pass the `--slug` or `--entry` its message names.
+than one candidate entry), pass the `--slug <slug>` or `--entry <bundle>/log/<dir>/log.md`
+its message names.
 
-Commit the rewritten concepts with the rest of the upgrade. The pinned gate runs at the
+Leave the rewritten concepts for the user to commit with the rest of the upgrade. The pinned gate runs at the
 end of Part 6 when that part applies, else now, through `okf-drift:okf-runtime` (gate
 mode): it must pass too.
 
@@ -424,7 +425,8 @@ prints only the reminders of Step 6.2. Like `okf-links.sh`, it runs from `$PLUGI
 When it prints `no title: yet` or `no description: yet`, propose both from the bundle's
 own index prose and the repository's name, in the language the bundle is written in: a
 title of a few words, and one line saying what the bundle holds. Show them, wait for the
-user's words, then write them as quoted values in the root `index.md` frontmatter.
+user's words, then write them in the root `index.md` frontmatter right after
+`okf_version`, double-quoted like it.
 
 ## Step 6.3 — Check
 
@@ -440,9 +442,21 @@ Run the installed plugin's gate (the command in Part 5). Read what it prints:
 - `N concept(s) with a sources path unresolved in this checkout`: a warning, not a
   failure. List it for the user (`OKF_VERBOSE=1` prints each path): a submodule the
   checkout did not fetch and a private note are fine; a moved file is fixed or dropped.
+- `superseded_by: without status: deprecated`: the field means something only on a
+  deprecated concept. Ask the user whether the concept is retired (set `status:
+  deprecated`) or not (remove the field).
+- `superseded_by <x> — no such concept in the bundle`, or an okf error on another path
+  field (`executor.resource`, `computation`): the path names nothing; ask the user for the
+  right one.
+- Other warnings are not this part's job.
 
-Then write one log line, run the pinned gate through `okf-drift:okf-runtime` (gate mode),
-which must pass, and commit the bundle with the rest of the upgrade:
+Check each `superseded_by` that Step 6.1 added: it names the decision the body links,
+which may not be the one that replaced it. Show each to the user.
+
+Then write one log line (when `okf-log.sh` refuses, pass the `--slug` or `--entry
+<bundle>/log/<dir>/log.md` its message names; prefer the entry Part 5 wrote), run the
+pinned gate through `okf-drift:okf-runtime` (gate mode), which must pass, and leave the
+bundle for the user to commit with the rest of the upgrade:
 
 ```bash
 sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-log.sh add knowledge '* bundle moved to OKF v0.3: okf_version, title and description, <n> source(s) made relative to the concept, <m> superseded_by added'

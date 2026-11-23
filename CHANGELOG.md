@@ -21,13 +21,16 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
   (`resource: ../../GLOSSARY.md`). OKF v0.3 §6.2 resolves a path field without a leading
   `/` from the file's folder, so the v0.2 form written from the repository root
   (`resource: GLOSSARY.md`) now names a file inside the bundle: the gate fails it, with
-  the rewrite. okf v0.9.0 reports the relative form as an escape error, which the gate
+  the rewrite. The form is known by its first segment at the repository root, so a file
+  the checkout lacks (a submodule not fetched) is judged the same in every checkout. okf v0.9.0 reports the relative form as an escape error, which the gate
   drops, keyed by field so another field's finding on the same path stays. A source the
   checkout lacks (a submodule not fetched, a private note, a moved file) is one grouped
   warning, never a failure (`OKF_VERBOSE=1` lists them); a value with a space is a
-  descriptor, never checked. Block and flow-style `sources` lists are both read.
-- **`superseded_by`** (§5.4): allowed only beside `status: deprecated`, and required on a
-  deprecated decision, beside its `Superseded by` line. Templates and `/okf-write` say so.
+  descriptor, never checked. Block and flow-style `sources` lists are both read, and a
+  trailing YAML comment is not part of the path. A CRLF root index still reads.
+- **`superseded_by`** (§5.4): allowed only beside `status: deprecated`, required on a
+  deprecated decision beside its `Superseded by` line, and it must name a concept in the
+  bundle (checked by the gate, so okf v0.6.0 does not pass a broken one). Templates and `/okf-write` say so.
 
 ### Added
 
@@ -35,9 +38,11 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
   `okf-format.sh` sets `okf_version`, rewrites each repository-root `resource:` relative to
   the concept (only under `sources` or a top-level `resource`, fragment and encoding kept),
   and adds `superseded_by` to a deprecated decision whose body links its successor. It
-  writes each file beside itself and renames it, and refuses a symlink leaving the
-  repository. The agent proposes the bundle's title and description. On a copy of the
-  margins bundle it rewrote 14 sources, and the gate passed on okf v0.9.0.
+  writes each file beside itself and renames it, refuses a symlink leaving the
+  repository, and refuses a root whose frontmatter is not LF and closed rather than
+  stacking a second one. The agent proposes the bundle's title and description. A dry
+  run of Part 6 by an agent on a copy of margins took the gate from 26 failures to green;
+  on software-revolution the script rewrote 363 sources, submodule paths included.
 - ADR 0003 covers path fields and why a missing source warns while a missing link fails.
 
 ## [0.20.0] - 2026-11-23
