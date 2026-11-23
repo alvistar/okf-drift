@@ -108,7 +108,7 @@ A bundle declared `wiki` in `.okf-profile` describes no code; its concepts carry
 
 ## Measured facts recall rests on
 
-okf v0.6.0, measured 2026-10-08. Re-measure after an upgrade; the full list is in
+okf v0.6.0, measured 2026-10-08, and v0.9.0, 2026-11-23. Re-measure after an upgrade; the full list is in
 `../okf-setup/references/okf-quirks.md`.
 
 - `okf search --json` is an **array** of `{concept_id, title, type, description, score,

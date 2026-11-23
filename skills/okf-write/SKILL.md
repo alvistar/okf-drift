@@ -30,6 +30,13 @@ to look (`code_refs`). Writing a concept is not copying the code into prose; a r
 always read the code, and a copy goes wrong the first time the code changes. See
 `docs/adr/0002-drop-drift-code-is-the-source-of-truth.md` in the plugin.
 
+**A repository file outside the bundle is cited with a plain relative link**, from the
+concept's own folder: `[the ADR](../../docs/adr/0002-x.md)`, a space as `%20`. Never in
+angle brackets, `[t](<…>)`: okf v0.9.0 reads the brackets as part of the path. Never link
+syntax inside a code span: okf parses it as a link; show an example in a fenced block. The
+gate checks that the target exists in the repository
+(`docs/adr/0003-links-outside-the-bundle.md` in the plugin).
+
 **Run the plugin's write helpers through the pinned launcher**, like the gate:
 
 ```sh
@@ -202,10 +209,11 @@ What it leaves to you:
 # Invoke okf-drift:okf-runtime in gate mode
 ```
 
-Six steps: okf's own gate (with `--drift`, okf's check for dead `code_refs` paths) with
+Seven steps: okf's own gate (with `--drift`, okf's check for dead `code_refs` paths) with
 its warnings treated as fatal, the indexes both ways, the frontmatter okf ignores,
-template residue, the reserved files, and a leftover `drift.lock` (drift was removed;
-`/okf-migrate` deletes it). Green is the only acceptable result before a push.
+template residue, the reserved files, a leftover `drift.lock` (drift was removed;
+`/okf-migrate` deletes it), and links to repository files outside the bundle (the target
+must exist; no angle brackets, no link syntax inside a code span). Green is the only acceptable result before a push.
 
 Report to the user: what was recorded and where; each read-repair, with the concept and
 the code that disagreed; what `okf-tidy.sh` changed; the gate's last line; and anything

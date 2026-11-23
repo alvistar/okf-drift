@@ -1,0 +1,14 @@
+# A link to a repository file outside the bundle stays a plain clickable link, and the gate checks it instead of okf
+
+A concept in a code repository's bundle cites the repository's own documents and code (an ADR, a design note, a source file) with an ordinary relative link, `[ADR](../../docs/adr/0002.md)`, written without angle brackets. OKF v0.3 §6 makes such a link external: valid, never read from disk by a consumer, and §11.2 forbids rejecting a bundle for it. Neither okf binary agrees (measured 2026-11-23): okf v0.6.0 reports the `.md` form as a broken concept link; okf v0.9.0 reports every form as an error, `escapes bundle root (path traversal denied)`, and reads the angle-bracket form `[t](<../../docs/a.md>)` (which okf v0.6.0 accepted, so this plugin recommended it) with the brackets as part of the path. So the gate drops okf's findings for links that resolve outside the bundle, and checks those links itself: the target must exist and stay inside the repository, or the gate fails. A link in angle brackets and a link inside a code span are refused, and `/okf-migrate` rewrites them to the plain form. The filter is removed once an okf binary the gate accepts treats these links as §6 says (okf-memory/okf-agent-memory#69 and #70), as the gate never filtered the false positive of #41 and waited for okf v0.4.4 instead.
+
+## Considered Options
+
+- **The path as text in a code span** (`` `docs/adr/0002.md` ``): passes every okf binary with no filter, but it is not clickable on GitHub or in an IDE preview, and a renamed file leaves a dead reference nobody sees.
+- **An `https://` URL to the file on GitHub**: clickable and ignored by okf, but it opens the default branch rather than the file on the reader's branch, needs the network, and nobody checks that the file exists.
+- **A reference-style link**: okf does not count it today, but §6.1 says it is a link, so a later okf would check it the same way.
+- **Wait for okf to follow §6 before the release that accepts okf v0.9.0**: no filter, but it ties the release to an upstream choice about path-traversal confinement that okf may not make.
+
+## Consequences
+
+`okf-check.sh` parses okf's JSON for link findings on targets that resolve outside the bundle and replaces them with its own check; every other finding passes through unchanged. A consumer runs `/okf-migrate` once: Part 4 moves the pin (and the CI template to okf v0.9.0), then Part 5 rewrites the angle-bracket links. The order matters: a gate pinned to an older release reads the plain form as a broken concept link on okf v0.6.0, so the rewrite waits for the pin. A path with a space is written percent-encoded (`%20`), as §6 requires. `okf-quirks.md` drops its advice to use angle brackets.

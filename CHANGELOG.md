@@ -9,6 +9,50 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-23
+
+### Added
+
+- **okf v0.9.0 is accepted next to v0.6.0.** The gate now warns only on an okf version it
+  was not measured against, and the plugin's CI runs every real-okf step on both. The CI
+  template, the README and `/okf-setup` install v0.9.0. `references/okf-quirks.md` was
+  re-measured on v0.9.0 side by side with v0.6.0, on scratch bundles and on copies of three
+  real bundles. It now records:
+  - what changed: a missing `type:` or a `README.md` is skipped, `superseded_by` is a graph
+    edge, a bad `scopes:` exits 2, and okf reports an unknown status twice;
+  - what v0.9.0 added that the plugin does not use: `--drift-git`, `trust_tier`,
+    `x-okf-memory-protected` and `okf changes`. ADR 0002 says why.
+- **Links to repository files outside the bundle are checked by the gate**
+  (`docs/adr/0003-links-outside-the-bundle.md`). For OKF v0.3 §6, a plain relative link
+  such as `[ADR](../../docs/adr/0002.md)` is external and valid. Neither okf version
+  accepts one: v0.6.0 reports a `.md` link as broken, and v0.9.0 reports every such link
+  as an error. The gate drops okf's finding on these links and checks each one itself: the
+  target must exist inside the repository. The gate now also refuses:
+  - an angle-bracket destination `[t](<…>)`. v0.9.0 keeps the brackets in the path
+    (okf-agent-memory#69). This is the form the plugin recommended before;
+  - link syntax inside a code span, which okf parses as a link.
+
+  An encoded `%2F` is not a path separator, so `../../docs%2Fa.md` names no file. When
+  okf's only findings were on these links, the gate also ignores okf's failed verdict and
+  exit status, unless okf's JSON carries a stale count or any field the gate was not
+  measured to read. okf-agent-memory#70 asks okf to follow §6; once a release accepted by
+  the gate does, the gate's own check can go.
+- **`/okf-migrate` Part 5 — Links outside the bundle**, run after Part 4 moved the pin: a
+  gate pinned to an older release reads the plain form as broken on okf v0.6.0. The new
+  `okf-links.sh` rewrites every angle-bracket destination in the concepts to the plain
+  form, a space or a parenthesis percent-encoded, writing each file beside itself and
+  renaming it into place (a symlinked concept is written at its target). Index files, the
+  bundle's `log/` folder, dot-directories, fenced blocks and code spans are left alone. The
+  agent proposes a fix for each link inside a code span. A dry run on a copy of the margins
+  bundle rewrote 17 links in 12 concepts and fixed one code-span link by hand; the gate
+  then passed on both okf versions.
+- `GLOSSARY.md` defines **okf binary**, **format version** and **plugin pin**.
+
+### Changed
+
+- The gate prints once a finding that okf v0.9.0 reports both as a warning and as a gate
+  finding (an unknown `status`).
+
 ## [0.19.2] - 2026-11-11
 
 ### Fixed

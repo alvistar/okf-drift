@@ -11,7 +11,7 @@
 # says where to read the code before relying on the concept.
 #
 #   lifecycle  okf `status` from the concept's own frontmatter (`stable`/`deprecated`/
-#              `draft`), or `no status`. Measured on okf v0.6.0: `okf search --json` does
+#              `draft`), or `no status`. Measured on okf v0.6.0 and v0.9.0: `okf search --json` does
 #              NOT emit `status` even when the frontmatter carries it, so this is read from
 #              the file.
 #   review     `stale_after` vs today: `review current`, `review due <date>` within the next
@@ -25,7 +25,7 @@
 #              has no `code_refs` or no commit, or outside a git work tree. A cosmetic
 #              commit to the concept resets it; accepted (ADR 0002).
 #
-# Measured on okf v0.6.0 (2026-10-08):
+# Measured on okf v0.6.0 (2026-10-08), held on v0.9.0 (2026-11-23):
 #   * `okf search --json` is an ARRAY of {concept_id, title, type, description, score,
 #     tags, matched_on, inbound, scope, origin, priority, ...}. There is no `path`; the doc
 #     path is `<bundle>/<concept_id>.md`.

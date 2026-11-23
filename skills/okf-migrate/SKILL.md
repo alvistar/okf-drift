@@ -2,25 +2,27 @@
 name: okf-migrate
 disable-model-invocation: true
 description: |
-  Bring an existing OKF bundle and its integration up to date, in four independent parts.
+  Bring an existing OKF bundle and its integration up to date, in five independent parts.
   Split the log: freeze the root `log.md` (the history stays, a marker hashes it) and
   create `log/`, where each branch writes its own log entry (`okf-log.sh split`). Drop
   drift: delete `drift.lock`, take the drift steps out of the CI workflow and the
   CLAUDE.md knowledge section, and on request review every concept against the writing
   rule. Install `CODING_STANDARDS.md`, the pointer a code reviewer
   follows to the bundle's conventions. Upgrade the pin to the installed plugin's release,
-  with every generated file it brings. Works on both profiles (code and wiki). Safe to run twice; nothing commits.
+  with every generated file it brings. Then rewrite links to repository files outside the
+  bundle into the form okf v0.9.0 reads. Works on both profiles (code and wiki). Safe to run twice; nothing commits.
 
   MANUAL TRIGGER ONLY: invoke only when the user types /okf-migrate.
 
   Trigger on: "/okf-migrate", "split the log", "freeze log.md", "migrate the bundle to
   log entries", "the gate says run /okf-migrate", "the gate says drift.lock found",
-  "drop drift", "upgrade okf-drift", "the runtime says the user can run /okf-migrate".
+  "drop drift", "upgrade okf-drift", "the runtime says the user can run /okf-migrate",
+  "the gate says link destination in angle brackets", "upgrade okf to v0.9.0".
 ---
 
 # /okf-migrate — bring an older bundle up to date
 
-Four parts, each idempotent, each run only when its sign is present:
+Five parts, each idempotent, each run only when its sign is present:
 
 | Sign | Part |
 |---|---|
@@ -28,14 +30,17 @@ Four parts, each idempotent, each run only when its sign is present:
 | a `drift.lock` at the repository root; the gate says `drift.lock found` | **Part 2 — Drop drift** |
 | code profile, and no `CODING_STANDARDS.md` at the repository root, or one with neither the generated text of `$PLUGIN_ROOT/skills/okf-setup/templates/CODING_STANDARDS.md` nor an `okf-drift: project-owned` mark | **Part 3 — Coding standards pointer** |
 | the tag on line 1 of `.okf-drift-version` is older than `$PLUGIN_ROOT/VERSION`; the runtime says `okf-drift X.Y.Z is installed; this repository pins vA.B.C` | **Part 4 — Upgrade the pin** |
+| the installed plugin's gate (Part 5 says how to run it) prints `link destination in angle brackets` or `link syntax inside a code span` | **Part 5 — Links outside the bundle** |
 
 Check every sign first and say which parts apply. Run them in order. Part 2 runs the
 integration helper, which also does Part 3's work; after Part 2, Part 3 is only its check.
-Part 4 runs last, against the pin the earlier parts left.
+Part 4 runs against the pin the earlier parts left; Part 5 runs last, on the pin Part 4
+moved.
 
 Set `PLUGIN_ROOT` to two directories above this skill's absolute base directory supplied
 by the host. **Every command runs from the target repository root.** Nothing here
-commits, pushes or opens a PR.
+commits, pushes or opens a PR. `REPO_ROOT` is the target repository's absolute root
+(`git rev-parse --show-toplevel`).
 
 Parts 2, 3 and 4 run the integration helper and may ask the user about the files it
 manages. `$PLUGIN_ROOT/skills/okf-setup/references/project-owned.md` is the one text for
@@ -315,3 +320,73 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-log.sh add kn
 
 Hand back: the old and new pin, the files written, each project-owned item and what was
 done with it, and the gate's result. Running this part again changes nothing.
+
+# Part 5 — Links outside the bundle
+
+A concept cites a repository file outside the bundle (an ADR, a design note, a source
+file) with a plain relative link, `[ADR](../../docs/adr/0002.md)`: clickable on GitHub and
+in an IDE, and external for OKF v0.3 §6. okf v0.6.0 accepted the angle-bracket form
+`[ADR](<../../docs/adr/0002.md>)` that this plugin used to recommend; okf v0.9.0 keeps the
+brackets in the path and reports the link broken. The gate checks these links itself: the
+target must exist inside the repository; a `<…>` destination and link syntax inside a code
+span fail (okf parses a link inside a code span too). See
+`docs/adr/0003-links-outside-the-bundle.md` in the plugin.
+
+This part runs only once the pin is at the release that ships it, so after Part 4 moved
+it, or on a pin already that new. A pinned gate older than that release fails the plain
+form these steps write (okf v0.6.0 reports it as a broken concept link), so a consumer
+that defers the upgrade keeps its links as they are: skip this part and say why.
+
+The sign is read with the installed plugin's gate, not the pinned one: a pin older than
+this part's release does not check these links yet. From the repository root, with any
+okf on `PATH`, the launcher's development root runs the installed copy:
+
+```bash
+OKF_DRIFT_ROOT="$PLUGIN_ROOT" sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-check.sh knowledge
+```
+
+## Step 5.1 — Rewrite the angle brackets
+
+```bash
+sh "$PLUGIN_ROOT/scripts/okf-links.sh" knowledge
+```
+
+It rewrites every `](<dest>)` in a concept to `](dest)`, a space as `%20`, and prints one
+line per file, `<file>: N link(s) rewritten`. A parenthesis becomes `%28` / `%29`. It leaves `index.md`, `log.md`, log entries,
+fenced blocks and code spans alone. A second run prints nothing. It runs from
+`$PLUGIN_ROOT`, not through the pinned launcher: it is a one-off migration helper, like
+`okf-log.sh split` in Part 1.
+
+## Step 5.2 — Links inside a code span
+
+The gate names each one: `<concept>: link syntax inside a code span, [..](<href>)`. Each
+is an example of link syntax in prose, and its fix needs a reader. Read the sentence and
+propose, per link, one of:
+
+- move the example into a fenced block, when it is a block of its own;
+- keep the code span and break the link syntax, `[text] (url)` or `[text]`, when the
+  sentence only names the form; the gate accepts it;
+- when the target looks rewritten by a tool into a bundle path that does not exist
+  (`../../knowledge/incidents/url` for an example that said `url`), restore the original
+  placeholder as well.
+
+Show every proposal before writing it. Apply what the user accepts.
+
+## Step 5.3 — Check
+
+Run the installed plugin's gate again, with the command above. It must print neither sign
+line. A
+`link <href> — no such file in the repository` or `link <href> leaves the repository` is a
+citation that was already wrong: list each for the user, who fixes the path or drops the
+link. Then write one log line:
+
+```bash
+sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-log.sh add knowledge '* links to repository files outside the bundle rewritten for okf v0.9.0: <n> angle-bracket destination(s), <m> link(s) in code spans'
+```
+
+`<n>` is the sum of `okf-links.sh`'s `N link(s) rewritten`, `<m>` the code-span links
+fixed in Step 5.2. When `okf-log.sh` refuses (no `origin/HEAD`, the default branch, more
+than one candidate entry), pass the `--slug` or `--entry` its message names.
+
+Commit the rewritten concepts with the rest of the upgrade. Then run the gate through
+`okf-drift:okf-runtime` (gate mode), the pinned one: it must pass too.
