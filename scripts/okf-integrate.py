@@ -32,6 +32,7 @@ WORKFLOWS = {
     "a6ce4bd268e5cd2eb32a31aed2a13459815e573c20d6160614e55ced5cdf949c",  # v0.13.0 (okf v0.6.0)
     "ff135fbc1ec08608a2ac1bf453ef4e96a69575c0a82457419dcb081e84394bc3",  # v0.14.0, the last with drift
     "7dee19d1bf2d2865c7b0cfacfd96f81b8be5bbe7d569e427d817c2bfa52e6641",  # v0.15.0-v0.19.2 (okf v0.6.0)
+    "a3eb93cad767c30add80565a197341e4d80fc378054ab8efc6c9e2dd993d4c5f",  # v0.20.0 (okf v0.9.0)
 }
 # Accepted official template digests; the current template text is compared separately.
 # Each entry names the releases whose template body digests to it, measured from the
@@ -44,6 +45,7 @@ SECTIONS = {
         "16fa3ecb217b7c0ef288c9f3f143ea4dd3addf15541e119756122fda7823ffc5",  # v0.9.0-v0.11.0
         "bb2ec783b4be0f157651e18d7b9e850e865d53060c37caa54eedc6b5204da104",  # v0.12.0-v0.13.0
         "d730317603070736efb58a738281fe9cba3bab28548e90f32c7e51dae113118f",  # v0.14.0
+        "c3ee51d02e0cd6c4c81885e082d0074a49a37e39df48ba5d28b379df6083d068",  # v0.15.0-v0.20.0
     },
     "Work Loop": {
         "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.4.0-v0.6.2

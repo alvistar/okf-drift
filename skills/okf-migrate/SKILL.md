@@ -2,7 +2,7 @@
 name: okf-migrate
 disable-model-invocation: true
 description: |
-  Bring an existing OKF bundle and its integration up to date, in five independent parts.
+  Bring an existing OKF bundle and its integration up to date, in six independent parts.
   Split the log: freeze the root `log.md` (the history stays, a marker hashes it) and
   create `log/`, where each branch writes its own log entry (`okf-log.sh split`). Drop
   drift: delete `drift.lock`, take the drift steps out of the CI workflow and the
@@ -10,7 +10,8 @@ description: |
   rule. Install `CODING_STANDARDS.md`, the pointer a code reviewer
   follows to the bundle's conventions. Upgrade the pin to the installed plugin's release,
   with every generated file it brings. Then rewrite links to repository files outside the
-  bundle into the form okf v0.9.0 reads. Works on both profiles (code and wiki). Safe to run twice; nothing commits.
+  bundle into the form okf v0.9.0 reads, and move the bundle to OKF v0.3 (`okf_version`,
+  bundle title and description, `sources` relative to the concept, `superseded_by`). Works on both profiles (code and wiki). Safe to run twice; nothing commits.
 
   MANUAL TRIGGER ONLY: invoke only when the user types /okf-migrate.
 
@@ -22,7 +23,7 @@ description: |
 
 # /okf-migrate — bring an older bundle up to date
 
-Five parts, each idempotent, each run only when its sign is present:
+Six parts, each idempotent, each run only when its sign is present:
 
 | Sign | Part |
 |---|---|
@@ -31,11 +32,12 @@ Five parts, each idempotent, each run only when its sign is present:
 | code profile, and no `CODING_STANDARDS.md` at the repository root, or one with neither the generated text of `$PLUGIN_ROOT/skills/okf-setup/templates/CODING_STANDARDS.md` nor an `okf-drift: project-owned` mark | **Part 3 — Coding standards pointer** |
 | the tag on line 1 of `.okf-drift-version` is older than `$PLUGIN_ROOT/VERSION`; the runtime says `okf-drift X.Y.Z is installed; this repository pins vA.B.C` | **Part 4 — Upgrade the pin** |
 | the installed plugin's gate (Part 5 says how to run it) prints `link destination in angle brackets` or `link syntax inside a code span` | **Part 5 — Links outside the bundle** |
+| the root `index.md` declares an `okf_version` older than `"0.3"`, or none; the gate says `okf_version is older than "0.3"` | **Part 6 — Format OKF v0.3** |
 
 Check every sign first and say which parts apply. Run them in order. Part 2 runs the
 integration helper, which also does Part 3's work; after Part 2, Part 3 is only its check.
-Part 4 runs against the pin the earlier parts left; Part 5 runs last, on the pin Part 4
-moved.
+Part 4 runs against the pin the earlier parts left; Parts 5 and 6 run after it, on the pin
+Part 4 moved, because a gate pinned to an older release refuses what they write.
 
 Set `PLUGIN_ROOT` to two directories above this skill's absolute base directory supplied
 by the host. **Every command runs from the target repository root.** Nothing here
@@ -386,7 +388,76 @@ sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-log.sh add kn
 
 `<n>` is the sum of `okf-links.sh`'s `N link(s) rewritten`, `<m>` the code-span links
 fixed in Step 5.2. When `okf-log.sh` refuses (no `origin/HEAD`, the default branch, more
-than one candidate entry), pass the `--slug` or `--entry` its message names.
+than one candidate entry), pass the `--slug <slug>` or `--entry <bundle>/log/<dir>/log.md`
+its message names.
 
-Commit the rewritten concepts with the rest of the upgrade. Then run the gate through
-`okf-drift:okf-runtime` (gate mode), the pinned one: it must pass too.
+Leave the rewritten concepts for the user to commit with the rest of the upgrade. The pinned gate runs at the
+end of Part 6 when that part applies, else now, through `okf-drift:okf-runtime` (gate
+mode): it must pass too.
+
+# Part 6 — Format OKF v0.3
+
+OKF v0.3 (`SPEC.md` in open-knowledge-format/open-knowledge-format) changes how a path is
+read: a path field without a leading `/` resolves from the folder of the file that holds
+it (§6), not from the bundle root. Bundles of this plugin wrote a repository file in
+`sources` from the repository root (`resource: docs/x.md`), which v0.3 reads as
+`knowledge/<dir>/docs/x.md`. v0.3 also adds bundle metadata to the root index (§8.1) and
+`superseded_by` on a deprecated concept (§5.4). From this release the gate requires
+`okf_version: "0.3"` with a `title` and a `description`, and fails a source written from
+the repository root. See `docs/adr/0003-links-outside-the-bundle.md` in the plugin.
+
+Run this part only on a pin at the release that ships it (after Part 4): a gate pinned to
+an older release requires `okf_version: "0.2"` and fails the result.
+
+## Step 6.1 — Rewrite
+
+```bash
+sh "$PLUGIN_ROOT/scripts/okf-format.sh" knowledge
+```
+
+It sets `okf_version: "0.3"`, rewrites each `resource:` that names a repository file from
+the repository root into the path relative to the concept, and adds `superseded_by` to a
+deprecated decision whose body links its successor. One line per change; a second run
+prints only the reminders of Step 6.2. Like `okf-links.sh`, it runs from `$PLUGIN_ROOT`.
+
+## Step 6.2 — Title and description
+
+When it prints `no title: yet` or `no description: yet`, propose both from the bundle's
+own index prose and the repository's name, in the language the bundle is written in: a
+title of a few words, and one line saying what the bundle holds. Show them, wait for the
+user's words, then write them in the root `index.md` frontmatter right after
+`okf_version`, double-quoted like it.
+
+## Step 6.3 — Check
+
+Run the installed plugin's gate (the command in Part 5). Read what it prints:
+
+- `okf_version`, `title`, `description`: none must remain.
+- `names a repository file from the repository root`: a value `okf-format.sh` could not
+  rewrite (a flow-style `sources: [...]` list, an unusual quoting). Rewrite it by hand,
+  relative to the concept.
+- `deprecated but no superseded_by:`: a deprecated decision whose successor the body does
+  not link. Read it, propose the successor, and write both the field and the `Superseded
+  by` line once the user confirms.
+- `N concept(s) with a sources path unresolved in this checkout`: a warning, not a
+  failure. List it for the user (`OKF_VERBOSE=1` prints each path): a submodule the
+  checkout did not fetch and a private note are fine; a moved file is fixed or dropped.
+- `superseded_by: without status: deprecated`: the field means something only on a
+  deprecated concept. Ask the user whether the concept is retired (set `status:
+  deprecated`) or not (remove the field).
+- `superseded_by <x> — no such concept in the bundle`, or an okf error on another path
+  field (`executor.resource`, `computation`): the path names nothing; ask the user for the
+  right one.
+- Other warnings are not this part's job.
+
+Check each `superseded_by` that Step 6.1 added: it names the decision the body links,
+which may not be the one that replaced it. Show each to the user.
+
+Then write one log line (when `okf-log.sh` refuses, pass the `--slug` or `--entry
+<bundle>/log/<dir>/log.md` its message names; prefer the entry Part 5 wrote), run the
+pinned gate through `okf-drift:okf-runtime` (gate mode), which must pass, and leave the
+bundle for the user to commit with the rest of the upgrade:
+
+```bash
+sh "$PLUGIN_ROOT/scripts/okf-shim.sh" --repo-root "$REPO_ROOT" okf-log.sh add knowledge '* bundle moved to OKF v0.3: okf_version, title and description, <n> source(s) made relative to the concept, <m> superseded_by added'
+```

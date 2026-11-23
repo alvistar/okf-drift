@@ -2,7 +2,7 @@
 name: okf-setup
 disable-model-invocation: true
 description: |
-  Set up an OKF v0.2 knowledge bundle (github.com/okf-memory/okf-agent-memory) in a
+  Set up an OKF v0.3 knowledge bundle (github.com/okf-memory/okf-agent-memory) in a
   repository with a FIXED layout: project/{state,stack,setup,conventions},
   architecture/, decisions/ (one concept per decision), playbooks/ — validating
   `--strict` from the first commit. Ships the population and resync prompts, the
@@ -85,7 +85,7 @@ read the repo** — hand them over only when the user wants to run them elsewher
 ## Step 0 — okf present, and which one
 
 ```bash
-okf version          # expect: okf version v0.9.0 (OKF v0.3 specification); v0.6.0 is also measured
+okf version          # expect: okf version v0.9.0 (OKF v0.3 specification)
 ```
 
 Absent: `go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.9.0` (Go 1.26+) and make sure
@@ -192,7 +192,7 @@ every concept has a row in its category index; one-line descriptions, ISO
 `status: deprecated` (the vocabulary `draft|stable|deprecated` is okf's own and
 `--strict` enforces it — `active` is rejected); no HTML comment left in
 a concept (search indexes comment text), no placeholder, no empty section; root
-`okf_version`, `log.md`, and `state.md`'s three lists (a state item past 300 characters
+`okf_version: "0.3"` with a `title` and a `description`, `log.md`, and `state.md`'s three lists (a state item past 300 characters
 is a warning). Empty `code_refs` is a warning:
 coverage is a judgement. A `stale_after` within the next 30 days
 (`OKF_REVIEW_WINDOW_DAYS`) is a warning, because okf fails the concept on that day; an
@@ -307,6 +307,9 @@ BM25 missed on the reference consumer; run both, they fail on different question
   directories or boundary files the concept governs, file paths only (no `path#Symbol`;
   `okf validate --drift` reads it as a missing path). Not `src/` on everything, which
   makes `--for-path` noise and puts a change hint on every hit.
+- **A `sources` path to a repository file is relative to the concept** (`../../docs/x.md`),
+  as a link is: OKF v0.3 reads a path without a leading `/` from the concept's folder. A
+  missing source is a warning, never a failure.
 - **The writing rule.** A concept holds what the code does not say: why, invariants,
   traps, conventions, how to behave, and where to look. It never restates what the code
   says (signatures, defaults, step lists, numbers, field lists); name where that lives.
@@ -316,8 +319,8 @@ BM25 missed on the reference consumer; run both, they fail on different question
   resolves a link inside a comment. Annotations are replaced and deleted.
 - **`index.md` and `log.md` are reserved at every level; `README.md` is not.**
 - **Decisions: slug is permanent, file is never deleted.** In force → `status: stable`;
-  superseded → `status: deprecated`, a `Superseded by` link, the new file links back, no
-  `stale_after`. `--strict` rejects any other status word.
+  superseded → `status: deprecated` with `superseded_by: /decisions/<new>.md`, a `Superseded by`
+  link, the new file links back, no `stale_after`. `--strict` rejects any other status word.
 - **`state.md` is a one-line snapshot.** One line per item, ending with how far the claim
   reaches; "None known." when a list is empty. Per-item evidence goes to
   `state-evidence.md` under the same item, the story to the branch's log entry. The budget is the line,

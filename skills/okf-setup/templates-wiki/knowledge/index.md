@@ -1,5 +1,7 @@
 ---
-okf_version: "0.2"
+okf_version: "0.3"
+title: "{{PROJECT_NAME}} knowledge base"
+description: "Knowledge base of {{PROJECT_NAME}}: people, things owned, matters, facts, procedures and decisions."
 ---
 
 # {{PROJECT_NAME}} Knowledge Base

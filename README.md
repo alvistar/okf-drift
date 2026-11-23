@@ -1,6 +1,6 @@
 # okf-drift
 
-A Claude Code plugin: project memory as an [OKF v0.2](https://github.com/okf-memory/okf-agent-memory)
+A Claude Code plugin: project memory as an [OKF v0.3](https://github.com/open-knowledge-format/open-knowledge-format)
 bundle, kept honest by the code it describes.
 
 A knowledge bundle's failure mode is not being empty. It is being confidently wrong — a
@@ -25,7 +25,7 @@ trusting a green validation.
 |---|---|
 | `/okf-setup` | Lays the bundle down in a repo that has none: a fixed layout that validates `--strict` from the first commit, the population and resync prompts, the `CLAUDE.md` sections, the gate and the CI job. |
 | `/okf-write` | Records into the bundle: a decision, a playbook, a surgical concept edit, the state snapshot and its evidence, each to the writing rule; logs the change in the branch's log entry; keeps index rows and `last_updated` with `okf-tidy.sh`. |
-| `/okf-migrate` | Brings an older bundle up to date: splits the log (freezes the root `log.md`, creates `log/`) and drops drift (deletes `drift.lock`, updates the CI workflow and the `CLAUDE.md` sections, and on request reviews the concepts against the writing rule), adds `CODING_STANDARDS.md`, upgrades the pin, and rewrites angle-bracket links to repository files outside the bundle to the plain form. Idempotent, works on both profiles, commits nothing. |
+| `/okf-migrate` | Brings an older bundle up to date: splits the log (freezes the root `log.md`, creates `log/`) and drops drift (deletes `drift.lock`, updates the CI workflow and the `CLAUDE.md` sections, and on request reviews the concepts against the writing rule), adds `CODING_STANDARDS.md`, upgrades the pin, rewrites angle-bracket links to repository files outside the bundle to the plain form, and moves the bundle to OKF v0.3 (`okf_version`, a bundle title and description, `sources` relative to the concept, `superseded_by`). Idempotent, works on both profiles, commits nothing. |
 | `/okf-read` | Recalls from it: `okf search` with each hit's `status · review` and, when the code under its `code_refs` changed after the concept's last commit, a change hint. |
 
 `/okf-setup`, `/okf-migrate` and `/okf-read` are **manual trigger only** — they run when
@@ -60,7 +60,10 @@ in both directions, the frontmatter okf carries but ignores, template residue, t
 reserved files, a leftover `drift.lock`, which fails the gate with `drift.lock found:
 drift is no longer used, run /okf-migrate`, and links from a concept to repository files
 outside the bundle, which must exist in the repository
-(`docs/adr/0003-links-outside-the-bundle.md`). (`--drift` there is okf's own flag: a check
+(`docs/adr/0003-links-outside-the-bundle.md`). Since 0.21.0 it also requires the OKF v0.3
+root (`okf_version: "0.3"`, a `title` and a `description`), fails a `sources` path written
+from the repository root instead of relative to the concept (a missing source is one
+grouped warning), and checks `superseded_by`. (`--drift` there is okf's own flag: a check
 that every `code_refs` path still exists.) It runs in the Work Loop and as a blocking CI
 job. It checks structure and review dates; whether a concept is still true is
 read-repair's question.
@@ -313,6 +316,7 @@ scripts/okf-recall.sh               search with status · review per hit and the
 scripts/okf-log.sh                  the one writer of a branch's log entry (add); split freezes the root log.md
 scripts/okf-tidy.sh                 index rows and last_updated, the bookkeeping that needs no judgement
 scripts/okf-links.sh                rewrites angle-bracket link destinations to the plain form (/okf-migrate Part 5)
+scripts/okf-format.sh               moves a bundle to OKF v0.3: okf_version, sources relative to the concept, superseded_by (/okf-migrate Part 6)
 scripts/okf-shim.sh                 sole root-aware, content-pinned launcher (plugin/CI/legacy)
 scripts/okf-integrate.py            conservative plugin-only integration install/conversion
 scripts/okf-launcher-selftest.py    offline fixture-release launcher/CI/conversion contracts

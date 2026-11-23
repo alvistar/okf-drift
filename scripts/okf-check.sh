@@ -30,7 +30,7 @@
 #      means the repository has not run /okf-migrate;
 #   7. checks a concept's links to repository files outside the bundle itself, and drops
 #      okf's findings on them (docs/adr/0003-links-outside-the-bundle.md): OKF v0.3 §6
-#      makes such a link external and valid, but okf v0.6.0 reports a `.md` one as broken
+#      makes such a link external and valid, but okf v0.6.0 reported a `.md` one as broken
 #      and okf v0.9.0 reports every one as an error. The target must exist inside the
 #      repository. A `<…>` destination (okf v0.9.0 keeps the brackets in the path,
 #      okf-agent-memory#69) and link syntax inside a code span (okf parses it) fail.
@@ -50,8 +50,8 @@ command -v okf >/dev/null 2>&1 || { echo "okf not on PATH" >&2; exit 2; }
 
 ver=$(okf version 2>/dev/null | head -1)
 case "$(printf '%s\n' "$ver" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)" in
-  v0.6.0|v0.9.0) ;;
-  *) shell_warns=$((shell_warns+1)); echo "warn  okf is '$ver'; this gate was measured against v0.6.0 and v0.9.0 — re-check references/okf-quirks.md" ;;
+  v0.9.0) ;;
+  *) shell_warns=$((shell_warns+1)); echo "warn  okf is '$ver'; this gate was measured against v0.9.0 — re-check references/okf-quirks.md" ;;
 esac
 
 # okf v0.6.0 and v0.9.0 refuse a bundle root that resolves outside the directory holding it — a
@@ -182,7 +182,7 @@ bad("no concept in $bundle yet — populate it before a green gate means anythin
 # outside the bundle. Fenced blocks are not read (okf skips them too); code spans are, since
 # okf parses a link inside one. %outside holds "concept\0href" for every link this step
 # judges, so step 1 drops okf's own finding on the same link instead of printing it twice.
-my (%outside, @link_fail);
+my (%outside, @link_fail, @unresolved);
 my $repo = abs_path(getcwd());
 my $bundle_abs = abs_path($bundle);
 # CommonMark code spans: a run of N backticks opens a span that the next run of exactly N
@@ -207,6 +207,53 @@ sub code_spans {
   $$ref = $out;
   return @spans;
 }
+# Resolve a relative href from a concept's folder. Returns (escapes the bundle; `ok`,
+# `missing` or `leaves` the repository; the bundle path it names when it does not escape). Split on `/` first, then decode each segment:
+# an encoded `%2F` is not a separator to a reader or to okf, so it names no file.
+sub resolve_from {
+  my ($rel, $href) = @_;
+  (my $path = $href) =~ s/[?#].*\z//s;
+  return (0, undef, "$bundle/" . dirname($rel)) unless length $path;
+  my @raw = map { (my $s = $_) =~ s/%([0-9A-Fa-f]{2})/chr(hex $1)/ge; $s } split m{/}, $path;
+  my $encoded_slash = grep { m{/} } @raw;
+  $path = join '/', @raw;
+  my $dir = dirname($rel);
+  my @seg = $dir eq '.' ? () : split m{/}, $dir;
+  my $escapes = 0;
+  for my $s (@raw) {
+    next if $s eq '' || $s eq '.';
+    if ($s eq '..') { if (@seg) { pop @seg } else { $escapes = 1; last } }
+    else { push @seg, $s }
+  }
+  my $target = "$bundle/" . ($dir eq '.' ? '' : "$dir/") . $path;
+  my $real = !$encoded_slash && -e $target ? abs_path($target) : undef;
+  my $status = !defined $real ? 'missing'
+    : ($real ne $repo && index($real, "$repo/") != 0) ? 'leaves' : 'ok';
+  return ($escapes, $status, "$bundle/" . join('/', @seg));
+}
+# The resource path fields of a concept's frontmatter, as [field, value]: `resource` and
+# each `sources` item's `resource`, block or flow style (`sources: [{resource: x}]`).
+# Quotes are stripped. `superseded_by` is left to okf, which checks it.
+sub path_fields {
+  my ($fm) = shift =~ /\A---\n(.*?)\n---\n/s;
+  return () unless defined $fm;
+  my (@out, $cur);
+  for my $line (split /\n/, $fm) {
+    if ($line =~ /^([A-Za-z_][\w-]*):\s*(.*?)\s*$/) {
+      ($cur, my $val) = ($1, $2);
+      if ($cur eq 'resource' && length $val) { push @out, ['resource', $val] }
+      elsif ($cur eq 'sources' && $val =~ /^\[/) { push @out, ['sources.resource', $1] while $val =~ /\bresource:\s*([^,}\]]+?)\s*(?=[,}\]])/g }
+    } elsif (($cur // '') eq 'sources' && $line =~ /^\s*(?:-\s+)?resource:\s*(.+?)\s*$/) {
+      push @out, ['sources.resource', $1];
+    }
+  }
+  for (@out) {
+    # A comment after an unquoted value (` # note`) is YAML's, not the path's.
+    $_->[1] =~ s/^(["'])(.*?)\1\s+#.*\z/$1$2$1/ or $_->[1] =~ s/\s+#.*\z// unless $_->[1] =~ /^["'][^"']*\z/;
+    $_->[1] =~ s/^(["'])(.*)\1$/$2/;
+  }
+  return @out;
+}
 my $DEST = qr/\]\(\s*(<[^<>\n]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/;
 for my $rel (@concepts) {
   my $text = slurp("$bundle/$rel");
@@ -214,39 +261,68 @@ for my $rel (@concepts) {
   $body =~ s/^(?:[ \t]*)```.*?^(?:[ \t]*)```[^\n]*$//smg;
   for my $span (code_spans(\$body)) {
     while ($span =~ /$DEST/g) {
-      $outside{"$rel\0$1"} = 1;
+      $outside{"$rel\0link\0$1"} = 1;
       push @link_fail, "$rel: link syntax inside a code span, [..]($1) — okf parses it as a link; put the example in a fenced block or drop the parentheses";
     }
   }
   while ($body =~ /$DEST/g) {
     my $href = $1;
     if ($href =~ /^<(.*)>$/) {
-      $outside{"$rel\0$href"} = 1;
+      $outside{"$rel\0link\0$href"} = 1;
       push @link_fail, "$rel: link destination in angle brackets, $href — okf v0.9.0 keeps the brackets in the path (okf-agent-memory#69); write it without them, spaces as %20 (/okf-migrate rewrites it)";
       next;
     }
     next if $href =~ m{^(?:[A-Za-z][A-Za-z0-9+.-]*:|#|/)};
-    (my $path = $href) =~ s/[?#].*\z//s;
-    next unless length $path;
-    # Split on `/` first, then decode each segment: an encoded `%2F` is not a separator to
-    # a reader or to okf, so a segment that decodes to one names no file.
-    my @raw = map { (my $s = $_) =~ s/%([0-9A-Fa-f]{2})/chr(hex $1)/ge; $s } split m{/}, $path;
-    my $encoded_slash = grep { m{/} } @raw;
-    $path = join '/', @raw;
-    my $dir = dirname($rel);
-    my @seg = $dir eq '.' ? () : split m{/}, $dir;
-    my $escapes = 0;
-    for my $s (@raw) {
-      next if $s eq '' || $s eq '.';
-      if ($s eq '..') { if (@seg) { pop @seg } else { $escapes = 1; last } }
-      else { push @seg, $s }
-    }
+    my ($escapes, $status) = resolve_from($rel, $href);
     next unless $escapes;
-    $outside{"$rel\0$href"} = 1;
-    my $target = "$bundle/" . ($dir eq '.' ? '' : "$dir/") . $path;
-    my $real = !$encoded_slash && -e $target ? abs_path($target) : undef;
-    if (!defined $real) { push @link_fail, "$rel: link $href — no such file in the repository" }
-    elsif ($real ne $repo && index($real, "$repo/") != 0) { push @link_fail, "$rel: link $href leaves the repository" }
+    $outside{"$rel\0link\0$href"} = 1;
+    push @link_fail, "$rel: link $href — no such file in the repository" if $status eq 'missing';
+    push @link_fail, "$rel: link $href leaves the repository" if $status eq 'leaves';
+  }
+  # Path fields (OKF v0.3 §6.2) resolve like links. okf v0.9.0 reports one that leaves the
+  # bundle as an error, and never checks that a `sources` resource exists, so the gate does
+  # both. A bare repository path (`resource: docs/x.md`) now resolves from the concept's
+  # folder and names no file: cite it relative to the concept (`../../docs/x.md`).
+  for my $pf (path_fields($text)) {
+    my ($field, $value) = @$pf;
+    # A URL, or a value with whitespace: a path writes a space as %20 (§6), so text with
+    # one is a scope descriptor or a note (§5.1), not a path.
+    next if $value =~ m{^[A-Za-z][A-Za-z0-9+.-]*:} || $value eq '' || $value =~ /\s/;
+    # A leading `/` resolves from the bundle root, through the same rules as the rest.
+    my ($escapes, $status, $inside) = $value =~ m{^/(.*)\z}s ? resolve_from('index.md', $1) : resolve_from($rel, $value);
+    if ($escapes) {
+      $outside{"$rel\0$field\0$value"} = 1;
+      push @link_fail, "$rel: $field $value leaves the repository" if $status eq 'leaves';
+      push @unresolved, "$rel → $value" if $status eq 'missing';
+      next;
+    }
+    (my $p = $value) =~ s/[?#].*\z//s;
+    my $here = $p =~ m{^/} ? "$bundle$p" : "$inside";
+    next if $status eq 'ok' || -e $here;
+    # The form OKF v0.2 bundles used: a repository path from the repository root. Known by
+    # its first segment, so a file the checkout lacks (a submodule not fetched) is caught
+    # too, the same in every checkout.
+    (my $from_root = $p) =~ s/%([0-9A-Fa-f]{2})/chr(hex $1)/ge;
+    my ($first) = split m{/}, $from_root;
+    my $cdir = "$bundle/" . dirname($rel);
+    my $root_real = $value !~ m{^/} && defined $first && $first !~ /^\.\.?\z/ && -e $first
+      && !-e "$cdir/$first" && !-e "$bundle/$first" ? abs_path($first) : undef;
+    if (defined $root_real && index($root_real, "$repo/") == 0) {
+      push @link_fail, "$rel: $field $value names a path from the repository root (its first segment, $first, is there), but OKF v0.3 resolves it from the concept's folder ($inside): write it relative to the concept (/okf-migrate rewrites it)";
+    } else { push @unresolved, "$rel → $value" }
+  }
+  # superseded_by names a concept in the bundle (§5.4). okf v0.9.0 checks it, v0.6.0 does
+  # not, so the gate does, on any version.
+  my ($sfm) = $text =~ /\A---\n(.*?)\n---\n/s;
+  if (defined $sfm && $sfm =~ /^superseded_by:[ \t]*(.*?)[ \t]*$/m) {
+    my $s = $1;
+    $s =~ s/^(["'])(.*?)\1\s+#.*\z/$1$2$1/ or $s =~ s/\s+#.*\z//;
+    $s =~ s/^(["'])(.*)\1$/$2/;
+    if (length $s && $s !~ m{^[A-Za-z][A-Za-z0-9+.-]*:}) {
+      my ($esc, undef, $in) = $s =~ m{^/(.*)\z}s ? resolve_from('index.md', $1) : resolve_from($rel, $s);
+      (my $f = $in) =~ s/[?#].*\z//s;
+      push @link_fail, "$rel: superseded_by $s — no such concept in the bundle" if $esc || !-f $f;
+    }
   }
 }
 
@@ -265,21 +341,24 @@ else {
   my %gate = map { $_ => 1 } @{ $v->{gate_findings} || [] };
   for my $e (@{ $v->{errors} || [] }) {
     # The href is Go-quoted (%q): a backslash or a quote in it arrives escaped.
-    if ($e =~ /^(.*?): link "(.*)" escapes bundle root/) {
-      my ($c, $h) = ($1, $2); $h =~ s/\\(["\\])/$1/g;
-      if ($outside{"$c\0$h"}) { $dropped++; next }
+    if ($e =~ /^(.*?): (\S+) "(.*)" escapes bundle root/) {
+      my ($c, $k, $h) = ($1, $2, $3); $h =~ s/\\(["\\])/$1/g; $k =~ s/\[\d+\]//g;
+      if ($outside{"$c\0$k\0$h"}) { $dropped++; next }
     }
     okf_bad("okf validate error: $e");
   }
   for my $g (sort keys %gate)                { okf_bad("okf validate gate: $g") }
   for my $w (@{ $v->{warnings} || [] })      { next if $gate{$w}; okf_bad("okf validate warning (fatal here): $w") }
   for my $l (@{ $v->{broken_links} || [] }) {
-    if (ref $l && $outside{($l->{source_concept} // '') . "\0" . ($l->{target_href} // '')}) { $dropped++; next }
+    # The reason names the field (`sources.resource escapes bundle root`); a body link's
+    # says `target`, or names no field at all.
+    my $k = ref $l && ($l->{reason} // '') =~ /(\S+) escapes bundle root/ && $1 ne 'target' ? $1 : 'link';
+    if (ref $l && $outside{($l->{source_concept} // '') . "\0$k\0" . ($l->{target_href} // '')}) { $dropped++; next }
     okf_bad("okf validate broken link: ".(ref $l ? join(' ', map { "$_=$l->{$_}" } sort keys %$l) : $l));
   }
   for my $o (@{ $v->{orphans} || [] })       { okf_bad("okf validate orphan: $o") }
 }
-# Only the fields okf v0.6.0 and v0.9.0 were measured to emit count as accounted for: a
+# Only the fields okf v0.9.0 (and v0.6.0 before it) was measured to emit count as accounted for: a
 # stale count, or any other field with a value, is a reason the gate did not read.
 my %KNOWN = map { $_ => 1 } qw(errors gate_findings warnings broken_links orphans
   gate_passed is_conformant bundle_path concept_count declared_version stale_count);
@@ -296,7 +375,17 @@ bad($_) for @link_fail;
 
 # 2. Reserved files.
 my $root = slurp("$bundle/index.md");
-bad("index.md: missing okf_version: \"0.2\"") unless $root =~ /^okf_version:\s*"0\.2"/m;
+# OKF v0.3 (docs/adr/0003-links-outside-the-bundle.md, okf-quirks.md): the root index
+# declares the version and names the bundle. An older declaration means /okf-migrate has
+# not moved the bundle yet.
+(my $root_lf = $root) =~ s/\r\n/\n/g;   # a CRLF checkout of the root still reads
+my ($root_fm) = $root_lf =~ /\A---\n(.*?)\n---\n/s;
+$root_fm //= '';
+if ($root_fm =~ /^okf_version:\s*["']?0\.[0-2]["']?\s*$/m) { bad("index.md: okf_version is older than \"0.3\": run /okf-migrate, which moves the bundle to OKF v0.3") }
+elsif ($root_fm !~ /^okf_version:\s*"0\.3"\s*$/m) { bad("index.md: missing okf_version: \"0.3\" in the root index frontmatter") }
+for my $k (qw(title description)) {
+  bad("index.md: missing $k: in the root index frontmatter (OKF v0.3 §8.1 bundle metadata)") unless $root_fm =~ /^$k:\s*\S/m;
+}
 bad("log.md: missing") unless -f "$bundle/log.md";
 # The frozen log and the log entries (docs/adr/0001-log-entries-as-reserved-log-files.md).
 # The root log.md ends with okf-log.sh's marker, which hashes every byte above it (LF line
@@ -350,6 +439,7 @@ for my $rel (@concepts) {
   else { $desc{$rel} = $f{description} }
   bad("$rel: last_updated: must be an ISO date (got '".($f{last_updated}//'')."')") unless ($f{last_updated}//'') =~ $ISO;
   bad("$rel: stale_after: must be an ISO date") if exists $f{stale_after} && $f{stale_after} !~ $ISO;
+  bad("$rel: superseded_by: without status: deprecated — it means something only on a deprecated concept (OKF v0.3 §5.4)") if length($f{superseded_by}//'') && ($f{status}//'') ne 'deprecated';
   if (($f{stale_after} // '') =~ /^(\d{4})-(\d{2})-(\d{2})$/) {
     # okf compares these dates as text, so an impossible one never expires: name it here.
     # Years below 1000 are refused because Time::Local reads them as offsets from 1900.
@@ -389,6 +479,7 @@ for my $rel (@concepts) {
     bad("$rel: status: must be stable (in force), deprecated (superseded) or draft (got '".($f{status}//'')."')") unless ($f{status}//'') =~ /^(draft|stable|deprecated)$/;
     bad("$rel: a decision must link to at least one concept outside decisions/ (an island of decisions passes okf validate)") unless grep { !m{^/decisions/} } @links;
     bad("$rel: deprecated but no 'Superseded by' link to another decision") if ($f{status}//'') eq 'deprecated' && $nb !~ /Superseded by\s*\[[^\]]+\]\(\/decisions\/[^)]+\.md\)/i;
+    bad("$rel: deprecated but no superseded_by: naming the decision that replaces it (OKF v0.3 §5.4)") if ($f{status}//'') eq 'deprecated' && !length($f{superseded_by}//'');
     bad("$rel: a deprecated decision takes no stale_after") if ($f{status}//'') eq 'deprecated' && exists $f{stale_after};
   }
 }
@@ -434,6 +525,11 @@ bad("drift.lock found: drift is no longer used, run /okf-migrate") if -f 'drift.
 grouped("with empty code_refs (okf search --for-path cannot find them)", @no_code_refs);
 grouped("with an open question ([TO VERIFY] / [DA VERIFICARE]) — confirm or remove", @open_questions);
 grouped("due for review within $REVIEW_WINDOW days (stale_after; the gate fails on the day) — review now, then move the date", @review_due);
+# A source that names no file here: a submodule this checkout did not fetch, a private
+# note, or a moved file. Provenance, not a link a reader clicks, so it never fails.
+my %unres; push @{ $unres{(split / → /, $_, 2)[0]} }, $_ for @unresolved;
+grouped("with a sources path unresolved in this checkout (a submodule not fetched, a private note, or a moved file)", sort keys %unres);
+print "        $_\n" for $ENV{OKF_VERBOSE} ? @unresolved : ();
 
 # Never erase a failed subprocess status.
 bad("okf validate exited $okf_status") if $okf_status && !$fail && !$only_ours;

@@ -3,7 +3,8 @@ name: knowledge
 # v0.7.0 or newer (first root-aware launcher). Verify the launcher before executing it;
 # it verifies the gate, including on a warm cache. A pin to v0.14.0 or newer fails a bundle
 # whose root log.md is not frozen yet, a pin to v0.15.0 or newer fails while a drift.lock
-# exists, and a pin to v0.20.0 or newer fails an angle-bracket link: run /okf-migrate.
+# exists, a pin to v0.20.0 or newer fails an angle-bracket link, and a pin to v0.21.0 or
+# newer fails a bundle not yet on OKF v0.3: run /okf-migrate.
 # Keep this file verbatim for safe updates.
 on:
   push:
