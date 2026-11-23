@@ -9,6 +9,37 @@ refuses a tag that disagrees with it or with `.claude-plugin/plugin.json`.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-23
+
+### Changed
+
+- **Bundles are OKF v0.3** (`SPEC.md` in open-knowledge-format/open-knowledge-format). The
+  gate requires `okf_version: "0.3"` with a `title` and a `description` in the root
+  `index.md` (§8.1), and names `/okf-migrate` on an older version. It accepts okf v0.9.0
+  only: v0.6.0 implements OKF v0.2 and now warns. The scaffold writes the new root.
+- **A repository file in `sources` is cited relative to the concept**, as a link is
+  (`resource: ../../GLOSSARY.md`). OKF v0.3 §6.2 resolves a path field without a leading
+  `/` from the file's folder, so the v0.2 form written from the repository root
+  (`resource: GLOSSARY.md`) now names a file inside the bundle: the gate fails it, with
+  the rewrite. okf v0.9.0 reports the relative form as an escape error, which the gate
+  drops, keyed by field so another field's finding on the same path stays. A source the
+  checkout lacks (a submodule not fetched, a private note, a moved file) is one grouped
+  warning, never a failure (`OKF_VERBOSE=1` lists them); a value with a space is a
+  descriptor, never checked. Block and flow-style `sources` lists are both read.
+- **`superseded_by`** (§5.4): allowed only beside `status: deprecated`, and required on a
+  deprecated decision, beside its `Superseded by` line. Templates and `/okf-write` say so.
+
+### Added
+
+- **`/okf-migrate` Part 6 — Format OKF v0.3**, after Part 4 moved the pin. The new
+  `okf-format.sh` sets `okf_version`, rewrites each repository-root `resource:` relative to
+  the concept (only under `sources` or a top-level `resource`, fragment and encoding kept),
+  and adds `superseded_by` to a deprecated decision whose body links its successor. It
+  writes each file beside itself and renames it, and refuses a symlink leaving the
+  repository. The agent proposes the bundle's title and description. On a copy of the
+  margins bundle it rewrote 14 sources, and the gate passed on okf v0.9.0.
+- ADR 0003 covers path fields and why a missing source warns while a missing link fails.
+
 ## [0.20.0] - 2026-11-23
 
 ### Added
