@@ -307,6 +307,9 @@ BM25 missed on the reference consumer; run both, they fail on different question
   directories or boundary files the concept governs, file paths only (no `path#Symbol`;
   `okf validate --drift` reads it as a missing path). Not `src/` on everything, which
   makes `--for-path` noise and puts a change hint on every hit.
+- **A `sources` path to a repository file is relative to the concept** (`../../docs/x.md`),
+  as a link is: OKF v0.3 reads a path without a leading `/` from the concept's folder. A
+  missing source is a warning, never a failure.
 - **The writing rule.** A concept holds what the code does not say: why, invariants,
   traps, conventions, how to behave, and where to look. It never restates what the code
   says (signatures, defaults, step lists, numbers, field lists); name where that lives.
@@ -316,8 +319,8 @@ BM25 missed on the reference consumer; run both, they fail on different question
   resolves a link inside a comment. Annotations are replaced and deleted.
 - **`index.md` and `log.md` are reserved at every level; `README.md` is not.**
 - **Decisions: slug is permanent, file is never deleted.** In force → `status: stable`;
-  superseded → `status: deprecated`, a `Superseded by` link, the new file links back, no
-  `stale_after`. `--strict` rejects any other status word.
+  superseded → `status: deprecated` with `superseded_by: /decisions/<new>.md`, a `Superseded by`
+  link, the new file links back, no `stale_after`. `--strict` rejects any other status word.
 - **`state.md` is a one-line snapshot.** One line per item, ending with how far the claim
   reaches; "None known." when a list is empty. Per-item evidence goes to
   `state-evidence.md` under the same item, the story to the branch's log entry. The budget is the line,

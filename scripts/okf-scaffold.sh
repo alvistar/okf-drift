@@ -105,9 +105,9 @@ fi
 # the first log entry. `--slug setup` needs no git history, so this works outside a
 # repository. A forced re-run finds an entry in log/ and adds no second "Created" line.
 if [ "$profile" = wiki ]; then
-  created='* **Created**: scaffolded the OKF v0.2 bundle with `okf-scaffold.sh --profile wiki` (`/okf-setup`, Profile: wiki) — reference, playbooks and decisions categories, no concepts yet.'
+  created='* **Created**: scaffolded the OKF v0.3 bundle with `okf-scaffold.sh --profile wiki` (`/okf-setup`, Profile: wiki) — reference, playbooks and decisions categories, no concepts yet.'
 else
-  created='* **Created**: scaffolded the OKF v0.2 bundle with `/okf-setup` — five context concepts, an empty decisions category and an empty playbook index. Nothing is populated yet.'
+  created='* **Created**: scaffolded the OKF v0.3 bundle with `/okf-setup` — five context concepts, an empty decisions category and an empty playbook index. Nothing is populated yet.'
 fi
 out=$(cd "$target" && sh "$here/okf-log.sh" split knowledge) || {
   echo "okf-log.sh split failed on $bundle/log.md" >&2; exit 1; }

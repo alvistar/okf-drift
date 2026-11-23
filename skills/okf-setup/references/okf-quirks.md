@@ -180,7 +180,8 @@ and a superseded one is `deprecated`; there is no "active".
 **`sources` entries must be mappings with a `resource` key** under `--strict`: a bare
 string item is `sources[N] has no 'resource'` in `gate_findings`, exit 1 (measured on the
 repo B migration dry run — 11 findings from links the migrator had listed as plain
-paths). Write `- resource: docs/x.md`; whether the path exists is not checked.
+paths). Write a repository file relative to the concept, `- resource: ../../docs/x.md` (OKF v0.3,
+see *OKF v0.3 bundles* below); okf never checks that the path exists.
 
 ## Search
 

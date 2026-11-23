@@ -45,6 +45,7 @@ SECTIONS = {
         "16fa3ecb217b7c0ef288c9f3f143ea4dd3addf15541e119756122fda7823ffc5",  # v0.9.0-v0.11.0
         "bb2ec783b4be0f157651e18d7b9e850e865d53060c37caa54eedc6b5204da104",  # v0.12.0-v0.13.0
         "d730317603070736efb58a738281fe9cba3bab28548e90f32c7e51dae113118f",  # v0.14.0
+        "c3ee51d02e0cd6c4c81885e082d0074a49a37e39df48ba5d28b379df6083d068",  # v0.15.0-v0.20.0
     },
     "Work Loop": {
         "c8ad36698d80128dae3b77e4f34b82d0c50ebddb50f54313cccf6fcb125ba214",  # v0.4.0-v0.6.2

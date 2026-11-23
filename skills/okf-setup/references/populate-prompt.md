@@ -56,7 +56,8 @@ establish, and add one line on what would establish it.
   not `src/` on everything: recall shows a change hint for every commit under
   them. Every path must exist.
 - `sources:` the docs or files the content came from, each as
-  `- resource: <repo-relative path or URL>` — okf --strict rejects a bare string.
+  `- resource: <path relative to this concept, e.g. ../../docs/x.md, or a URL>` — okf
+  --strict rejects a bare string, and the gate fails a path written from the repository root.
 - `last_updated:` today; keep the `stale_after:` the scaffold set.
 - stack says WHAT and under which constraints, pointing at the manifest for
   versions; the WHY goes to decisions/.
