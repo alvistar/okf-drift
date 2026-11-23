@@ -17,7 +17,7 @@ tags:
 - fixture
 - parity
 sources:
-- resource: docs/plans/2026-09-04-001-fixtures-plan.md
+- resource: ../../docs/plans/2026-09-04-001-fixtures-plan.md
 code_refs:
 - core/fixtures/
 last_updated: 2026-09-16
@@ -43,7 +43,8 @@ Rules the gate enforces:
 
 - `status` uses OKF's own vocabulary, which `okf validate --strict` enforces: `stable` for a decision in force, `deprecated` for one superseded (`draft` while it is still being discussed). `date` and `last_updated` are ISO dates.
 - Every decision links to at least one concept **outside** `decisions/` — a decision that only points at other decisions is an island `okf validate` cannot see.
-- A superseded decision is never deleted: set `status: deprecated`, add a `Superseded by` line under `## Related` that links the new decision's `/decisions/<new-slug>.md`, and have the new decision link back. Deprecated decisions take no `stale_after`.
+- A superseded decision is never deleted: set `status: deprecated` and `superseded_by: /decisions/<new-slug>.md`, add a `Superseded by` line under `## Related` that links the same file, and have the new decision link back. Deprecated decisions take no `stale_after`. `superseded_by` appears on a deprecated concept only.
+- A `sources` item that names a repository file is written relative to the decision, as a link is: `../../docs/plans/x.md` from `decisions/`. OKF v0.3 resolves a path without a leading `/` from the file's folder, so `docs/plans/x.md` would name `decisions/docs/plans/x.md`. A source the checkout lacks (a submodule, a private note) is a warning, never a failure.
 - Add a row below with the description verbatim.
 
 ## Index

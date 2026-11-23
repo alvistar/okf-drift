@@ -1,6 +1,6 @@
 # okf-drift
 
-A Claude Code plugin: project memory as an [OKF v0.2](https://github.com/okf-memory/okf-agent-memory)
+A Claude Code plugin: project memory as an [OKF v0.3](https://github.com/open-knowledge-format/open-knowledge-format)
 bundle, kept honest by the code it describes.
 
 A knowledge bundle's failure mode is not being empty. It is being confidently wrong — a

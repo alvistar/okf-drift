@@ -2,7 +2,7 @@
 name: okf-setup
 disable-model-invocation: true
 description: |
-  Set up an OKF v0.2 knowledge bundle (github.com/okf-memory/okf-agent-memory) in a
+  Set up an OKF v0.3 knowledge bundle (github.com/okf-memory/okf-agent-memory) in a
   repository with a FIXED layout: project/{state,stack,setup,conventions},
   architecture/, decisions/ (one concept per decision), playbooks/ — validating
   `--strict` from the first commit. Ships the population and resync prompts, the
@@ -85,7 +85,7 @@ read the repo** — hand them over only when the user wants to run them elsewher
 ## Step 0 — okf present, and which one
 
 ```bash
-okf version          # expect: okf version v0.9.0 (OKF v0.3 specification); v0.6.0 is also measured
+okf version          # expect: okf version v0.9.0 (OKF v0.3 specification)
 ```
 
 Absent: `go install github.com/okf-memory/okf-agent-memory/cmd/okf@v0.9.0` (Go 1.26+) and make sure
@@ -192,7 +192,7 @@ every concept has a row in its category index; one-line descriptions, ISO
 `status: deprecated` (the vocabulary `draft|stable|deprecated` is okf's own and
 `--strict` enforces it — `active` is rejected); no HTML comment left in
 a concept (search indexes comment text), no placeholder, no empty section; root
-`okf_version`, `log.md`, and `state.md`'s three lists (a state item past 300 characters
+`okf_version: "0.3"` with a `title` and a `description`, `log.md`, and `state.md`'s three lists (a state item past 300 characters
 is a warning). Empty `code_refs` is a warning:
 coverage is a judgement. A `stale_after` within the next 30 days
 (`OKF_REVIEW_WINDOW_DAYS`) is a warning, because okf fails the concept on that day; an

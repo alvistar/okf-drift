@@ -36,6 +36,11 @@ angle brackets, `[t](<…>)`: okf v0.9.0 reads the brackets as part of the path.
 syntax inside a code span: okf parses it as a link; show an example in a fenced block. The
 gate checks that the target exists in the repository
 (`docs/adr/0003-links-outside-the-bundle.md` in the plugin).
+The same holds for a `sources` item that names a repository file: `resource:
+../../docs/plans/x.md`, relative to the concept (OKF v0.3 resolves a path without `/` from
+the file's folder). A bundle file is `/project/stack.md`. A source the checkout lacks (a
+submodule, a private note) is a warning, never a failure; a source written from the
+repository root (`resource: docs/x.md`) fails the gate.
 
 **Run the plugin's write helpers through the pinned launcher**, like the gate:
 
@@ -73,7 +78,7 @@ Answer before writing anything. One of these shapes:
 | A task was done that will recur, and a wrong turn was available | `playbooks/<slug>.md` |
 | A concept says something that is no longer true | a surgical edit to that concept |
 | A concept you relied on this session contradicts the code (read-repair) | a surgical edit to that concept |
-| A decision has been superseded | `status: deprecated` on it, a `Superseded by` link to its successor, and the successor written |
+| A decision has been superseded | `status: deprecated` and `superseded_by: /decisions/<new>.md` on it, a `Superseded by` link to its successor, and the successor written |
 | What works / is missing / is broken moved | its one line in `project/state.md`, its entry in `project/state-evidence.md` |
 
 More than one can be true. None being true is a legitimate answer — say so and stop. A
@@ -127,7 +132,8 @@ only to change its headings.
   enforces it: `draft|stable|deprecated`. There is no `active`.
 - `date:` is an ISO date and the gate requires it.
 - The slug is permanent and the file is never deleted. Superseding means the old file
-  goes `status: deprecated` with a `Superseded by` link to the new one, the new one links
+  goes `status: deprecated` with `superseded_by: /decisions/<new>.md` and a `Superseded by`
+  link to the new one, the new one links
   back, and the old one loses its `stale_after`.
 - A decision **must link to a concept outside `decisions/`** — an island of decisions
   that only cite each other passes `okf validate --strict` and tells a reader nothing.

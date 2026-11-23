@@ -68,7 +68,7 @@ class RuntimeTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.bundle = self.root / "knowledge"
         (self.bundle / "project").mkdir(parents=True)
-        (self.bundle / "index.md").write_text('---\nokf_version: "0.2"\n---\n')
+        (self.bundle / "index.md").write_text('---\nokf_version: "0.3"\ntitle: Fixture\ndescription: Fixture bundle.\n---\n')
         (self.bundle / "log.md").write_text("# Log\n")
         split_log(self.root)
         (self.bundle / "project/index.md").write_text(
@@ -84,7 +84,7 @@ class RuntimeTests(unittest.TestCase):
         self.stub = self.root / "bin"
         self.stub.mkdir()
         for name, text in {
-            "okf": '#!/bin/sh\ncase "$1" in\nversion) echo "okf v0.6.0";;\nvalidate) cat "$FIXTURE/validate.json"; exit "${VALIDATE_EXIT:-0}";;\nsearch) cat "$FIXTURE/search.json"; exit "${SEARCH_EXIT:-0}";;\nesac\n',
+            "okf": '#!/bin/sh\ncase "$1" in\nversion) echo "okf v0.9.0";;\nvalidate) cat "$FIXTURE/validate.json"; exit "${VALIDATE_EXIT:-0}";;\nsearch) cat "$FIXTURE/search.json"; exit "${SEARCH_EXIT:-0}";;\nesac\n',
         }.items():
             path = self.stub / name
             path.write_text(text)
@@ -651,16 +651,16 @@ class RuntimeTests(unittest.TestCase):
         (self.root / "docs").mkdir(exist_ok=True)
         (self.root / "docs/adr.md").write_text("# ADR\n")
 
-    def test_gate_accepts_both_measured_okf_versions_and_warns_on_another(self) -> None:
-        for line, warned in (("okf version v0.6.0 (OKF v0.2 specification)", False),
-                             ("okf version v0.9.0 (OKF v0.3 specification)", False),
+    def test_gate_accepts_the_measured_okf_version_and_warns_on_another(self) -> None:
+        for line, warned in (("okf version v0.9.0 (OKF v0.3 specification)", False),
+                             ("okf version v0.6.0 (OKF v0.2 specification)", True),
                              ("okf version v0.8.0 (OKF v0.2 specification)", True)):
             (self.stub / "okf").write_text(
                 '#!/bin/sh\ncase "$1" in\nversion) echo "%s";;\n'
                 'validate) cat "$FIXTURE/validate.json";;\nesac\n' % line)
             result = self.run_script("okf-check.sh")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual("measured against v0.6.0 and v0.9.0" in result.stdout, warned, line)
+            self.assertEqual("measured against v0.9.0" in result.stdout, warned, line)
 
     def test_a_link_to_a_repository_file_outside_the_bundle_drops_okfs_findings(self) -> None:
         # okf v0.9.0 reports it as an error and loses conformance; okf v0.6.0 as a broken link.
@@ -707,6 +707,83 @@ class RuntimeTests(unittest.TestCase):
         result = self.run_script("okf-check.sh")
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("link ../../docs%2Fadr.md — no such file in the repository", result.stdout)
+
+    def sourced(self, *resources: str, extra: str = "") -> None:
+        """The linked() concept with these `sources` resources (block style) plus `extra`
+        frontmatter lines; the repo also holds docs/adr.md."""
+        self.linked("See [state](/project/state.md).")
+        path = self.bundle / "architecture/core.md"
+        items = "".join(f"  - resource: {r}\n" for r in resources)
+        path.write_text(path.read_text().replace("---\n# Second", f"sources:\n{items}{extra}---\n# Second", 1))
+
+    def test_an_older_format_version_fails_naming_okf_migrate(self) -> None:
+        # Value: protects=a v0.2 bundle is told to run /okf-migrate and the root names the bundle; fails_when=the gate accepts okf_version 0.2 or a root without title/description; why_new=format 0.3 is new; seam=none; no_claim=none beyond protects
+        (self.bundle / "index.md").write_text('---\nokf_version: "0.2"\n---\n')
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('okf_version is older than "0.3": run /okf-migrate', result.stdout)
+        self.assertIn("missing title:", result.stdout)
+        self.assertIn("missing description:", result.stdout)
+
+    def test_a_source_outside_the_bundle_is_relative_and_okfs_error_is_dropped(self) -> None:
+        # Value: protects=a sources path relative to the concept passes, and okf v0.9.0's escape error on it is dropped; fails_when=the filter keys only links, or sources are not resolved from the concept; why_new=path fields are new; seam=none; no_claim=real okf output (stubbed JSON)
+        self.sourced("../../docs/adr.md", "'/project/state.md'", "https://example.com/x", "Claude memory: a note")
+        self.payload("validate", {"gate_passed": False, "is_conformant": False,
+            "errors": ['architecture/core.md: sources[0].resource "../../docs/adr.md" escapes bundle root (path traversal denied)'],
+            "broken_links": [{"source_concept": "architecture/core.md", "target_href": "../../docs/adr.md",
+                              "reason": "path traversal denied: sources.resource escapes bundle root"}]})
+        self.env["VALIDATE_EXIT"] = "1"
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("unresolved", result.stdout)
+
+    def test_a_source_from_the_repository_root_fails_and_a_missing_one_warns(self) -> None:
+        # Value: protects=the v0.2 repo-root form fails with its rewrite, a source the checkout lacks only warns; fails_when=either becomes the other; why_new=path fields are new; seam=none; no_claim=submodule detection (none is made)
+        self.sourced("docs/adr.md#why", "../../notes/private.md", "/project/gone.md")
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("sources.resource docs/adr.md#why names a repository file from the repository root", result.stdout)
+        self.assertIn("1 concept(s) with a sources path unresolved in this checkout", result.stdout)
+        self.assertNotIn("private.md", result.stdout.split("unresolved")[0])
+        self.env["OKF_VERBOSE"] = "1"
+        verbose = self.run_script("okf-check.sh").stdout
+        self.assertIn("architecture/core.md → ../../notes/private.md", verbose)
+        self.assertIn("architecture/core.md → /project/gone.md", verbose)
+
+    def test_okfs_error_on_another_field_with_the_same_href_is_kept(self) -> None:
+        # Value: protects=dropping a sources finding never drops another field's finding on the same href; fails_when=the filter keys concept+href only; why_new=the field key is new; seam=none; no_claim=none beyond protects
+        self.sourced("../../docs/adr.md")
+        self.payload("validate", {"gate_passed": False, "is_conformant": False,
+            "errors": ['architecture/core.md: executor.resource "../../docs/adr.md" escapes bundle root (path traversal denied)']})
+        self.env["VALIDATE_EXIT"] = "1"
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("executor.resource", result.stdout)
+
+    def test_a_flow_style_source_is_read(self) -> None:
+        # Value: protects=sources: [{resource: x}] is judged like a block list; fails_when=only block style is parsed, so okf's error survives; why_new=Codex found the gap; seam=none; no_claim=nested flow maps
+        self.linked("See [state](/project/state.md).")
+        path = self.bundle / "architecture/core.md"
+        path.write_text(path.read_text().replace("---\n# Second", "sources: [{resource: ../../docs/adr.md}, {resource: docs/adr.md}]\n---\n# Second", 1))
+        result = self.run_script("okf-check.sh")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("sources.resource docs/adr.md names a repository file", result.stdout)
+        self.assertNotIn("../../docs/adr.md", result.stdout)
+
+    def test_superseded_by_needs_deprecated_and_a_deprecated_decision_needs_it(self) -> None:
+        # Value: protects=superseded_by only on a deprecated concept, and every deprecated decision names its successor; fails_when=either rule is dropped; why_new=OKF v0.3 field; seam=none; no_claim=successor existence (okf checks it)
+        self.sourced("../../docs/adr.md", extra="x-tool:\n  resource: docs/adr.md\nsuperseded_by: /project/state.md\n")
+        result = self.run_script("okf-check.sh")
+        self.assertIn("superseded_by: without status: deprecated", result.stdout)
+        self.assertNotIn("names a repository file", result.stdout)  # x-tool's key is not a source
+        (self.bundle / "decisions").mkdir()
+        (self.bundle / "decisions/index.md").write_text("- [Old](/decisions/old.md) — Old fixture.\n")
+        (self.bundle / "decisions/old.md").write_text(
+            "---\ntype: Decision\ntitle: Old\ndescription: Old fixture.\nstatus: deprecated\n"
+            "date: 2026-09-16\nlast_updated: 2026-09-16\n---\n# Old\n\n"
+            "Superseded by [New](/decisions/new.md). See [state](/project/state.md).\n")
+        result = self.run_script("okf-check.sh")
+        self.assertIn("decisions/old.md: deprecated but no superseded_by:", result.stdout)
 
     def test_a_link_outside_the_bundle_must_exist_inside_the_repository(self) -> None:
         outside = Path(self.tmp.name).parent / f"{self.root.name}-sibling.md"
@@ -830,7 +907,7 @@ class TidyTests(unittest.TestCase):
         bundle = self.root / "knowledge"
         bundle.mkdir()
         (bundle / "index.md").write_text(
-            '---\nokf_version: "0.2"\n---\n'
+            '---\nokf_version: "0.3"\ntitle: Fixture\ndescription: Fixture bundle.\n---\n'
             "- [Fixture](/concept.md) — Fixture concept.\n"
         )
         (bundle / "log.md").write_text("# Log\n")
@@ -854,7 +931,7 @@ class TidyTests(unittest.TestCase):
         (self.stub / "okf").write_text(
             '#!/bin/sh\n'
             'case "$1" in\n'
-            'version) echo "okf v0.6.0" ;;\n'
+            'version) echo "okf v0.9.0" ;;\n'
             'validate) cat "$OKF_VALIDATE_JSON" ;;\n'
             '*) exit 2 ;;\n'
             'esac\n'
@@ -943,7 +1020,7 @@ class LogEntryTests(unittest.TestCase):
         self.bundle.mkdir(parents=True)
         self.history = "# Log\n\n## 2026-01-01\n* history before the split\n"
         (self.bundle / "log.md").write_text(self.history)
-        (self.bundle / "index.md").write_text('---\nokf_version: "0.2"\n---\n')
+        (self.bundle / "index.md").write_text('---\nokf_version: "0.3"\ntitle: Fixture\ndescription: Fixture bundle.\n---\n')
         self.env = dict(os.environ, **GIT_ID, TMPDIR=str(Path(self.tmp.name)))
         self.env.pop("OKF_DRIFT_ROOT", None)
         self.env.pop("OKF_DRIFT_SHIM", None)
@@ -1366,6 +1443,60 @@ class LinksTests(unittest.TestCase):
             self.assertEqual(entry.read_text(), "[t](<e.md>)\n")
             self.assertTrue((bundle / "linked.md").is_symlink())
             self.assertIn("](a%20b.md)", (bundle / "real.md").read_text())
+
+
+class FormatTests(unittest.TestCase):
+    def test_okf_format_moves_a_bundle_to_0_3_once(self) -> None:
+        # Value: protects=okf-format.sh sets 0.3, makes repo-root sources concept-relative (fragment and %20 kept), adds superseded_by, and touches nothing else; fails_when=it rewrites an extension key, a URL, a descriptor or a resolving path, or is not idempotent; why_new=new script; seam=none; no_claim=flow-style lists (left to the gate)
+        with tempfile.TemporaryDirectory(prefix="okf-format-") as tmp:
+            root = Path(tmp)
+            bundle = root / "knowledge"
+            (bundle / "decisions").mkdir(parents=True)
+            (root / "docs").mkdir()
+            (root / "docs/a b.md").write_text("x\n")
+            (root / "GLOSSARY.md").write_text("x\n")
+            (bundle / "index.md").write_text('---\nokf_version: "0.2"\n---\n# K\n')
+            decision = ("---\ntype: Decision\nstatus: deprecated\nsources:\n"
+                        "- resource: GLOSSARY.md#terms\n- resource: \"docs/a%20b.md\"\n"
+                        "- resource: https://example.com/GLOSSARY.md\n- resource: Claude memory: x\n"
+                        "- resource: ../../GLOSSARY.md\nx-tool:\n  resource: GLOSSARY.md\n---\n"
+                        "# Old\n\nSuperseded by [New](/decisions/new.md).\n")
+            (bundle / "decisions/old.md").write_text(decision)
+            run = lambda: subprocess.run(["sh", str(SCRIPTS / "okf-format.sh"), "knowledge"],
+                                         cwd=tmp, text=True, capture_output=True)
+            first = run()
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertIn('okf_version: "0.3"', (bundle / "index.md").read_text())
+            self.assertIn("no title: yet", first.stdout)
+            text = (bundle / "decisions/old.md").read_text()
+            self.assertIn("- resource: ../../GLOSSARY.md#terms\n", text)
+            self.assertIn('- resource: "../../docs/a%20b.md"\n', text)
+            self.assertIn("- resource: https://example.com/GLOSSARY.md\n", text)
+            self.assertIn("- resource: Claude memory: x\n", text)
+            self.assertIn("x-tool:\n  resource: GLOSSARY.md\n", text)
+            self.assertIn("status: deprecated\nsuperseded_by: /decisions/new.md\n", text)
+            second = run()
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertNotIn("->", second.stdout)
+            self.assertEqual((bundle / "decisions/old.md").read_text(), text)
+
+    def test_okf_format_never_writes_through_a_link_leaving_the_repository(self) -> None:
+        # Value: protects=a symlinked concept pointing outside the repository is left alone; fails_when=spew follows the link out of the repo; why_new=Codex found the gap; seam=none; no_claim=none beyond protects
+        with tempfile.TemporaryDirectory(prefix="okf-format-") as tmp, \
+             tempfile.TemporaryDirectory(prefix="okf-format-out-") as out:
+            root = Path(tmp)
+            bundle = root / "knowledge"
+            bundle.mkdir()
+            (root / "GLOSSARY.md").write_text("x\n")
+            (bundle / "index.md").write_text('---\nokf_version: "0.3"\ntitle: T\ndescription: D\n---\n')
+            target = Path(out) / "c.md"
+            target.write_text("---\ntype: Note\nsources:\n- resource: GLOSSARY.md\n---\n# C\n")
+            (bundle / "c.md").symlink_to(target)
+            result = subprocess.run(["sh", str(SCRIPTS / "okf-format.sh"), "knowledge"],
+                                    cwd=tmp, text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("links outside the repository", result.stderr)
+            self.assertIn("- resource: GLOSSARY.md\n", target.read_text())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 ---
-okf_version: "0.2"
+okf_version: "0.3"
+title: "{{PROJECT_NAME}} knowledge base"
+description: "What is true of {{PROJECT_NAME}} that its code does not say: why, invariants, traps, conventions and where to look."
 ---
 
 # {{PROJECT_NAME}} Knowledge Base

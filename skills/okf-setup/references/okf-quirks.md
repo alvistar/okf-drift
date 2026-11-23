@@ -8,8 +8,8 @@ real bundles (one code, two wiki), which passed unchanged. Re-measured again on
 `okf version v0.9.0 (OKF v0.3 specification)` on 2026-11-23, side by side with v0.6.0, on
 scratch bundles and on copies of three real bundles (two code, one wiki). Where a version
 behaves differently the text says so; everything else held. Re-measure after upgrading;
-correct this file when a number disagrees. The gate accepts exactly the versions measured
-here and warns on any other.
+correct this file when a number disagrees. The gate accepts the version measured last
+(v0.9.0 since plugin 0.21.0) and warns on any other.
 
 Both are built with Go 1.26: `go install …/cmd/okf@v0.9.0` needs Go 1.26 or newer (an
 older `go` switches toolchain itself when `GOTOOLCHAIN` allows it).
@@ -219,6 +219,28 @@ v0.3.0 the `.agents/skills` copy also documented `--type`/`--title` flags the bi
 have; v0.6.0 has them.) `okf agents lint` checks an `AGENTS.md` against five AAG rules and a
 400-token budget on the managed block — v0.6.0 also prints the whole file's tokens; useful
 only if you adopt that style.
+
+## OKF v0.3 bundles (since plugin 0.21.0)
+
+The root `index.md` declares `okf_version: "0.3"` with a `title` and a `description`
+(§8.1); the gate requires all three and names `/okf-migrate` on an older version. Since
+0.21.0 the gate accepts okf v0.9.0 only: v0.6.0 implements OKF v0.2 and warns.
+
+Path fields resolve like links (§6): a leading `/` from the bundle root, anything else
+from the folder of the file that holds it. Measured on v0.9.0 (2026-11-23), on a 0.3
+bundle:
+
+| `sources[].resource` in `knowledge/a/x.md` | okf v0.9.0 | gate |
+|---|---|---|
+| `../../GLOSSARY.md` (exists) | error `sources[0].resource … escapes bundle root`, not conformant | drops okf's finding; passes |
+| `GLOSSARY.md` (exists only from the repository root) | nothing | FAIL: names a file from the repository root; write it relative to the concept |
+| `../../notes/private.md` (absent in this checkout) | the same escape error | drops it; one grouped warning, never a failure |
+| `/a/y.md` | nothing | must exist in the bundle, else the same warning |
+| `https://…`, `Claude memory: x` (any space) | nothing | not a path; never checked |
+
+okf v0.9.0 never checks that a `sources` resource exists. `superseded_by` counts as a graph
+edge and a missing target is okf's error; the gate requires `status: deprecated` beside it
+and, on a deprecated decision, the field itself. `okf-format.sh` moves a v0.2 bundle.
 
 ## What v0.9.0 added that this plugin does not use
 
